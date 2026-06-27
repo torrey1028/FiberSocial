@@ -42,7 +42,7 @@ sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
 
 ## Build
 
-From `src/android/`:
+From `src/platform/android/`:
 
 ```bash
 ./gradlew assembleDebug
@@ -73,7 +73,7 @@ WSL2 doesn't see USB devices by default. `usbipd` bridges them in.
 
 2. Each time you want to deploy, run the attach script from an **elevated PowerShell**:
    ```powershell
-   .\src\android\attach-device.ps1
+   .\src\platform\android\attach-device.ps1
    ```
    The script auto-detects your Android device and forwards it to WSL. If auto-detect fails, it prompts for the BUSID from `usbipd list`.
 
