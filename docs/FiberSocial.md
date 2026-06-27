@@ -80,3 +80,6 @@ App developer model:
 * Indie developer (Samuel Harrison); not open source; not affiliated with Ravelry
 * Free with ads; optional ad-free subscription ($2.29/month or $6.49/year)
 * Actively maintained — last updated June 2026 (v2.3.5)
+
+#### Conclusion
+None of the existing third-party apps focus heavily on groups, I think there is a place for this app to exist. 
