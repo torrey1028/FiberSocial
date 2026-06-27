@@ -15,4 +15,4 @@ dependencyResolutionManagement {
 rootProject.name = "FiberSocial"
 include(":app")
 include(":common")
-project(":common").projectDir = file("../common")
+project(":common").projectDir = file("../../common")
