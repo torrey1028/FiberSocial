@@ -1,7 +1,19 @@
+import java.io.ByteArrayOutputStream
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
+}
+
+fun gitVersionName(): String {
+    val hash = ByteArrayOutputStream().also { out ->
+        exec { commandLine("git", "rev-parse", "--short", "HEAD"); standardOutput = out }
+    }.toString().trim()
+    val dirty = ByteArrayOutputStream().also { out ->
+        exec { commandLine("git", "status", "--porcelain"); standardOutput = out }
+    }.toString().trim().isNotEmpty()
+    return if (dirty) "1.0.$hash.dirty" else "1.0.$hash"
 }
 
 android {
@@ -13,7 +25,7 @@ android {
         minSdk = 26
         targetSdk = 34
         versionCode = 1
-        versionName = "1.0"
+        versionName = gitVersionName()
     }
 
     buildTypes {
