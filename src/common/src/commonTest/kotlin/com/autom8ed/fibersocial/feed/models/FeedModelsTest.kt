@@ -116,8 +116,8 @@ class FeedItemTest {
     private val author = RavelryUser(username = "yarnie")
 
     @Test
-    fun `ProjectPost carries image count and empty url list`() {
-        val item = FeedItem.ProjectPost(
+    fun `ProjectTopic carries image count and empty url list`() {
+        val item = FeedItem.ProjectTopic(
             id = 1L, groupId = 10L, groupName = "KAL Hub", lastPostAt = "2024-01-15",
             author = author, title = "My WIP", imageCount = 3, imageUrls = emptyList(),
             replyCount = 5,
@@ -129,33 +129,39 @@ class FeedItemTest {
     }
 
     @Test
-    fun `AnnouncementPost exposes body preview`() {
-        val item = FeedItem.AnnouncementPost(
+    fun `AnnouncementTopic exposes body preview and full summary`() {
+        val item = FeedItem.AnnouncementTopic(
             id = 2L, groupId = 10L, groupName = "KAL Hub", lastPostAt = "2024-01-14",
-            author = author, title = "KAL Sign-up", bodyPreview = "Join our new KAL!",
+            author = author, title = "KAL Sign-up",
+            bodyPreview = "Join our new KAL!",
+            bodySummary = "Join our new KAL! Full details inside.",
             replyCount = 12,
         )
         assertIs<FeedItem>(item)
         assertEquals("Join our new KAL!", item.bodyPreview)
+        assertEquals("Join our new KAL! Full details inside.", item.bodySummary)
     }
 
     @Test
-    fun `DiscussionPost exposes body preview`() {
-        val item = FeedItem.DiscussionPost(
+    fun `DiscussionTopic exposes body preview and full summary`() {
+        val item = FeedItem.DiscussionTopic(
             id = 3L, groupId = 10L, groupName = "KAL Hub", lastPostAt = "2024-01-13",
             author = author, title = "Yarn substitution help?",
-            bodyPreview = "Can I sub DK for worsted?", replyCount = 7,
+            bodyPreview = "Can I sub DK for worsted?",
+            bodySummary = "Can I sub DK for worsted? I have this beautiful skein...",
+            replyCount = 7,
         )
         assertIs<FeedItem>(item)
         assertEquals("Can I sub DK for worsted?", item.bodyPreview)
+        assertEquals("Can I sub DK for worsted? I have this beautiful skein...", item.bodySummary)
     }
 
     @Test
     fun `abstract properties accessible from base type`() {
         val items: List<FeedItem> = listOf(
-            FeedItem.ProjectPost(1L, 10L, "KAL Hub", "2024-01-15", author, "WIP", 1, emptyList(), 2),
-            FeedItem.AnnouncementPost(2L, 10L, "KAL Hub", "2024-01-14", author, "KAL", "", 3),
-            FeedItem.DiscussionPost(3L, 10L, "KAL Hub", "2024-01-13", author, "Q", "", 1),
+            FeedItem.ProjectTopic(1L, 10L, "KAL Hub", "2024-01-15", author, "WIP", 1, emptyList(), 2),
+            FeedItem.AnnouncementTopic(2L, 10L, "KAL Hub", "2024-01-14", author, "KAL", "", "", 3),
+            FeedItem.DiscussionTopic(3L, 10L, "KAL Hub", "2024-01-13", author, "Q", "", "", 1),
         )
         assertEquals(listOf(1L, 2L, 3L), items.map { it.id })
         assertEquals(listOf(10L, 10L, 10L), items.map { it.groupId })

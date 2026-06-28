@@ -6,15 +6,15 @@ package com.autom8ed.fibersocial.feed.models
  * All group content comes through Ravelry's forum topics endpoint. Topics are classified
  * into three card types based on fields the API provides:
  *
- * - [DiscussionPost] — general conversation or questions (the common case).
- * - [AnnouncementPost] — sticky topics: KAL sign-ups, mod notices, pinned info.
- * - [ProjectPost] — topics with attached images: WIP/FO shares.
+ * - [DiscussionTopic] — general conversation or questions (the common case).
+ * - [AnnouncementTopic] — sticky topics: KAL sign-ups, mod notices, pinned info.
+ * - [ProjectTopic] — topics with attached images: WIP/FO shares.
  *
  * Image URLs are not available in the topic list or detail response — only a count.
  * Actual image loading requires fetching individual posts and is deferred to a future phase.
  *
  * Note: Ravelry group events exist at `ravelry.com/events/` but are not exposed by the API.
- * An `EventPost` type is deferred until Ravelry provides an events endpoint.
+ * An `EventTopic` type is deferred until Ravelry provides an events endpoint.
  *
  * @property id Ravelry topic ID.
  * @property groupId ID of the [Group] this item belongs to.
@@ -36,7 +36,7 @@ sealed class FeedItem {
      * @property imageUrls Direct image URLs. Empty until post-level fetching is implemented.
      * @property replyCount Total number of posts in the thread.
      */
-    data class ProjectPost(
+    data class ProjectTopic(
         override val id: Long,
         override val groupId: Long,
         override val groupName: String,
@@ -54,9 +54,10 @@ sealed class FeedItem {
      * @property author User who created the opening post.
      * @property title Topic title.
      * @property bodyPreview Truncated plain-text excerpt of the opening post (max 200 chars).
+     * @property bodySummary Full plain-text content of the opening post.
      * @property replyCount Total number of posts in the thread.
      */
-    data class AnnouncementPost(
+    data class AnnouncementTopic(
         override val id: Long,
         override val groupId: Long,
         override val groupName: String,
@@ -64,6 +65,7 @@ sealed class FeedItem {
         val author: RavelryUser,
         val title: String,
         val bodyPreview: String,
+        val bodySummary: String,
         val replyCount: Int,
     ) : FeedItem()
 
@@ -73,9 +75,10 @@ sealed class FeedItem {
      * @property author User who created the opening post.
      * @property title Topic title.
      * @property bodyPreview Truncated plain-text excerpt of the opening post (max 200 chars).
+     * @property bodySummary Full plain-text content of the opening post.
      * @property replyCount Total number of posts in the thread.
      */
-    data class DiscussionPost(
+    data class DiscussionTopic(
         override val id: Long,
         override val groupId: Long,
         override val groupName: String,
@@ -83,6 +86,7 @@ sealed class FeedItem {
         val author: RavelryUser,
         val title: String,
         val bodyPreview: String,
+        val bodySummary: String,
         val replyCount: Int,
     ) : FeedItem()
 }
