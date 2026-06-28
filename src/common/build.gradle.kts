@@ -32,6 +32,13 @@ kotlin {
             implementation("io.ktor:ktor-client-android:2.3.12")
             implementation("androidx.security:security-crypto:1.0.0")
         }
+        val androidUnitTest by getting {
+            dependencies {
+                implementation(kotlin("test"))
+                implementation("junit:junit:4.13.2")
+                implementation("org.robolectric:robolectric:4.12.2")
+            }
+        }
     }
 }
 
@@ -40,6 +47,11 @@ android {
     compileSdk = 34
     defaultConfig {
         minSdk = 26
+    }
+    testOptions {
+        unitTests {
+            isIncludeAndroidResources = true
+        }
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
