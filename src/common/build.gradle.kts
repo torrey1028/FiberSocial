@@ -4,6 +4,7 @@ plugins {
     kotlin("multiplatform")
     id("com.android.library")
     kotlin("plugin.serialization")
+    id("jacoco")
 }
 
 kotlin {
@@ -32,6 +33,13 @@ kotlin {
             implementation("io.ktor:ktor-client-android:2.3.12")
             implementation("androidx.security:security-crypto:1.0.0")
         }
+        val androidUnitTest by getting {
+            dependencies {
+                implementation(kotlin("test"))
+                implementation("junit:junit:4.13.2")
+                implementation("org.robolectric:robolectric:4.12.2")
+            }
+        }
     }
 }
 
@@ -41,8 +49,58 @@ android {
     defaultConfig {
         minSdk = 26
     }
+    testOptions {
+        unitTests {
+            isIncludeAndroidResources = true
+        }
+    }
+    buildTypes {
+        debug {
+            enableUnitTestCoverage = true
+        }
+    }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+    }
+}
+
+// Coverage is scoped to packages that have tests. Expand the include patterns as new
+// packages gain test coverage.
+val coveredPackages = fileTree(layout.buildDirectory.dir("classes/kotlin/jvm/main")) {
+    include("**/auth/**")
+    exclude("**/*\$\$serializer.class")
+}
+
+// Generates HTML + XML reports — uploaded as a CI artifact.
+tasks.register<JacocoReport>("jvmCoverageReport") {
+    dependsOn("jvmTest")
+    executionData.setFrom(layout.buildDirectory.file("jacoco/jvmTest.exec"))
+    sourceDirectories.setFrom(files("src/commonMain/kotlin"))
+    classDirectories.setFrom(coveredPackages)
+    reports {
+        html.required.set(true)
+        xml.required.set(true)
+    }
+}
+
+// Fails the build if instruction or branch coverage drops below the stored baseline.
+// Raise these values when coverage genuinely improves.
+tasks.register<JacocoCoverageVerification>("jvmCoverageVerification") {
+    dependsOn("jvmTest")
+    executionData.setFrom(layout.buildDirectory.file("jacoco/jvmTest.exec"))
+    sourceDirectories.setFrom(files("src/commonMain/kotlin"))
+    classDirectories.setFrom(coveredPackages)
+    violationRules {
+        rule {
+            limit {
+                counter = "INSTRUCTION"
+                minimum = "0.93".toBigDecimal()
+            }
+            limit {
+                counter = "BRANCH"
+                minimum = "0.87".toBigDecimal()
+            }
+        }
     }
 }

@@ -1,0 +1,108 @@
+name: Tests
+
+on:
+  push:
+    branches: ["main", "feat/**"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  common-jvm-tests:
+    name: Common module JVM tests + coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: "temurin"
+
+      - name: Write local.properties
+        run: |
+          echo "sdk.dir=$ANDROID_HOME" > src/platform/android/local.properties
+          echo "ravelry.client_id=" >> src/platform/android/local.properties
+          echo "ravelry.client_secret=" >> src/platform/android/local.properties
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      # jvmCoverageReport  → runs jvmTest, emits HTML + XML artifact
+      # jvmCoverageVerification → fails the build if instruction/branch drops below baseline
+      - name: Run JVM tests and enforce coverage
+        working-directory: src/platform/android
+        run: ./gradlew :common:jvmCoverageReport :common:jvmCoverageVerification
+
+      - name: Upload JVM coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jvm-coverage-report
+          path: src/common/build/reports/jacoco/jvmCoverageReport/html/
+          retention-days: 7
+
+  common-android-unit-tests:
+    name: Common module Android unit tests (Robolectric) + coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: "temurin"
+
+      - name: Write local.properties
+        run: |
+          echo "sdk.dir=$ANDROID_HOME" > src/platform/android/local.properties
+          echo "ravelry.client_id=" >> src/platform/android/local.properties
+          echo "ravelry.client_secret=" >> src/platform/android/local.properties
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Run Android unit tests and generate coverage report
+        working-directory: src/platform/android
+        run: ./gradlew :common:createDebugUnitTestCoverageReport
+
+      # Checks auth package only — expand COVERED_PACKAGES as new packages gain tests.
+      # Android baselines are lower than JVM because Kotlin/Android bytecode includes
+      # more compiler-generated synthetic methods that JaCoCo counts as uncovered.
+      # Baselines: INSTRUCTION 81 %, BRANCH 58 % — raise when coverage genuinely improves.
+      - name: Check Android coverage against baseline
+        run: |
+          python3 - << 'PYEOF'
+          import xml.etree.ElementTree as ET, sys
+          COVERED_PACKAGES = {"com/autom8ed/fibersocial/auth"}
+          BASELINE = {"INSTRUCTION": 0.81, "BRANCH": 0.58}
+          tree = ET.parse("src/common/build/reports/coverage/test/debug/report.xml")
+          root = tree.getroot()
+          totals = {}
+          for pkg in root.findall("package"):
+              if pkg.get("name") not in COVERED_PACKAGES:
+                  continue
+              for c in pkg.findall("counter"):
+                  t = c.get("type")
+                  if t in BASELINE:
+                      entry = totals.setdefault(t, [0, 0])
+                      entry[0] += int(c.get("missed"))
+                      entry[1] += int(c.get("covered"))
+          failed = False
+          for t, (missed, covered) in totals.items():
+              pct = covered / (covered + missed)
+              ok = pct >= BASELINE[t]
+              print(f"Android {t}: {pct:.1%} (baseline {BASELINE[t]:.0%}) {'OK' if ok else 'BELOW BASELINE'}")
+              if not ok:
+                  failed = True
+          sys.exit(1 if failed else 0)
+          PYEOF
+
+      - name: Upload Android coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-coverage-report
+          path: src/common/build/reports/coverage/test/debug/
+          retention-days: 7
