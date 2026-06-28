@@ -4,8 +4,14 @@ class AuthRepository(
     private val oauthClient: RavelryOAuthClient,
     private val tokenStorage: TokenStorage,
 ) {
-    suspend fun login(authCode: String, codeVerifier: String, redirectUri: String): AuthToken {
+    suspend fun login(
+        authCode: String,
+        codeVerifier: String,
+        redirectUri: String,
+        sessionCookie: String? = null,
+    ): AuthToken {
         val token = oauthClient.exchangeAuthCode(authCode, codeVerifier, redirectUri)
+            .copy(sessionCookie = sessionCookie)
         tokenStorage.save(token)
         return token
     }

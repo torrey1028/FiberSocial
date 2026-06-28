@@ -1,47 +1,52 @@
 package com.autom8ed.fibersocial.login
 
-import android.content.Context
-import android.content.Intent
 import android.net.Uri
+import android.util.Base64
 import com.autom8ed.fibersocial.auth.RavelryOAuthClient
-import net.openid.appauth.AuthorizationRequest
-import net.openid.appauth.AuthorizationResponse
-import net.openid.appauth.AuthorizationService
-import net.openid.appauth.AuthorizationServiceConfiguration
-import net.openid.appauth.CodeVerifierUtil
-import net.openid.appauth.ResponseTypeValues
+import java.security.MessageDigest
+import java.security.SecureRandom
 
-class RavelryAuthManager(context: Context) {
+class RavelryAuthManager {
 
     companion object {
         const val REDIRECT_URI = "fibersocial://auth/callback"
     }
 
-    private val authService = AuthorizationService(context.applicationContext)
+    private var codeVerifier: String? = null
+    private var state: String? = null
 
-    private val serviceConfig = AuthorizationServiceConfiguration(
-        Uri.parse(RavelryOAuthClient.AUTH_URL),
-        Uri.parse(RavelryOAuthClient.TOKEN_URL),
-    )
-
-    fun buildAuthIntent(clientId: String): Intent {
-        val codeVerifier = CodeVerifierUtil.generateRandomCodeVerifier()
-        val request = AuthorizationRequest.Builder(
-            serviceConfig,
-            clientId,
-            ResponseTypeValues.CODE,
-            Uri.parse(REDIRECT_URI),
-        ).setCodeVerifier(codeVerifier).build()
-        return authService.getAuthorizationRequestIntent(request)
+    fun buildAuthUrl(clientId: String): String {
+        val verifier = generateCodeVerifier().also { codeVerifier = it }
+        val challenge = generateCodeChallenge(verifier)
+        val stateVal = generateState().also { state = it }
+        return Uri.Builder()
+            .scheme("https").authority("www.ravelry.com").path("/oauth2/auth")
+            .appendQueryParameter("response_type", "code")
+            .appendQueryParameter("client_id", clientId)
+            .appendQueryParameter("redirect_uri", REDIRECT_URI)
+            .appendQueryParameter("code_challenge", challenge)
+            .appendQueryParameter("code_challenge_method", "S256")
+            .appendQueryParameter("state", stateVal)
+            .build().toString()
     }
 
-    /** Returns (authCode, codeVerifier) from the redirect intent, or null if not an auth response. */
-    fun extractAuthResult(intent: Intent): Pair<String, String>? {
-        val response = AuthorizationResponse.fromIntent(intent) ?: return null
-        val code = response.authorizationCode ?: return null
-        val verifier = response.request?.codeVerifier ?: return null
-        return code to verifier
+    fun consumeCodeVerifier(): String =
+        codeVerifier?.also { codeVerifier = null } ?: error("No code verifier — call buildAuthUrl first")
+
+    private fun generateState(): String {
+        val bytes = ByteArray(16)
+        SecureRandom().nextBytes(bytes)
+        return Base64.encodeToString(bytes, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
     }
 
-    fun dispose() = authService.dispose()
+    private fun generateCodeVerifier(): String {
+        val bytes = ByteArray(32)
+        SecureRandom().nextBytes(bytes)
+        return Base64.encodeToString(bytes, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
+    }
+
+    private fun generateCodeChallenge(verifier: String): String {
+        val digest = MessageDigest.getInstance("SHA-256").digest(verifier.toByteArray(Charsets.US_ASCII))
+        return Base64.encodeToString(digest, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
+    }
 }

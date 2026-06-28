@@ -22,6 +22,7 @@ class AndroidTokenStorage(private val prefs: SharedPreferences) : TokenStorage {
             .putString("access_token", token.accessToken)
             .putString("refresh_token", token.refreshToken)
             .putLong("expires_at", token.expiresAt)
+            .putString("session_cookie", token.sessionCookie)
             .apply()
     }
 
@@ -29,7 +30,8 @@ class AndroidTokenStorage(private val prefs: SharedPreferences) : TokenStorage {
         val accessToken = prefs.getString("access_token", null) ?: return null
         val refreshToken = prefs.getString("refresh_token", null) ?: return null
         val expiresAt = prefs.getLong("expires_at", 0L)
-        return AuthToken(accessToken, refreshToken, expiresAt)
+        val sessionCookie = prefs.getString("session_cookie", null)
+        return AuthToken(accessToken, refreshToken, expiresAt, sessionCookie)
     }
 
     override suspend fun clear() {

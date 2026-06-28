@@ -34,8 +34,6 @@ android {
         versionName = gitVersionName()
         buildConfigField("String", "RAVELRY_CLIENT_ID", "\"${localProps.getProperty("ravelry.client_id", "")}\"")
         buildConfigField("String", "RAVELRY_CLIENT_SECRET", "\"${localProps.getProperty("ravelry.client_secret", "")}\"")
-        // AppAuth uses this to register its RedirectUriReceiverActivity for our custom scheme
-        manifestPlaceholders["appAuthRedirectScheme"] = "fibersocial"
     }
 
     buildTypes {
@@ -68,7 +66,6 @@ dependencies {
     implementation("androidx.activity:activity-compose:1.9.0")
     implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.8.1")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.1")
-    implementation("net.openid:appauth:0.11.1")
     implementation("androidx.security:security-crypto:1.0.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("io.ktor:ktor-client-android:2.3.12")

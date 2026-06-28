@@ -1,7 +1,6 @@
 package com.autom8ed.fibersocial.login
 
 import android.app.Application
-import android.content.Intent
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.autom8ed.fibersocial.BuildConfig
@@ -23,7 +22,7 @@ class AuthAndroidViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private val authManager = RavelryAuthManager(app)
+    private val authManager = RavelryAuthManager()
     private val tokenStorage = AndroidTokenStorage(app)
     private val oauthClient = RavelryOAuthClient(
         httpClient = httpClient,
@@ -38,20 +37,19 @@ class AuthAndroidViewModel(app: Application) : AndroidViewModel(app) {
         auth.checkStoredAuth()
     }
 
-    fun buildAuthIntent() = authManager.buildAuthIntent(BuildConfig.RAVELRY_CLIENT_ID)
+    fun buildAuthUrl(): String = authManager.buildAuthUrl(BuildConfig.RAVELRY_CLIENT_ID)
 
-    fun handleAuthRedirect(intent: Intent) {
-        val (code, verifier) = authManager.extractAuthResult(intent) ?: return
+    fun handleAuthCode(code: String, sessionCookie: String) {
         auth.onAuthCodeReceived(
             authCode = code,
-            codeVerifier = verifier,
+            codeVerifier = authManager.consumeCodeVerifier(),
             redirectUri = RavelryAuthManager.REDIRECT_URI,
+            sessionCookie = sessionCookie,
         )
     }
 
     override fun onCleared() {
         super.onCleared()
-        authManager.dispose()
         httpClient.close()
     }
 }

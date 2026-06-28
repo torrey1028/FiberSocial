@@ -2,9 +2,7 @@ package com.autom8ed.fibersocial
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -13,6 +11,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import com.autom8ed.fibersocial.auth.AuthState
@@ -20,6 +21,7 @@ import com.autom8ed.fibersocial.feed.FeedAndroidViewModel
 import com.autom8ed.fibersocial.feed.FeedScreen
 import com.autom8ed.fibersocial.login.AuthAndroidViewModel
 import com.autom8ed.fibersocial.login.LoginScreen
+import com.autom8ed.fibersocial.login.WebViewLoginScreen
 
 class MainActivity : ComponentActivity() {
 
@@ -31,21 +33,27 @@ class MainActivity : ComponentActivity() {
         setContent {
             MaterialTheme {
                 val authState by authVm.auth.state.collectAsState()
-                val authLauncher = rememberLauncherForActivityResult(
-                    ActivityResultContracts.StartActivityForResult()
-                ) { result ->
-                    result.data?.let { authVm.handleAuthRedirect(it) }
-                }
+                var showWebView by remember { mutableStateOf(false) }
 
                 when (authState) {
-                    is AuthState.Unauthenticated ->
-                        LoginScreen(onLoginClick = {
-                            authLauncher.launch(authVm.buildAuthIntent())
-                        })
+                    is AuthState.Unauthenticated -> {
+                        if (showWebView) {
+                            val authUrl = remember { authVm.buildAuthUrl() }
+                            WebViewLoginScreen(
+                                authUrl = authUrl,
+                                onAuthComplete = { code, cookie ->
+                                    showWebView = false
+                                    authVm.handleAuthCode(code, cookie)
+                                },
+                            )
+                        } else {
+                            LoginScreen(onLoginClick = { showWebView = true })
+                        }
+                    }
                     is AuthState.Error ->
                         LoginScreen(
                             errorMessage = (authState as AuthState.Error).message,
-                            onLoginClick = { authLauncher.launch(authVm.buildAuthIntent()) },
+                            onLoginClick = { showWebView = true },
                         )
                     AuthState.Loading ->
                         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
