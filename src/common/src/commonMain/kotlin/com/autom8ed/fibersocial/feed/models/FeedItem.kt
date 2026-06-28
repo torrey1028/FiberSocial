@@ -1,14 +1,15 @@
 package com.autom8ed.fibersocial.feed.models
 
 /**
- * Discriminated union of the two card types shown in the feed mockup.
+ * All group content comes through Ravelry's forum topics endpoint. We classify
+ * topics into three card types based on fields the API actually provides:
  *
- * ProjectPost — author avatar + image grid (project photos from a group topic)
- * EventPost   — author avatar + single cover image + title + body text
+ * ProjectPost    — topic has images (forum_images_count > 0): someone sharing photos of a WIP/FO
+ * AnnouncementPost — topic is sticky: KAL sign-ups, group events, mod notices
+ * DiscussionPost — everything else: questions, general conversation
  *
- * Both map to Ravelry Topics; the distinction is whether the topic has multiple
- * images attached (project showcase) or a single cover + body text (event/announcement).
- * Final classification logic will be refined once live API shapes are confirmed.
+ * Image URLs are not available in the topic list or detail response — only a count.
+ * Actual image loading is deferred to a future phase (requires fetching posts).
  */
 sealed class FeedItem {
     abstract val id: Long
@@ -23,19 +24,29 @@ sealed class FeedItem {
         override val lastPostAt: String?,
         val author: RavelryUser,
         val title: String,
-        val imageUrls: List<String>,  // populated in a future phase; imageCount for now
         val imageCount: Int,
+        val imageUrls: List<String>, // deferred: requires fetching posts
         val replyCount: Int,
     ) : FeedItem()
 
-    data class EventPost(
+    data class AnnouncementPost(
         override val id: Long,
         override val groupId: Long,
         override val groupName: String,
         override val lastPostAt: String?,
         val author: RavelryUser,
         val title: String,
-        val coverImageUrl: String?,
+        val bodyPreview: String,
+        val replyCount: Int,
+    ) : FeedItem()
+
+    data class DiscussionPost(
+        override val id: Long,
+        override val groupId: Long,
+        override val groupName: String,
+        override val lastPostAt: String?,
+        val author: RavelryUser,
+        val title: String,
         val bodyPreview: String,
         val replyCount: Int,
     ) : FeedItem()
