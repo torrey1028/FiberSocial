@@ -1,13 +1,12 @@
 package com.autom8ed.fibersocial.auth
 
-import android.app.Application
 import android.content.Context
-import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.test.runTest
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -20,10 +19,11 @@ class AndroidTokenStorageTest {
 
     @Before
     fun setUp() {
-        val context = ApplicationProvider.getApplicationContext<Application>()
+        // RuntimeEnvironment.getApplication() comes from Robolectric directly,
+        // avoiding the need for the separate androidx.test:core artifact.
         // Inject plain SharedPreferences so tests avoid EncryptedSharedPreferences/KeyStore
-        // on JVM (no hardware-backed keystore available). Production code uses the
-        // Context constructor which creates EncryptedSharedPreferences.
+        // on JVM (no hardware-backed keystore available).
+        val context = RuntimeEnvironment.getApplication()
         val prefs = context.getSharedPreferences("test_auth", Context.MODE_PRIVATE)
         prefs.edit().clear().commit()
         storage = AndroidTokenStorage(prefs)
