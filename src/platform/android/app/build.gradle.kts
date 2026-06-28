@@ -1,4 +1,5 @@
 import java.io.ByteArrayOutputStream
+import java.util.Properties
 
 plugins {
     id("com.android.application")
@@ -16,6 +17,11 @@ fun gitVersionName(): String {
     return if (dirty) "1.0.$hash.dirty" else "1.0.$hash"
 }
 
+val localProps = Properties().also { props ->
+    rootProject.file("local.properties").takeIf { it.exists() }
+        ?.inputStream()?.use { props.load(it) }
+}
+
 android {
     namespace = "com.autom8ed"
     compileSdk = 34
@@ -26,6 +32,10 @@ android {
         targetSdk = 34
         versionCode = 1
         versionName = gitVersionName()
+        buildConfigField("String", "RAVELRY_CLIENT_ID", "\"${localProps.getProperty("ravelry.client_id", "")}\"")
+        buildConfigField("String", "RAVELRY_CLIENT_SECRET", "\"${localProps.getProperty("ravelry.client_secret", "")}\"")
+        // AppAuth uses this to register its RedirectUriReceiverActivity for our custom scheme
+        manifestPlaceholders["appAuthRedirectScheme"] = "fibersocial"
     }
 
     buildTypes {
@@ -45,6 +55,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 
@@ -55,4 +66,13 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.activity:activity-compose:1.9.0")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.8.1")
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.1")
+    implementation("net.openid:appauth:0.11.1")
+    implementation("androidx.security:security-crypto:1.0.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+    implementation("io.ktor:ktor-client-android:2.3.12")
+    implementation("io.ktor:ktor-client-content-negotiation:2.3.12")
+    implementation("io.ktor:ktor-serialization-kotlinx-json:2.3.12")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.1")
 }

@@ -20,9 +20,11 @@ kotlin {
             implementation("io.ktor:ktor-serialization-kotlinx-json:2.3.12")
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1")
             implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.1")
+            implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.6.0")
         }
         androidMain.dependencies {
             implementation("io.ktor:ktor-client-android:2.3.12")
+            implementation("androidx.security:security-crypto:1.0.0")
         }
     }
 }
