@@ -1,13 +1,10 @@
 package com.autom8ed.fibersocial.feed
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -121,22 +118,26 @@ private fun GroupDrawer(
     onGroupSelected: (Group?) -> Unit,
 ) {
     ModalDrawerSheet {
-        Spacer(Modifier.height(16.dp))
-        Text(
-            text = "Your Groups",
-            style = MaterialTheme.typography.titleSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(horizontal = 28.dp, vertical = 8.dp),
-        )
-        NavigationDrawerItem(
-            label = { Text("All Groups") },
-            selected = selectedGroup == null,
-            onClick = { onGroupSelected(null) },
-            modifier = Modifier.padding(horizontal = 12.dp),
-        )
-        if (groups.isNotEmpty()) {
-            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp, horizontal = 12.dp))
-            groups.forEach { group ->
+        LazyColumn {
+            item {
+                Spacer(Modifier.height(16.dp))
+                Text(
+                    text = "Your Groups",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 28.dp, vertical = 8.dp),
+                )
+                NavigationDrawerItem(
+                    label = { Text("All Groups") },
+                    selected = selectedGroup == null,
+                    onClick = { onGroupSelected(null) },
+                    modifier = Modifier.padding(horizontal = 12.dp),
+                )
+                if (groups.isNotEmpty()) {
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp, horizontal = 12.dp))
+                }
+            }
+            items(groups, key = { it.id }) { group ->
                 NavigationDrawerItem(
                     label = { Text(group.name) },
                     selected = selectedGroup?.id == group.id,
@@ -144,8 +145,8 @@ private fun GroupDrawer(
                     modifier = Modifier.padding(horizontal = 12.dp),
                 )
             }
+            item { Spacer(Modifier.height(16.dp)) }
         }
-        Spacer(Modifier.height(16.dp))
     }
 }
 
