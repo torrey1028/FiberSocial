@@ -7,90 +7,92 @@ import io.ktor.serialization.kotlinx.json.json
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
-import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 
+// Ktor's HttpClientEngineBase sets coroutineContext = Dispatchers.IO, so even MockEngine
+// runs engine calls on real IO threads. advanceUntilIdle() only advances the test
+// scheduler and cannot complete those IO-dispatched coroutines.
+//
+// Fix: UnconfinedTestDispatcher runs launched coroutines eagerly until they first
+// suspend (at the IO boundary). We then join() child jobs directly, which suspends
+// the test until the real IO work finishes — dispatcher-agnostic.
+@OptIn(ExperimentalCoroutinesApi::class)
 class AuthViewModelTest {
 
-    private fun makeVm(
-        responseJson: String = TOKEN_JSON,
-        storage: FakeTokenStorage = FakeTokenStorage(),
-        block: (AuthViewModel, FakeTokenStorage) -> Unit = { _, _ -> },
-    ) = runTest {
-        val repo = AuthRepository(mockOAuthClient(responseJson), storage)
-        val vm = AuthViewModel(repo, this)
-        block(vm, storage)
-    }
+    private suspend fun awaitChildren(job: Job) =
+        job.children.toList().forEach { it.join() }
 
     @Test
-    fun `initial state is Unauthenticated`() = runTest {
-        val repo = AuthRepository(mockOAuthClient(TOKEN_JSON), FakeTokenStorage())
-        val vm = AuthViewModel(repo, this)
+    fun `initial state is Unauthenticated`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = AuthViewModel(AuthRepository(mockOAuthClient(TOKEN_JSON), FakeTokenStorage()), this)
         assertEquals(AuthState.Unauthenticated, vm.state.value)
     }
 
     @Test
-    fun `onAuthCodeReceived transitions to Authenticated on success`() = runTest {
-        val repo = AuthRepository(mockOAuthClient(TOKEN_JSON), FakeTokenStorage())
-        val vm = AuthViewModel(repo, this)
-        vm.onAuthCodeReceived("code", "verifier", "https://redirect")
-        advanceUntilIdle()
-        val state = assertIs<AuthState.Authenticated>(vm.state.value)
-        assertEquals("access123", state.token.accessToken)
-    }
-
-    @Test
-    fun `onAuthCodeReceived transitions to Error on network failure`() = runTest {
-        val failClient = HttpClient(MockEngine {
-            throw java.io.IOException("Simulated network failure")
-        }) {
-            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+    fun `onAuthCodeReceived transitions to Authenticated on success`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val vm = AuthViewModel(AuthRepository(mockOAuthClient(TOKEN_JSON), FakeTokenStorage()), this)
+            vm.onAuthCodeReceived("code", "verifier", "https://redirect")
+            awaitChildren(coroutineContext[Job]!!)
+            val state = assertIs<AuthState.Authenticated>(vm.state.value)
+            assertEquals("access123", state.token.accessToken)
         }
-        val repo = AuthRepository(
-            RavelryOAuthClient(failClient, "id", "secret"),
-            FakeTokenStorage(),
-        )
-        val vm = AuthViewModel(repo, this)
-        vm.onAuthCodeReceived("code", "verifier", "https://redirect")
-        advanceUntilIdle()
-        assertIs<AuthState.Error>(vm.state.value)
-    }
 
     @Test
-    fun `checkStoredAuth transitions to Authenticated when token exists`() = runTest {
-        val storage = FakeTokenStorage()
-        val repo = AuthRepository(mockOAuthClient(TOKEN_JSON), storage)
-        val vm = AuthViewModel(repo, this)
-        // seed storage via login first
-        repo.login("code", "verifier", "https://redirect")
-
-        vm.checkStoredAuth()
-        advanceUntilIdle()
-        assertIs<AuthState.Authenticated>(vm.state.value)
-    }
-
-    @Test
-    fun `checkStoredAuth stays Unauthenticated when no token stored`() = runTest {
-        val repo = AuthRepository(mockOAuthClient(TOKEN_JSON), FakeTokenStorage())
-        val vm = AuthViewModel(repo, this)
-        vm.checkStoredAuth()
-        advanceUntilIdle()
-        assertEquals(AuthState.Unauthenticated, vm.state.value)
-    }
+    fun `onAuthCodeReceived transitions to Error on network failure`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val failClient = HttpClient(MockEngine {
+                throw java.io.IOException("Simulated network failure")
+            }) {
+                install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+            }
+            val vm = AuthViewModel(
+                AuthRepository(RavelryOAuthClient(failClient, "id", "secret"), FakeTokenStorage()),
+                this,
+            )
+            vm.onAuthCodeReceived("code", "verifier", "https://redirect")
+            awaitChildren(coroutineContext[Job]!!)
+            assertIs<AuthState.Error>(vm.state.value)
+        }
 
     @Test
-    fun `logout clears state to Unauthenticated`() = runTest {
-        val storage = FakeTokenStorage()
-        val repo = AuthRepository(mockOAuthClient(TOKEN_JSON), storage)
-        val vm = AuthViewModel(repo, this)
-        // authenticate first
-        vm.onAuthCodeReceived("code", "verifier", "https://redirect")
-        advanceUntilIdle()
-        assertIs<AuthState.Authenticated>(vm.state.value)
+    fun `checkStoredAuth transitions to Authenticated when token exists`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val storage = FakeTokenStorage()
+            val repo = AuthRepository(mockOAuthClient(TOKEN_JSON), storage)
+            repo.login("code", "verifier", "https://redirect") // seed storage
+            val vm = AuthViewModel(repo, this)
+            vm.checkStoredAuth()
+            awaitChildren(coroutineContext[Job]!!)
+            assertIs<AuthState.Authenticated>(vm.state.value)
+        }
 
-        vm.logout()
-        advanceUntilIdle()
-        assertEquals(AuthState.Unauthenticated, vm.state.value)
-    }
+    @Test
+    fun `checkStoredAuth stays Unauthenticated when no token stored`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val vm = AuthViewModel(AuthRepository(mockOAuthClient(TOKEN_JSON), FakeTokenStorage()), this)
+            vm.checkStoredAuth()
+            awaitChildren(coroutineContext[Job]!!)
+            assertEquals(AuthState.Unauthenticated, vm.state.value)
+        }
+
+    @Test
+    fun `logout clears state to Unauthenticated`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val storage = FakeTokenStorage()
+            val repo = AuthRepository(mockOAuthClient(TOKEN_JSON), storage)
+            val vm = AuthViewModel(repo, this)
+
+            vm.onAuthCodeReceived("code", "verifier", "https://redirect")
+            awaitChildren(coroutineContext[Job]!!)
+            assertIs<AuthState.Authenticated>(vm.state.value)
+
+            vm.logout()
+            awaitChildren(coroutineContext[Job]!!)
+            assertEquals(AuthState.Unauthenticated, vm.state.value)
+        }
 }
