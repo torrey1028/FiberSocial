@@ -2,11 +2,7 @@ package com.autom8ed.fibersocial.auth
 
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
-import io.ktor.client.engine.mock.respond
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
-import io.ktor.http.ContentType
-import io.ktor.http.HttpStatusCode
-import io.ktor.http.headersOf
 import io.ktor.serialization.kotlinx.json.json
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -47,8 +43,7 @@ class AuthViewModelTest {
     @Test
     fun `onAuthCodeReceived transitions to Error on network failure`() = runTest {
         val failClient = HttpClient(MockEngine {
-            respond("", HttpStatusCode.InternalServerError,
-                headersOf("Content-Type", ContentType.Application.Json.toString()))
+            throw java.io.IOException("Simulated network failure")
         }) {
             install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
         }
