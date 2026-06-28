@@ -8,14 +8,32 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 
+/**
+ * Translates raw Ravelry API data into [FeedItem]s ready for display.
+ *
+ * Orchestrates the multi-step fetch: groups → topic lists → topic details (in parallel),
+ * then maps each [Topic] to a typed [FeedItem] subclass based on its fields.
+ *
+ * @param apiClient Low-level Ravelry HTTP client.
+ */
 class FeedRepository(private val apiClient: RavelryApiClient) {
 
+    /** @see RavelryApiClient.getCurrentUser */
     suspend fun getCurrentUser(): RavelryUser = apiClient.getCurrentUser()
 
+    /** @see RavelryApiClient.getUserGroups */
     suspend fun getUserGroups(username: String): List<Group> =
         apiClient.getUserGroups(username)
 
-    // Fetches topic list per group then resolves details in parallel for author + summary.
+    /**
+     * Fetches and merges feed items across all [groups].
+     *
+     * For each group, loads the topic list then resolves details in parallel (for author
+     * and body preview). The combined list is sorted newest-reply-first.
+     *
+     * @param groups Groups whose forums should be included in the feed.
+     * @return Merged, sorted list of [FeedItem]s.
+     */
     suspend fun getFeedItems(groups: List<Group>): List<FeedItem> = coroutineScope {
         groups.flatMap { group ->
             apiClient.getGroupTopics(group.forumId)

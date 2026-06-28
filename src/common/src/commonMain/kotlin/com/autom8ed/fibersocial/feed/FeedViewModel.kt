@@ -9,25 +9,61 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
+/**
+ * Represents the group feed screen state emitted by [FeedViewModel].
+ */
 sealed class FeedState {
+    /** Initial load in progress; no data is available yet. */
     object Loading : FeedState()
+
+    /**
+     * Feed data is available and up to date.
+     *
+     * @property user The authenticated Ravelry user.
+     * @property groups All groups the user is a member of (used to populate the filter drawer).
+     * @property selectedGroup The group currently being filtered to, or `null` for "All Groups".
+     * @property items Feed items for the selected group(s), sorted newest-reply-first.
+     */
     data class Loaded(
         val user: RavelryUser,
         val groups: List<Group>,
         val selectedGroup: Group?,
         val items: List<FeedItem>,
     ) : FeedState()
+
+    /**
+     * A refresh is in progress; [stale] holds the last known good data for display.
+     *
+     * @property stale The previously loaded state shown while new data is fetched.
+     */
     data class Refreshing(val stale: Loaded) : FeedState()
+
+    /**
+     * A load or refresh failed.
+     *
+     * @property message Human-readable error description.
+     */
     data class Error(val message: String) : FeedState()
 }
 
+/**
+ * Platform-agnostic ViewModel that drives the group feed screen.
+ *
+ * Exposes a [state] flow consumed by platform ViewModels (e.g. `FeedAndroidViewModel`).
+ *
+ * @param repository Feed data source.
+ * @param scope Coroutine scope tied to the ViewModel's lifecycle.
+ */
 class FeedViewModel(
     private val repository: FeedRepository,
     private val scope: CoroutineScope,
 ) {
     private val _state = MutableStateFlow<FeedState>(FeedState.Loading)
+
+    /** Observable feed state. */
     val state: StateFlow<FeedState> = _state.asStateFlow()
 
+    /** Performs an initial full load: user → groups → feed items. */
     fun load() {
         scope.launch {
             println("FiberSocial: FeedViewModel.load() starting")
@@ -37,6 +73,10 @@ class FeedViewModel(
         }
     }
 
+    /**
+     * Reloads the feed while keeping the current group filter.
+     * No-ops if the feed is not in [FeedState.Loaded].
+     */
     fun refresh() {
         val current = _state.value as? FeedState.Loaded ?: return
         scope.launch {
@@ -47,6 +87,12 @@ class FeedViewModel(
         }
     }
 
+    /**
+     * Filters the feed to [group], or clears the filter when [group] is `null`.
+     * No-ops if the feed is not in [FeedState.Loaded].
+     *
+     * @param group The group to show, or `null` to show all groups.
+     */
     fun selectGroup(group: Group?) {
         val current = _state.value as? FeedState.Loaded ?: return
         println("FiberSocial: FeedViewModel.selectGroup(${group?.name ?: "All Groups"})")

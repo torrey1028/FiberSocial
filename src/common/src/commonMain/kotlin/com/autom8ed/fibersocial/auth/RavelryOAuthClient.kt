@@ -7,6 +7,17 @@ import io.ktor.client.request.forms.submitForm
 import io.ktor.http.parameters
 import kotlinx.datetime.Clock
 
+/**
+ * Handles the Ravelry OAuth 2.0 token exchange and refresh flows.
+ *
+ * Ravelry requires HTTP Basic Auth on the token endpoint (client_id + client_secret),
+ * in addition to the standard PKCE code verifier.
+ *
+ * @param httpClient Ktor client configured with JSON content negotiation.
+ * @param clientId OAuth application client ID.
+ * @param clientSecret OAuth application client secret. Never commit this value;
+ *   it must be injected from `local.properties` via `BuildConfig`.
+ */
 class RavelryOAuthClient(
     private val httpClient: HttpClient,
     private val clientId: String,
@@ -14,10 +25,21 @@ class RavelryOAuthClient(
 ) {
 
     companion object {
+        /** Ravelry authorization endpoint (browser redirect target). */
         const val AUTH_URL = "https://www.ravelry.com/oauth2/auth"
+
+        /** Ravelry token endpoint (server-to-server POST). */
         const val TOKEN_URL = "https://www.ravelry.com/oauth2/token"
     }
 
+    /**
+     * Exchanges a one-time authorization code for an [AuthToken].
+     *
+     * @param authCode Code received in the OAuth redirect callback.
+     * @param codeVerifier PKCE code verifier generated before the auth request.
+     * @param redirectUri Must exactly match the URI registered with Ravelry.
+     * @return A new [AuthToken] with expiry set relative to the current clock.
+     */
     suspend fun exchangeAuthCode(
         authCode: String,
         codeVerifier: String,
@@ -34,6 +56,13 @@ class RavelryOAuthClient(
         basicAuth(clientId, clientSecret)
     }.body<TokenResponse>().toAuthToken()
 
+    /**
+     * Uses a refresh token to obtain a new [AuthToken] without user interaction.
+     *
+     * @param refreshToken The refresh token from a previously stored [AuthToken].
+     * @return A new [AuthToken]. Note: [AuthToken.sessionCookie] is not carried over;
+     *   callers in [AuthRepository] are responsible for preserving it.
+     */
     suspend fun refreshAccessToken(refreshToken: String): AuthToken = httpClient.submitForm(
         url = TOKEN_URL,
         formParameters = parameters {

@@ -3,6 +3,16 @@ package com.autom8ed.fibersocial.feed.models
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
+/**
+ * A Ravelry group the user is a member of.
+ *
+ * @property id Ravelry's numeric group ID.
+ * @property name Display name of the group.
+ * @property permalink URL-safe slug used in `ravelry.com/groups/{permalink}`.
+ * @property forumId ID of the group's discussion forum, used to fetch [Topic] lists.
+ * @property badgeUrl Optional URL to the group's badge image.
+ * @property shortDescription Optional brief description of the group.
+ */
 @Serializable
 data class Group(
     val id: Long,

@@ -24,6 +24,16 @@ private val lenientJson = Json { ignoreUnknownKeys = true }
 // captured during WebView OAuth login, then resolve each group's forum_id via the API.
 private val GROUP_PERMALINK_REGEX = Regex("""href="https://www\.ravelry\.com/groups/([^"]+)"""")
 
+/**
+ * Low-level HTTP client for the Ravelry API and Ravelry web scraping.
+ *
+ * All API calls use the Bearer token from [TokenStorage]. Group membership data is obtained
+ * by scraping `www.ravelry.com` with the session cookie (also from [TokenStorage]), because
+ * Ravelry exposes no API endpoint for listing a user's group memberships.
+ *
+ * @param httpClient Ktor client with JSON content negotiation configured.
+ * @param tokenStorage Source of the Bearer token and session cookie.
+ */
 class RavelryApiClient(
     private val httpClient: HttpClient,
     private val tokenStorage: TokenStorage,
@@ -34,6 +44,11 @@ class RavelryApiClient(
     private suspend fun sessionCookie(): String =
         tokenStorage.load()?.sessionCookie ?: error("No session cookie — re-login required")
 
+    /**
+     * Returns the currently authenticated Ravelry user.
+     *
+     * @return [RavelryUser] for the owner of the stored Bearer token.
+     */
     suspend fun getCurrentUser(): RavelryUser {
         val raw = httpClient.get("$BASE_URL/current_user.json") {
             header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
@@ -41,6 +56,16 @@ class RavelryApiClient(
         return lenientJson.decodeFromString<CurrentUserResponse>(raw).user
     }
 
+    /**
+     * Returns the list of groups [username] is a member of.
+     *
+     * Scrapes `www.ravelry.com/people/{username}/groups/memberships` using the session cookie,
+     * extracts group permalinks, then resolves each via a search call to get the [Group]
+     * (including `forum_id`). The search calls are made in parallel.
+     *
+     * @param username Ravelry username whose memberships to fetch.
+     * @return Groups the user belongs to. Groups not found via search are silently omitted.
+     */
     suspend fun getUserGroups(username: String): List<Group> = coroutineScope {
         val html = httpClient.get("https://www.ravelry.com/people/$username/groups/memberships") {
             header(HttpHeaders.Cookie, sessionCookie())
@@ -80,6 +105,14 @@ class RavelryApiClient(
         null
     }
 
+    /**
+     * Returns a page of topics for the given forum.
+     *
+     * @param forumId The `forum_id` from a [Group].
+     * @param page 1-based page number.
+     * @param pageSize Number of topics per page.
+     * @return Topics ordered by most-recently-replied first (Ravelry default).
+     */
     suspend fun getGroupTopics(forumId: Long, page: Int = 1, pageSize: Int = 25): List<Topic> {
         val raw = httpClient.get("$BASE_URL/forums/$forumId/topics.json") {
             header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
@@ -91,6 +124,11 @@ class RavelryApiClient(
         return lenientJson.decodeFromString<TopicsResponse>(raw).topics
     }
 
+    /**
+     * Returns the full detail for a single topic, including [Topic.createdByUser] and [Topic.summary].
+     *
+     * @param topicId Ravelry topic ID.
+     */
     suspend fun getTopicDetail(topicId: Long): Topic {
         val raw = httpClient.get("$BASE_URL/topics/$topicId.json") {
             header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
