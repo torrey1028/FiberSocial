@@ -23,7 +23,8 @@ sealed class FeedItem {
         override val lastPostAt: String?,
         val author: RavelryUser,
         val title: String,
-        val imageUrls: List<String>,
+        val imageUrls: List<String>,  // populated in a future phase; imageCount for now
+        val imageCount: Int,
         val replyCount: Int,
     ) : FeedItem()
 

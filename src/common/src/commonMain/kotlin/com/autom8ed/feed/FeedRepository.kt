@@ -4,6 +4,9 @@ import com.autom8ed.feed.models.FeedItem
 import com.autom8ed.feed.models.Group
 import com.autom8ed.feed.models.RavelryUser
 import com.autom8ed.feed.models.Topic
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 
 class FeedRepository(private val apiClient: RavelryApiClient) {
 
@@ -12,38 +15,43 @@ class FeedRepository(private val apiClient: RavelryApiClient) {
     suspend fun getUserGroups(username: String): List<Group> =
         apiClient.getUserGroups(username)
 
-    suspend fun getFeedItems(groups: List<Group>): List<FeedItem> =
+    // Fetches topic list per group then resolves details in parallel for author + summary.
+    suspend fun getFeedItems(groups: List<Group>): List<FeedItem> = coroutineScope {
         groups.flatMap { group ->
-            apiClient.getGroupTopics(group.permalink).map { topic ->
-                topic.toFeedItem(groupId = group.id, groupName = group.name)
-            }
+            apiClient.getGroupTopics(group.forumId)
+                .map { topic ->
+                    async {
+                        val detail = apiClient.getTopicDetail(topic.id)
+                        detail.toFeedItem(groupId = group.id, groupName = group.name)
+                    }
+                }
+                .awaitAll()
         }.sortedByDescending { it.lastPostAt }
+    }
 
     private fun Topic.toFeedItem(groupId: Long, groupName: String): FeedItem {
-        val author = firstPoster ?: lastPoster
-        return if (coverImageUrl != null && postsCount > 1) {
-            // Topics with images and replies → treat as project showcase
+        return if (imagesCount > 0) {
             FeedItem.ProjectPost(
                 id = id,
                 groupId = groupId,
                 groupName = groupName,
-                lastPostAt = lastPostAt,
-                author = author!!,
+                lastPostAt = repliedAt,
+                author = createdByUser ?: RavelryUser(username = "unknown"),
                 title = title,
-                imageUrls = listOf(coverImageUrl),
+                imageUrls = emptyList(), // actual image URLs require fetching posts; Phase 3
+                imageCount = imagesCount,
                 replyCount = postsCount,
             )
         } else {
-            // Text-heavy topics → treat as event/announcement
             FeedItem.EventPost(
                 id = id,
                 groupId = groupId,
                 groupName = groupName,
-                lastPostAt = lastPostAt,
-                author = author!!,
+                lastPostAt = repliedAt,
+                author = createdByUser ?: RavelryUser(username = "unknown"),
                 title = title,
-                coverImageUrl = coverImageUrl,
-                bodyPreview = "",
+                coverImageUrl = null,
+                bodyPreview = summary?.take(200) ?: "",
                 replyCount = postsCount,
             )
         }

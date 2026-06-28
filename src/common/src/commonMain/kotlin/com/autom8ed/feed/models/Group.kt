@@ -8,6 +8,7 @@ data class Group(
     val id: Long,
     val name: String,
     val permalink: String,
-    @SerialName("members_count") val membersCount: Int = 0,
-    @SerialName("avatar_image_path") val avatarUrl: String? = null,
+    @SerialName("forum_id") val forumId: Long,
+    @SerialName("badge_url") val badgeUrl: String? = null,
+    @SerialName("short_description") val shortDescription: String? = null,
 )

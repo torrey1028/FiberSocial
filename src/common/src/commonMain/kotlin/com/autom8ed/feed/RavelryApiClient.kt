@@ -26,28 +26,36 @@ class RavelryApiClient(
             header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
         }.body<CurrentUserResponse>().user
 
+    // Confirmed endpoint: /groups/search.json?username={username}
     suspend fun getUserGroups(username: String): List<Group> =
-        httpClient.get("$BASE_URL/people/$username/groups.json") {
+        httpClient.get("$BASE_URL/groups/search.json") {
             header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
+            url.parameters.append("username", username)
         }.body<GroupsResponse>().groups
 
-    suspend fun getGroupTopics(permalink: String, page: Int = 1, pageSize: Int = 25): List<Topic> =
-        httpClient.get("$BASE_URL/groups/$permalink/topics.json") {
+    // Docs: /forums/{forum_id}/topics.json — takes the numeric forum_id from the Group
+    suspend fun getGroupTopics(forumId: Long, page: Int = 1, pageSize: Int = 25): List<Topic> =
+        httpClient.get("$BASE_URL/forums/$forumId/topics.json") {
             header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
             url.parameters.apply {
                 append("page", page.toString())
                 append("page_size", pageSize.toString())
-                append("sort", "updated")
             }
         }.body<TopicsResponse>().topics
 
-    // Response wrappers — field names to be verified against live API
+    // Detail endpoint adds created_by_user and summary (not in list response)
+    suspend fun getTopicDetail(topicId: Long): Topic =
+        httpClient.get("$BASE_URL/topics/$topicId.json") {
+            header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
+        }.body<TopicDetailResponse>().topic
+
     @Serializable private data class CurrentUserResponse(val user: RavelryUser)
     @Serializable private data class GroupsResponse(val groups: List<Group> = emptyList())
     @Serializable private data class TopicsResponse(
         val topics: List<Topic> = emptyList(),
-        @SerialName("paginator") val paginator: Paginator? = null,
+        val paginator: Paginator? = null,
     )
+    @Serializable private data class TopicDetailResponse(val topic: Topic)
     @Serializable private data class Paginator(
         val page: Int = 1,
         @SerialName("page_count") val pageCount: Int = 1,
