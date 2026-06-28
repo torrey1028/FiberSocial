@@ -1,11 +1,18 @@
 package com.autom8ed.fibersocial.feed
 
+import com.autom8ed.fibersocial.auth.AuthToken
+import io.ktor.client.HttpClient
+import io.ktor.client.engine.mock.MockEngine
+import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.serialization.kotlinx.json.json
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertNotEquals
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.Json
 
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class TopicDetailViewModelTest {
@@ -58,5 +65,36 @@ class TopicDetailViewModelTest {
         awaitChildren(coroutineContext[Job]!!)
         val state = assertIs<TopicDetailState.Loaded>(vm.state.value)
         assertEquals(0, state.posts.size)
+    }
+
+    @Test
+    fun `load error message falls back to default when exception has null message`() = runTest(UnconfinedTestDispatcher()) {
+        val engine = MockEngine { throw RuntimeException() }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val vm = TopicDetailViewModel(
+            RavelryApiClient(httpClient, FakeFeedTokenStorage()),
+            this,
+        )
+        vm.load(42L)
+        awaitChildren(coroutineContext[Job]!!)
+        val state = assertIs<TopicDetailState.Error>(vm.state.value)
+        assertEquals("Failed to load replies", state.message)
+    }
+
+    @Test
+    fun `TopicDetailState data classes support equality and copy`() {
+        val posts = listOf<com.autom8ed.fibersocial.feed.models.Post>()
+        val loaded1 = TopicDetailState.Loaded(posts)
+        val loaded2 = TopicDetailState.Loaded(posts)
+        assertEquals(loaded1, loaded2)
+        assertEquals(loaded1, loaded1.copy())
+
+        val err1 = TopicDetailState.Error("oops")
+        val err2 = TopicDetailState.Error("oops")
+        assertEquals(err1, err2)
+        assertNotEquals(err1, TopicDetailState.Error("other"))
+        assertEquals("oops", err1.copy().message)
     }
 }
