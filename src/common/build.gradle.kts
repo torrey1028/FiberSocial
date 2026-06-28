@@ -7,6 +7,7 @@ plugins {
 }
 
 kotlin {
+    jvm()
     androidTarget {
         compilerOptions {
             jvmTarget.set(JvmTarget.JVM_17)
@@ -22,9 +23,19 @@ kotlin {
             implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.1")
             implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.6.0")
         }
+        commonTest.dependencies {
+            implementation(kotlin("test"))
+            implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
+            implementation("io.ktor:ktor-client-mock:2.3.12")
+        }
         androidMain.dependencies {
             implementation("io.ktor:ktor-client-android:2.3.12")
             implementation("androidx.security:security-crypto:1.0.0")
+        }
+        androidUnitTest.dependencies {
+            implementation(kotlin("test"))
+            implementation("junit:junit:4.13.2")
+            implementation("org.robolectric:robolectric:4.12.2")
         }
     }
 }
@@ -34,6 +45,11 @@ android {
     compileSdk = 34
     defaultConfig {
         minSdk = 26
+    }
+    testOptions {
+        unitTests {
+            isIncludeAndroidResources = true
+        }
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
