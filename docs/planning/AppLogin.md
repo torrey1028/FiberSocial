@@ -122,25 +122,23 @@ src/
 10. App navigates to home screen
 ```
 
-**Subsequent app opens (biometric unlock):**
+**Subsequent app opens:**
 ```
-1. App detects stored refresh_token exists
-2. Show biometric prompt (fingerprint / face)
-3. On success: use refresh_token to get new access_token silently
-4. Navigate straight to home — no browser, no password
+1. App detects stored access_token exists → navigate straight to home
+2. If token is expired or missing → show login screen for full OAuth flow
 ```
 
 ---
 
 ## Implementation Phases
 
-### Phase 1 — KMP shared module scaffolding
+### Phase 1 — KMP shared module scaffolding ✅
 - Add `src/common/build.gradle.kts` as a KMP library module
 - Wire it into the Android app's `settings.gradle.kts` and `build.gradle.kts`
 - Define `AuthToken`, `TokenStorage` interface, `AuthRepository`, `AuthViewModel` stubs
 - Add Ktor and MOKO MVVM dependencies
 
-### Phase 2 — OAuth login (Android)
+### Phase 2 — OAuth login (Android) ✅
 - Register app at `ravelry.com/pro/developer`, get client ID
 - Add AppAuth-Android dependency
 - Implement `RavelryOAuthClient` (PKCE auth code flow + token exchange via Ktor)
@@ -149,17 +147,10 @@ src/
 - Update `MainActivity` to route: if token exists → home, else → login
 - Register `fibersocial://auth/callback` URI scheme in `AndroidManifest.xml`
 
-### Phase 3 — Biometric unlock (Android)
-- On login success, set a `biometric_enabled` flag in preferences
-- On next app open: if flag set, show `BiometricPrompt` instead of login screen
-- On biometric success: call `AuthRepository.refreshTokens()`
-- On biometric failure / cancel: fall back to full OAuth login
-
-### Phase 4 — iOS (future)
+### Phase 3 — iOS (future)
 - Implement `IosTokenStorage` (Keychain) in `iosMain`
 - Add AppAuth-iOS, wire up `fibersocial://auth/callback` URL scheme in Info.plist
 - SwiftUI `LoginView` calls `AuthViewModel` from shared KMP module
-- `LocalAuthentication` for biometric
 
 ---
 
