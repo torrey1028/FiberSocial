@@ -1,9 +1,9 @@
-package com.autom8ed.feed
+package com.autom8ed.fibersocial.feed
 
-import com.autom8ed.feed.models.FeedItem
-import com.autom8ed.feed.models.Group
-import com.autom8ed.feed.models.RavelryUser
-import com.autom8ed.feed.models.Topic
+import com.autom8ed.fibersocial.feed.models.FeedItem
+import com.autom8ed.fibersocial.feed.models.Group
+import com.autom8ed.fibersocial.feed.models.RavelryUser
+import com.autom8ed.fibersocial.feed.models.Topic
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope

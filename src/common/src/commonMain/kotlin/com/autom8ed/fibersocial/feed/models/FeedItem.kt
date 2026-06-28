@@ -1,4 +1,4 @@
-package com.autom8ed.feed.models
+package com.autom8ed.fibersocial.feed.models
 
 /**
  * Discriminated union of the two card types shown in the feed mockup.

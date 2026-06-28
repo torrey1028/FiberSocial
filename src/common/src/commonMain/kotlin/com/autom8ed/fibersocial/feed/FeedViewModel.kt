@@ -1,8 +1,8 @@
-package com.autom8ed.feed
+package com.autom8ed.fibersocial.feed
 
-import com.autom8ed.feed.models.FeedItem
-import com.autom8ed.feed.models.Group
-import com.autom8ed.feed.models.RavelryUser
+import com.autom8ed.fibersocial.feed.models.FeedItem
+import com.autom8ed.fibersocial.feed.models.Group
+import com.autom8ed.fibersocial.feed.models.RavelryUser
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow

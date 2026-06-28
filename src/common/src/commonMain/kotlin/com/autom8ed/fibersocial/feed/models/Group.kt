@@ -1,4 +1,4 @@
-package com.autom8ed.feed.models
+package com.autom8ed.fibersocial.feed.models
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable

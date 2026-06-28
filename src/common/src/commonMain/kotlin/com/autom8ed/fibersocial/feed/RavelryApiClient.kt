@@ -1,9 +1,9 @@
-package com.autom8ed.feed
+package com.autom8ed.fibersocial.feed
 
-import com.autom8ed.auth.TokenStorage
-import com.autom8ed.feed.models.Group
-import com.autom8ed.feed.models.RavelryUser
-import com.autom8ed.feed.models.Topic
+import com.autom8ed.fibersocial.auth.TokenStorage
+import com.autom8ed.fibersocial.feed.models.Group
+import com.autom8ed.fibersocial.feed.models.RavelryUser
+import com.autom8ed.fibersocial.feed.models.Topic
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.request.get
