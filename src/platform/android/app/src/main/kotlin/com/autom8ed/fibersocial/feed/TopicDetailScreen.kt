@@ -1,11 +1,12 @@
 package com.autom8ed.fibersocial.feed
 
-import android.text.Html
+import android.text.method.LinkMovementMethod
 import android.widget.TextView
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -33,13 +34,18 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import coil.compose.AsyncImage
 import com.autom8ed.fibersocial.feed.models.FeedItem
 import com.autom8ed.fibersocial.feed.models.Post
 import com.autom8ed.fibersocial.feed.models.RavelryUser
+import io.noties.markwon.Markwon
+import io.noties.markwon.html.HtmlPlugin
+import io.noties.markwon.linkify.LinkifyPlugin
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -64,13 +70,9 @@ fun TopicDetailScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                horizontal = 16.dp,
-                vertical = 12.dp,
-            ),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(0.dp),
         ) {
-            // Opening post
             item(key = "header") {
                 Text(topic.title, style = MaterialTheme.typography.titleLarge)
                 Spacer(Modifier.height(12.dp))
@@ -79,7 +81,7 @@ fun TopicDetailScreen(
                 HorizontalDivider()
                 Spacer(Modifier.height(16.dp))
                 if (topic.bodySummary.isNotBlank()) {
-                    HtmlText(html = topic.bodySummary)
+                    MarkwonHtmlText(html = topic.bodySummary)
                     Spacer(Modifier.height(16.dp))
                 }
                 HorizontalDivider()
@@ -95,7 +97,9 @@ fun TopicDetailScreen(
             when (postsState) {
                 is TopicDetailState.Loading -> item(key = "loading") {
                     Box(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 32.dp),
                         contentAlignment = Alignment.Center,
                     ) { CircularProgressIndicator() }
                 }
@@ -125,7 +129,7 @@ private fun ReplyItem(post: Post) {
         AuthorRow(user = post.user, timestamp = post.createdAt)
         if (post.bodyHtml.isNotBlank()) {
             Spacer(Modifier.height(8.dp))
-            HtmlText(html = post.bodyHtml)
+            MarkwonHtmlText(html = post.bodyHtml)
         }
     }
 }
@@ -160,13 +164,32 @@ private fun AuthorRow(user: RavelryUser?, timestamp: String?) {
 }
 
 @Composable
-private fun HtmlText(html: String, modifier: Modifier = Modifier) {
-    val spanned = remember(html) {
-        Html.fromHtml(html, Html.FROM_HTML_MODE_COMPACT)
+fun MarkwonHtmlText(html: String, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val markwon = remember {
+        Markwon.builder(context)
+            .usePlugin(HtmlPlugin.create())
+            .usePlugin(LinkifyPlugin.create())
+            .build()
     }
+
+    // Capture theme values in Compose scope so the AndroidView update block can apply them
+    val textColor = MaterialTheme.colorScheme.onSurface.toArgb()
+    val linkColor = MaterialTheme.colorScheme.primary.toArgb()
+    val textSizeSp = MaterialTheme.typography.bodyMedium.fontSize.value
+
     AndroidView(
-        factory = { context -> TextView(context) },
-        update = { tv -> tv.text = spanned },
+        factory = { ctx ->
+            TextView(ctx).apply {
+                movementMethod = LinkMovementMethod.getInstance()
+            }
+        },
+        update = { tv ->
+            tv.setTextColor(textColor)
+            tv.setLinkTextColor(linkColor)
+            tv.textSize = textSizeSp
+            markwon.setMarkdown(tv, html)
+        },
         modifier = modifier.fillMaxWidth(),
     )
 }
