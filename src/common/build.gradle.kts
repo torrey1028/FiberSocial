@@ -30,7 +30,7 @@ kotlin {
 }
 
 android {
-    namespace = "com.autom8ed.common"
+    namespace = "com.autom8ed.fibersocial.common"
     compileSdk = 34
     defaultConfig {
         minSdk = 26

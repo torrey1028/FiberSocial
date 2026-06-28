@@ -1,4 +1,4 @@
-package com.autom8ed
+package com.autom8ed.fibersocial
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -15,9 +15,9 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import com.autom8ed.auth.AuthState
-import com.autom8ed.login.AuthAndroidViewModel
-import com.autom8ed.login.LoginScreen
+import com.autom8ed.fibersocial.auth.AuthState
+import com.autom8ed.fibersocial.login.AuthAndroidViewModel
+import com.autom8ed.fibersocial.login.LoginScreen
 
 class MainActivity : ComponentActivity() {
 

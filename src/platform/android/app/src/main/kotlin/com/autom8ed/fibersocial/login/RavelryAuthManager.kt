@@ -1,9 +1,9 @@
-package com.autom8ed.login
+package com.autom8ed.fibersocial.login
 
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
-import com.autom8ed.auth.RavelryOAuthClient
+import com.autom8ed.fibersocial.auth.RavelryOAuthClient
 import net.openid.appauth.AuthorizationRequest
 import net.openid.appauth.AuthorizationResponse
 import net.openid.appauth.AuthorizationService

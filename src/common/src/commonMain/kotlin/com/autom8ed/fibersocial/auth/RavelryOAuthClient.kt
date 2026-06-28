@@ -1,4 +1,4 @@
-package com.autom8ed.auth
+package com.autom8ed.fibersocial.auth
 
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body

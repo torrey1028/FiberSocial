@@ -1,4 +1,4 @@
-package com.autom8ed.auth
+package com.autom8ed.fibersocial.auth
 
 interface TokenStorage {
     suspend fun save(token: AuthToken)

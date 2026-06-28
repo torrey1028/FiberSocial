@@ -1,4 +1,4 @@
-package com.autom8ed.login
+package com.autom8ed.fibersocial.login
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
