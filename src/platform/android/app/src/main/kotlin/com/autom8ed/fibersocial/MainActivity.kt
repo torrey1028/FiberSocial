@@ -10,18 +10,21 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import com.autom8ed.fibersocial.auth.AuthState
+import com.autom8ed.fibersocial.feed.FeedAndroidViewModel
+import com.autom8ed.fibersocial.feed.FeedScreen
 import com.autom8ed.fibersocial.login.AuthAndroidViewModel
 import com.autom8ed.fibersocial.login.LoginScreen
 
 class MainActivity : ComponentActivity() {
 
     private val authVm: AuthAndroidViewModel by viewModels()
+    private val feedVm: FeedAndroidViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -48,10 +51,10 @@ class MainActivity : ComponentActivity() {
                         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                             CircularProgressIndicator()
                         }
-                    is AuthState.Authenticated ->
-                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            Text("Welcome! (Home screen coming soon)")
-                        }
+                    is AuthState.Authenticated -> {
+                        LaunchedEffect(Unit) { feedVm.load() }
+                        FeedScreen(viewModel = feedVm)
+                    }
                 }
             }
         }
