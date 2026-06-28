@@ -47,6 +47,10 @@ class RavelryApiClient(
             header(HttpHeaders.Accept, "text/html")
         }.bodyAsText()
 
+        println("FiberSocial: MEMBERSHIPS_HTML_START")
+        html.chunked(900).forEach { println("FiberSocial: $it") }
+        println("FiberSocial: MEMBERSHIPS_HTML_END")
+
         val permalinks = GROUP_PERMALINK_REGEX.findAll(html)
             .map { it.groupValues[1] }
             .distinct()
@@ -60,10 +64,17 @@ class RavelryApiClient(
     }
 
     private suspend fun getGroup(permalink: String): Group? = try {
-        val raw = httpClient.get("$BASE_URL/groups/$permalink.json") {
+        val raw = httpClient.get("$BASE_URL/groups/search.json") {
             header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
+            url.parameters.apply {
+                append("query", permalink.replace("-", " "))
+                append("page_size", "25")
+            }
         }.bodyAsText()
-        lenientJson.decodeFromString<GroupDetailResponse>(raw).group
+        val match = lenientJson.decodeFromString<GroupsSearchResponse>(raw).groups
+            .find { it.permalink == permalink }
+        println("FiberSocial: getGroup($permalink) -> ${if (match != null) "found forum_id=${match.forumId}" else "NOT FOUND"}")
+        match
     } catch (e: Exception) {
         println("FiberSocial: getGroup($permalink) error: ${e.message}")
         null
@@ -88,7 +99,7 @@ class RavelryApiClient(
     }
 
     @Serializable private data class CurrentUserResponse(val user: RavelryUser)
-    @Serializable private data class GroupDetailResponse(val group: Group)
+    @Serializable private data class GroupsSearchResponse(val groups: List<Group> = emptyList())
     @Serializable private data class TopicsResponse(
         val topics: List<Topic> = emptyList(),
         val paginator: Paginator? = null,

@@ -71,4 +71,20 @@ class AuthRepositoryTest {
         repo.logout()
         assertNull(storage.load())
     }
+
+    @Test
+    fun `login stores sessionCookie alongside token`() = runTest {
+        val storage = FakeTokenStorage()
+        val repo = makeRepo(storage = storage)
+        repo.login("code", "verifier", "https://redirect", sessionCookie = "sess=abc")
+        assertEquals("sess=abc", storage.load()?.sessionCookie)
+    }
+
+    @Test
+    fun `login with null sessionCookie stores null`() = runTest {
+        val storage = FakeTokenStorage()
+        val repo = makeRepo(storage = storage)
+        repo.login("code", "verifier", "https://redirect", sessionCookie = null)
+        assertNull(storage.load()?.sessionCookie)
+    }
 }

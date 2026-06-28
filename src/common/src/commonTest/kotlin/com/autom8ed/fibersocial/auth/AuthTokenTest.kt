@@ -46,4 +46,33 @@ class AuthTokenTest {
         assertEquals(original.refreshToken, copy.refreshToken)
         assertEquals(original.expiresAt, copy.expiresAt)
     }
+
+    @Test
+    fun `sessionCookie defaults to null`() {
+        val token = AuthToken("access", "refresh", 1000L)
+        assertEquals(null, token.sessionCookie)
+    }
+
+    @Test
+    fun `sessionCookie is stored and retrievable`() {
+        val token = AuthToken("access", "refresh", 1000L, sessionCookie = "cookie=value")
+        assertEquals("cookie=value", token.sessionCookie)
+    }
+
+    @Test
+    fun `tokens with different sessionCookie are not equal`() {
+        assertNotEquals(
+            AuthToken("access", "refresh", 1000L, sessionCookie = "a=1"),
+            AuthToken("access", "refresh", 1000L, sessionCookie = "b=2"),
+        )
+    }
+
+    @Test
+    fun `copy with sessionCookie overrides only that field`() {
+        val original = AuthToken("access", "refresh", 1000L)
+        val withCookie = original.copy(sessionCookie = "sess=abc")
+        assertEquals("sess=abc", withCookie.sessionCookie)
+        assertEquals(original.accessToken, withCookie.accessToken)
+        assertEquals(original.refreshToken, withCookie.refreshToken)
+    }
 }

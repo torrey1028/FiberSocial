@@ -13,7 +13,7 @@ import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.json.Json
 
 class FakeFeedTokenStorage(
-    initial: AuthToken? = AuthToken("test-token", "test-refresh", Long.MAX_VALUE),
+    initial: AuthToken? = AuthToken("test-token", "test-refresh", Long.MAX_VALUE, "sess=test"),
 ) : TokenStorage {
     private var stored: AuthToken? = initial
     override suspend fun save(token: AuthToken) { stored = token }
@@ -49,6 +49,9 @@ fun errorApiClient(storage: TokenStorage = FakeFeedTokenStorage()): RavelryApiCl
 // Minimal fixture JSONs shared across test classes
 const val CURRENT_USER_JSON = """{"user":{"username":"yarnie","small_photo_url":"https://example.com/a.jpg"}}"""
 const val GROUPS_JSON = """{"groups":[{"id":10,"name":"KAL Hub","permalink":"kal-hub","forum_id":42}]}"""
+const val MEMBERSHIPS_HTML = """<html><body>
+<a href="https://www.ravelry.com/groups/kal-hub">KAL Hub</a>
+</body></html>"""
 fun topicsJson(vararg ids: Long) = """{"topics":[${
     ids.joinToString(",") { """{"id":$it,"title":"Topic $it"}""" }
 }]}"""
