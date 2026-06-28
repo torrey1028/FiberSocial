@@ -65,20 +65,17 @@ android {
     }
 }
 
-// Coverage is scoped to packages that have tests. Expand the include patterns as new
-// packages gain test coverage.
-val coveredPackages = fileTree(layout.buildDirectory.dir("classes/kotlin/jvm/main")) {
-    include("**/auth/**")
-    exclude("**/*\$\$serializer.class")
-}
-
 // Generates HTML + XML reports.
 // CI compares the XML against the last successful main-branch run and fails if coverage dropped.
 tasks.register<JacocoReport>("jvmCoverageReport") {
     dependsOn("jvmTest")
     executionData.setFrom(layout.buildDirectory.file("jacoco/jvmTest.exec"))
     sourceDirectories.setFrom(files("src/commonMain/kotlin"))
-    classDirectories.setFrom(coveredPackages)
+    classDirectories.setFrom(
+        fileTree(layout.buildDirectory.dir("classes/kotlin/jvm/main")) {
+            exclude("**/*\$\$serializer.class")
+        }
+    )
     reports {
         html.required.set(true)
         xml.required.set(true)

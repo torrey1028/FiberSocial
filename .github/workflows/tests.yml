@@ -63,25 +63,19 @@ jobs:
           python3 - << 'PYEOF'
           import xml.etree.ElementTree as ET, sys
 
-          AUTH_PKG = "com/autom8ed/fibersocial/auth"
-          METRICS  = ("INSTRUCTION", "BRANCH")
+          METRICS = ("INSTRUCTION", "BRANCH")
 
-          def auth_coverage(path):
+          def total_coverage(path):
+              # Top-level <counter> elements are the report-wide totals across all packages.
               root = ET.parse(path).getroot()
-              totals = {}
-              for pkg in root.findall("package"):
-                  if pkg.get("name") != AUTH_PKG:
-                      continue
-                  for c in pkg.findall("counter"):
-                      t = c.get("type")
-                      if t in METRICS:
-                          e = totals.setdefault(t, [0, 0])
-                          e[0] += int(c.get("missed"))
-                          e[1] += int(c.get("covered"))
-              return {t: v[1] / (v[0] + v[1]) for t, v in totals.items()}
+              return {
+                  c.get("type"): int(c.get("covered")) / (int(c.get("missed")) + int(c.get("covered")))
+                  for c in root.findall("counter")
+                  if c.get("type") in METRICS
+              }
 
-          baseline = auth_coverage("/tmp/jvm-baseline/report.xml")
-          current  = auth_coverage("src/common/build/reports/jacoco/jvmCoverageReport/report.xml")
+          baseline = total_coverage("/tmp/jvm-baseline/report.xml")
+          current  = total_coverage("src/common/build/reports/jacoco/jvmCoverageReport/report.xml")
 
           failed = False
           for t in METRICS:
@@ -164,25 +158,19 @@ jobs:
           python3 - << 'PYEOF'
           import xml.etree.ElementTree as ET, sys
 
-          AUTH_PKG = "com/autom8ed/fibersocial/auth"
-          METRICS  = ("INSTRUCTION", "BRANCH")
+          METRICS = ("INSTRUCTION", "BRANCH")
 
-          def auth_coverage(path):
+          def total_coverage(path):
+              # Top-level <counter> elements are the report-wide totals across all packages.
               root = ET.parse(path).getroot()
-              totals = {}
-              for pkg in root.findall("package"):
-                  if pkg.get("name") != AUTH_PKG:
-                      continue
-                  for c in pkg.findall("counter"):
-                      t = c.get("type")
-                      if t in METRICS:
-                          e = totals.setdefault(t, [0, 0])
-                          e[0] += int(c.get("missed"))
-                          e[1] += int(c.get("covered"))
-              return {t: v[1] / (v[0] + v[1]) for t, v in totals.items()}
+              return {
+                  c.get("type"): int(c.get("covered")) / (int(c.get("missed")) + int(c.get("covered")))
+                  for c in root.findall("counter")
+                  if c.get("type") in METRICS
+              }
 
-          baseline = auth_coverage("/tmp/android-baseline/report.xml")
-          current  = auth_coverage("src/common/build/reports/coverage/test/debug/report.xml")
+          baseline = total_coverage("/tmp/android-baseline/report.xml")
+          current  = total_coverage("src/common/build/reports/coverage/test/debug/report.xml")
 
           failed = False
           for t in METRICS:
