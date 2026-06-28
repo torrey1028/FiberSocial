@@ -1,10 +1,6 @@
 package com.autom8ed.fibersocial.feed
 
-import android.text.Html
-import android.widget.TextView
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -14,12 +10,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -29,23 +24,18 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
 import coil.compose.AsyncImage
 import com.autom8ed.fibersocial.feed.models.FeedItem
-import com.autom8ed.fibersocial.feed.models.Post
-import com.autom8ed.fibersocial.feed.models.RavelryUser
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TopicDetailScreen(
     topic: FeedItem.DiscussionTopic,
-    postsState: TopicDetailState,
     onBack: () -> Unit,
 ) {
     Scaffold(
@@ -60,113 +50,61 @@ fun TopicDetailScreen(
             )
         },
     ) { padding ->
-        LazyColumn(
+        Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                horizontal = 16.dp,
-                vertical = 12.dp,
-            ),
-            verticalArrangement = Arrangement.spacedBy(0.dp),
+                .padding(padding)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp, vertical = 12.dp),
         ) {
-            // Opening post
-            item(key = "header") {
-                Text(topic.title, style = MaterialTheme.typography.titleLarge)
-                Spacer(Modifier.height(12.dp))
-                AuthorRow(user = topic.author, timestamp = topic.lastPostAt)
-                Spacer(Modifier.height(16.dp))
-                HorizontalDivider()
-                Spacer(Modifier.height(16.dp))
-                if (topic.bodySummary.isNotBlank()) {
-                    HtmlText(html = topic.bodySummary)
-                    Spacer(Modifier.height(16.dp))
-                }
-                HorizontalDivider()
-                Spacer(Modifier.height(16.dp))
-                Text(
-                    text = "💬 ${topic.replyCount} ${if (topic.replyCount == 1) "reply" else "replies"}",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+            Text(
+                text = topic.title,
+                style = MaterialTheme.typography.titleLarge,
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                AsyncImage(
+                    model = topic.author.avatarUrl,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.surfaceVariant),
                 )
-                Spacer(Modifier.height(8.dp))
-            }
-
-            when (postsState) {
-                is TopicDetailState.Loading -> item(key = "loading") {
-                    Box(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp),
-                        contentAlignment = Alignment.Center,
-                    ) { CircularProgressIndicator() }
-                }
-                is TopicDetailState.Error -> item(key = "error") {
+                Spacer(modifier = Modifier.width(10.dp))
+                Column {
                     Text(
-                        text = "Couldn't load replies. Check your connection and try again.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.padding(vertical = 16.dp),
+                        text = "@${topic.author.username}",
+                        style = MaterialTheme.typography.labelMedium,
+                    )
+                    Text(
+                        text = relativeTime(topic.lastPostAt),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                is TopicDetailState.Loaded -> items(
-                    postsState.posts,
-                    key = { it.id },
-                ) { post ->
-                    ReplyItem(post = post)
-                    HorizontalDivider()
-                }
             }
-        }
-    }
-}
-
-@Composable
-private fun ReplyItem(post: Post) {
-    Column(modifier = Modifier.padding(vertical = 12.dp)) {
-        AuthorRow(user = post.user, timestamp = post.createdAt)
-        if (post.bodyHtml.isNotBlank()) {
-            Spacer(Modifier.height(8.dp))
-            HtmlText(html = post.bodyHtml)
-        }
-    }
-}
-
-@Composable
-private fun AuthorRow(user: RavelryUser?, timestamp: String?) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        AsyncImage(
-            model = user?.avatarUrl,
-            contentDescription = null,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier
-                .size(32.dp)
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.surfaceVariant),
-        )
-        Spacer(Modifier.width(8.dp))
-        Column {
-            Text(
-                text = "@${user?.username ?: "unknown"}",
-                style = MaterialTheme.typography.labelMedium,
-            )
-            if (timestamp != null) {
+            Spacer(modifier = Modifier.height(16.dp))
+            HorizontalDivider()
+            Spacer(modifier = Modifier.height(16.dp))
+            if (topic.bodySummary.isNotBlank()) {
                 Text(
-                    text = relativeTime(timestamp),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    text = topic.bodySummary,
+                    style = MaterialTheme.typography.bodyMedium,
                 )
+                Spacer(modifier = Modifier.height(16.dp))
+                HorizontalDivider()
+                Spacer(modifier = Modifier.height(12.dp))
             }
+            Text(
+                text = "💬 ${topic.replyCount} ${if (topic.replyCount == 1) "reply" else "replies"}",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
-}
-
-@Composable
-private fun HtmlText(html: String, modifier: Modifier = Modifier) {
-    val spanned = remember(html) {
-        Html.fromHtml(html, Html.FROM_HTML_MODE_COMPACT)
-    }
-    AndroidView(
-        factory = { context -> TextView(context) },
-        update = { tv -> tv.text = spanned },
-        modifier = modifier.fillMaxWidth(),
-    )
 }
