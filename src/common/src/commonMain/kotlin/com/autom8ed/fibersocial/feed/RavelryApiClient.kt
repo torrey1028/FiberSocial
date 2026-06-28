@@ -5,7 +5,6 @@ import com.autom8ed.fibersocial.feed.models.Group
 import com.autom8ed.fibersocial.feed.models.RavelryUser
 import com.autom8ed.fibersocial.feed.models.Topic
 import io.ktor.client.HttpClient
-import io.ktor.client.call.body
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.statement.bodyAsText
@@ -15,8 +14,10 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 
 private const val BASE_URL = "https://api.ravelry.com"
+private val lenientJson = Json { ignoreUnknownKeys = true }
 
 // Ravelry has no API endpoint for "groups this user is a member of".
 // We scrape the memberships page on www.ravelry.com using the session cookie
@@ -33,10 +34,12 @@ class RavelryApiClient(
     private suspend fun sessionCookie(): String =
         tokenStorage.load()?.sessionCookie ?: error("No session cookie — re-login required")
 
-    suspend fun getCurrentUser(): RavelryUser =
-        httpClient.get("$BASE_URL/current_user.json") {
+    suspend fun getCurrentUser(): RavelryUser {
+        val raw = httpClient.get("$BASE_URL/current_user.json") {
             header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
-        }.body<CurrentUserResponse>().user
+        }.bodyAsText()
+        return lenientJson.decodeFromString<CurrentUserResponse>(raw).user
+    }
 
     suspend fun getUserGroups(username: String): List<Group> = coroutineScope {
         val html = httpClient.get("https://www.ravelry.com/people/$username/groups/memberships") {
@@ -57,27 +60,32 @@ class RavelryApiClient(
     }
 
     private suspend fun getGroup(permalink: String): Group? = try {
-        httpClient.get("$BASE_URL/groups/$permalink.json") {
+        val raw = httpClient.get("$BASE_URL/groups/$permalink.json") {
             header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
-        }.body<GroupDetailResponse>().group
+        }.bodyAsText()
+        lenientJson.decodeFromString<GroupDetailResponse>(raw).group
     } catch (e: Exception) {
         println("FiberSocial: getGroup($permalink) error: ${e.message}")
         null
     }
 
-    suspend fun getGroupTopics(forumId: Long, page: Int = 1, pageSize: Int = 25): List<Topic> =
-        httpClient.get("$BASE_URL/forums/$forumId/topics.json") {
+    suspend fun getGroupTopics(forumId: Long, page: Int = 1, pageSize: Int = 25): List<Topic> {
+        val raw = httpClient.get("$BASE_URL/forums/$forumId/topics.json") {
             header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
             url.parameters.apply {
                 append("page", page.toString())
                 append("page_size", pageSize.toString())
             }
-        }.body<TopicsResponse>().topics
+        }.bodyAsText()
+        return lenientJson.decodeFromString<TopicsResponse>(raw).topics
+    }
 
-    suspend fun getTopicDetail(topicId: Long): Topic =
-        httpClient.get("$BASE_URL/topics/$topicId.json") {
+    suspend fun getTopicDetail(topicId: Long): Topic {
+        val raw = httpClient.get("$BASE_URL/topics/$topicId.json") {
             header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
-        }.body<TopicDetailResponse>().topic
+        }.bodyAsText()
+        return lenientJson.decodeFromString<TopicDetailResponse>(raw).topic
+    }
 
     @Serializable private data class CurrentUserResponse(val user: RavelryUser)
     @Serializable private data class GroupDetailResponse(val group: Group)
