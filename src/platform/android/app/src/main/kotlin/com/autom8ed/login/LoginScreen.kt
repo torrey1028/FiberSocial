@@ -15,7 +15,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 
 @Composable
-fun LoginScreen(onLoginClick: () -> Unit) {
+fun LoginScreen(onLoginClick: () -> Unit, errorMessage: String? = null) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -33,6 +33,14 @@ fun LoginScreen(onLoginClick: () -> Unit) {
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        if (errorMessage != null) {
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                text = errorMessage,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
         Spacer(modifier = Modifier.height(48.dp))
         Button(onClick = onLoginClick) {
             Text("Log in with Ravelry")

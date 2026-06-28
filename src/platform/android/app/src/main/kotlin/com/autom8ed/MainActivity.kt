@@ -35,10 +35,15 @@ class MainActivity : ComponentActivity() {
                 }
 
                 when (authState) {
-                    is AuthState.Unauthenticated, is AuthState.Error ->
+                    is AuthState.Unauthenticated ->
                         LoginScreen(onLoginClick = {
                             authLauncher.launch(authVm.buildAuthIntent())
                         })
+                    is AuthState.Error ->
+                        LoginScreen(
+                            errorMessage = (authState as AuthState.Error).message,
+                            onLoginClick = { authLauncher.launch(authVm.buildAuthIntent()) },
+                        )
                     AuthState.Loading ->
                         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                             CircularProgressIndicator()

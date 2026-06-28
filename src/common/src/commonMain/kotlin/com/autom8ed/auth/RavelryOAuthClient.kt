@@ -2,11 +2,16 @@ package com.autom8ed.auth
 
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
+import io.ktor.client.request.basicAuth
 import io.ktor.client.request.forms.submitForm
 import io.ktor.http.parameters
 import kotlinx.datetime.Clock
 
-class RavelryOAuthClient(private val httpClient: HttpClient) {
+class RavelryOAuthClient(
+    private val httpClient: HttpClient,
+    private val clientId: String,
+    private val clientSecret: String,
+) {
 
     companion object {
         const val AUTH_URL = "https://www.ravelry.com/oauth2/auth"
@@ -14,7 +19,6 @@ class RavelryOAuthClient(private val httpClient: HttpClient) {
     }
 
     suspend fun exchangeAuthCode(
-        clientId: String,
         authCode: String,
         codeVerifier: String,
         redirectUri: String,
@@ -25,25 +29,24 @@ class RavelryOAuthClient(private val httpClient: HttpClient) {
             append("code", authCode)
             append("redirect_uri", redirectUri)
             append("code_verifier", codeVerifier)
-            append("client_id", clientId)
         }
-    ).body<TokenResponse>().toAuthToken()
+    ) {
+        basicAuth(clientId, clientSecret)
+    }.body<TokenResponse>().toAuthToken()
 
-    suspend fun refreshAccessToken(
-        clientId: String,
-        refreshToken: String,
-    ): AuthToken = httpClient.submitForm(
+    suspend fun refreshAccessToken(refreshToken: String): AuthToken = httpClient.submitForm(
         url = TOKEN_URL,
         formParameters = parameters {
             append("grant_type", "refresh_token")
             append("refresh_token", refreshToken)
-            append("client_id", clientId)
         }
-    ).body<TokenResponse>().toAuthToken()
+    ) {
+        basicAuth(clientId, clientSecret)
+    }.body<TokenResponse>().toAuthToken()
 
     private fun TokenResponse.toAuthToken() = AuthToken(
         accessToken = accessToken,
-        refreshToken = refreshToken,
+        refreshToken = refreshToken ?: "",
         expiresAt = Clock.System.now().toEpochMilliseconds() + expiresIn * 1000L,
     )
 }

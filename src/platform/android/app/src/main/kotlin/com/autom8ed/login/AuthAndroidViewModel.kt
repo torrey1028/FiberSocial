@@ -25,7 +25,11 @@ class AuthAndroidViewModel(app: Application) : AndroidViewModel(app) {
 
     private val authManager = RavelryAuthManager(app)
     private val tokenStorage = AndroidTokenStorage(app)
-    private val oauthClient = RavelryOAuthClient(httpClient)
+    private val oauthClient = RavelryOAuthClient(
+        httpClient = httpClient,
+        clientId = BuildConfig.RAVELRY_CLIENT_ID,
+        clientSecret = BuildConfig.RAVELRY_CLIENT_SECRET,
+    )
     private val repository = AuthRepository(oauthClient, tokenStorage)
 
     val auth = AuthViewModel(repository, viewModelScope)
@@ -41,7 +45,6 @@ class AuthAndroidViewModel(app: Application) : AndroidViewModel(app) {
         auth.onAuthCodeReceived(
             authCode = code,
             codeVerifier = verifier,
-            clientId = BuildConfig.RAVELRY_CLIENT_ID,
             redirectUri = RavelryAuthManager.REDIRECT_URI,
         )
     }

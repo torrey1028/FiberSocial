@@ -33,6 +33,7 @@ android {
         versionCode = 1
         versionName = gitVersionName()
         buildConfigField("String", "RAVELRY_CLIENT_ID", "\"${localProps.getProperty("ravelry.client_id", "")}\"")
+        buildConfigField("String", "RAVELRY_CLIENT_SECRET", "\"${localProps.getProperty("ravelry.client_secret", "")}\"")
         // AppAuth uses this to register its RedirectUriReceiverActivity for our custom scheme
         manifestPlaceholders["appAuthRedirectScheme"] = "fibersocial"
     }
