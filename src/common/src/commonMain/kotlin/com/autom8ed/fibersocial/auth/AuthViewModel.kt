@@ -20,11 +20,18 @@ class AuthViewModel(
     private val _state = MutableStateFlow<AuthState>(AuthState.Unauthenticated)
     val state: StateFlow<AuthState> = _state.asStateFlow()
 
-    fun onAuthCodeReceived(authCode: String, codeVerifier: String, redirectUri: String) {
+    fun onAuthCodeReceived(
+        authCode: String,
+        codeVerifier: String,
+        redirectUri: String,
+        sessionCookie: String? = null,
+    ) {
         scope.launch {
             _state.value = AuthState.Loading
             _state.value = try {
-                AuthState.Authenticated(repository.login(authCode, codeVerifier, redirectUri))
+                AuthState.Authenticated(
+                    repository.login(authCode, codeVerifier, redirectUri, sessionCookie)
+                )
             } catch (e: Exception) {
                 AuthState.Error(e.message ?: "Login failed")
             }

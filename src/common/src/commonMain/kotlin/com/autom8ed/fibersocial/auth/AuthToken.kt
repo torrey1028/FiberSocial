@@ -7,4 +7,5 @@ data class AuthToken(
     val accessToken: String,
     val refreshToken: String,
     val expiresAt: Long, // epoch millis
+    val sessionCookie: String? = null, // www.ravelry.com session cookie for HTML scraping
 )
