@@ -72,7 +72,8 @@ val coveredPackages = fileTree(layout.buildDirectory.dir("classes/kotlin/jvm/mai
     exclude("**/*\$\$serializer.class")
 }
 
-// Generates HTML + XML reports — uploaded as a CI artifact.
+// Generates HTML + XML reports.
+// CI compares the XML against the last successful main-branch run and fails if coverage dropped.
 tasks.register<JacocoReport>("jvmCoverageReport") {
     dependsOn("jvmTest")
     executionData.setFrom(layout.buildDirectory.file("jacoco/jvmTest.exec"))
@@ -81,26 +82,6 @@ tasks.register<JacocoReport>("jvmCoverageReport") {
     reports {
         html.required.set(true)
         xml.required.set(true)
-    }
-}
-
-// Fails the build if instruction or branch coverage drops below the stored baseline.
-// Raise these values when coverage genuinely improves.
-tasks.register<JacocoCoverageVerification>("jvmCoverageVerification") {
-    dependsOn("jvmTest")
-    executionData.setFrom(layout.buildDirectory.file("jacoco/jvmTest.exec"))
-    sourceDirectories.setFrom(files("src/commonMain/kotlin"))
-    classDirectories.setFrom(coveredPackages)
-    violationRules {
-        rule {
-            limit {
-                counter = "INSTRUCTION"
-                minimum = "0.93".toBigDecimal()
-            }
-            limit {
-                counter = "BRANCH"
-                minimum = "0.87".toBigDecimal()
-            }
-        }
+        xml.outputLocation.set(layout.buildDirectory.file("reports/jacoco/jvmCoverageReport/report.xml"))
     }
 }
