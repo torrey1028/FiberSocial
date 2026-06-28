@@ -13,6 +13,8 @@ import kotlinx.serialization.json.Json
 class FakeTokenStorage : TokenStorage {
     private var stored: AuthToken? = null
 
+    fun seedToken(token: AuthToken) { stored = token }
+
     override suspend fun save(token: AuthToken) { stored = token }
     override suspend fun load(): AuthToken? = stored
     override suspend fun clear() { stored = null }

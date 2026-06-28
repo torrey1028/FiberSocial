@@ -19,6 +19,7 @@ class FeedViewModelTest {
         return FeedRepository(routingApiClient { path ->
             when {
                 path.contains("/current_user") -> CURRENT_USER_JSON
+                path.contains("memberships") -> MEMBERSHIPS_HTML
                 path.contains("/groups/search") -> GROUPS_JSON
                 path.contains("/forums/") -> topicsJson(100L)
                 path.contains("/topics/") -> topicDetailJson(100L)
@@ -90,6 +91,11 @@ class FeedViewModelTest {
         val repo = FeedRepository(routingApiClient { path ->
             when {
                 path.contains("/current_user") -> CURRENT_USER_JSON
+                path.contains("memberships") ->
+                    """<html><body>
+                    <a href="https://www.ravelry.com/groups/kal-hub">KAL Hub</a>
+                    <a href="https://www.ravelry.com/groups/sock">Sock Society</a>
+                    </body></html>"""
                 // return two groups
                 path.contains("/groups/search") ->
                     """{"groups":[

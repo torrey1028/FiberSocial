@@ -124,7 +124,13 @@ class FeedRepositoryTest {
 
     @Test
     fun `getUserGroups delegates to api client`() = runTest {
-        val repo = FeedRepository(routingApiClient { GROUPS_JSON })
+        val repo = FeedRepository(routingApiClient { path ->
+            when {
+                path.contains("memberships") -> MEMBERSHIPS_HTML
+                path.contains("groups/search") -> GROUPS_JSON
+                else -> """{"groups":[]}"""
+            }
+        })
         val groups = repo.getUserGroups("yarnie")
         assertEquals(1, groups.size)
         assertEquals("KAL Hub", groups[0].name)

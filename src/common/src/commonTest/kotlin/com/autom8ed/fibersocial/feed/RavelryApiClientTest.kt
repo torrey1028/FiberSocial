@@ -12,7 +12,7 @@ import io.ktor.serialization.kotlinx.json.json
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
-import kotlin.test.assertNull
+import kotlin.test.assertTrue
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 
@@ -27,8 +27,14 @@ class RavelryApiClientTest {
     }
 
     @Test
-    fun `getUserGroups returns parsed groups`() = runTest {
-        val client = routingApiClient { GROUPS_JSON }
+    fun `getUserGroups scrapes memberships HTML and resolves groups via search`() = runTest {
+        val client = routingApiClient { path ->
+            when {
+                path.contains("memberships") -> MEMBERSHIPS_HTML
+                path.contains("groups/search") -> GROUPS_JSON
+                else -> """{"groups":[]}"""
+            }
+        }
         val groups = client.getUserGroups("yarnie")
         assertEquals(1, groups.size)
         assertEquals("KAL Hub", groups[0].name)
@@ -36,9 +42,40 @@ class RavelryApiClientTest {
     }
 
     @Test
-    fun `getUserGroups returns empty list when response has none`() = runTest {
-        val client = routingApiClient { """{"groups":[]}""" }
+    fun `getUserGroups returns empty list when memberships page has no group links`() = runTest {
+        val client = routingApiClient { path ->
+            when {
+                path.contains("memberships") -> "<html><body>no groups here</body></html>"
+                else -> """{"groups":[]}"""
+            }
+        }
         assertEquals(emptyList(), client.getUserGroups("yarnie"))
+    }
+
+    @Test
+    fun `getUserGroups skips groups not found in search`() = runTest {
+        val htmlWithExtra = MEMBERSHIPS_HTML +
+            """<a href="https://www.ravelry.com/groups/unknown-group">Unknown</a>"""
+        val client = routingApiClient { path ->
+            when {
+                path.contains("memberships") -> htmlWithExtra
+                path.contains("groups/search") -> GROUPS_JSON
+                else -> """{"groups":[]}"""
+            }
+        }
+        val groups = client.getUserGroups("yarnie")
+        assertEquals(1, groups.size)
+        assertTrue(groups.none { it.permalink == "unknown-group" })
+    }
+
+    @Test
+    fun `getUserGroups fails when no session cookie stored`() = runTest {
+        val storage = FakeFeedTokenStorage(
+            initial = com.autom8ed.fibersocial.auth.AuthToken("tok", "ref", Long.MAX_VALUE, null)
+        )
+        val client = routingApiClient(storage = storage) { "" }
+        val result = runCatching { client.getUserGroups("yarnie") }
+        assertTrue(result.isFailure)
     }
 
     @Test
