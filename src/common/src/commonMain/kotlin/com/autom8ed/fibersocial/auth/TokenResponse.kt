@@ -1,4 +1,4 @@
-package com.autom8ed.auth
+package com.autom8ed.fibersocial.auth
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable

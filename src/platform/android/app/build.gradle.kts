@@ -23,11 +23,11 @@ val localProps = Properties().also { props ->
 }
 
 android {
-    namespace = "com.autom8ed"
+    namespace = "com.autom8ed.fibersocial"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.autom8ed"
+        applicationId = "com.autom8ed.fibersocial"
         minSdk = 26
         targetSdk = 34
         versionCode = 1

@@ -1,14 +1,14 @@
-package com.autom8ed.login
+package com.autom8ed.fibersocial.login
 
 import android.app.Application
 import android.content.Intent
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.autom8ed.BuildConfig
-import com.autom8ed.auth.AndroidTokenStorage
-import com.autom8ed.auth.AuthRepository
-import com.autom8ed.auth.AuthViewModel
-import com.autom8ed.auth.RavelryOAuthClient
+import com.autom8ed.fibersocial.BuildConfig
+import com.autom8ed.fibersocial.auth.AndroidTokenStorage
+import com.autom8ed.fibersocial.auth.AuthRepository
+import com.autom8ed.fibersocial.auth.AuthViewModel
+import com.autom8ed.fibersocial.auth.RavelryOAuthClient
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.android.Android
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
