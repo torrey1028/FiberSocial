@@ -28,6 +28,7 @@ class FeedAndroidViewModel(app: Application) : AndroidViewModel(app) {
     private val apiClient = RavelryApiClient(httpClient, tokenStorage)
     private val repository = FeedRepository(apiClient)
     val feed = FeedViewModel(repository, viewModelScope)
+    val topicDetail = TopicDetailViewModel(apiClient, viewModelScope)
 
     fun load() = feed.load()
 

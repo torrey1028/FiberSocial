@@ -2,6 +2,7 @@ package com.autom8ed.fibersocial.feed
 
 import com.autom8ed.fibersocial.auth.TokenStorage
 import com.autom8ed.fibersocial.feed.models.Group
+import com.autom8ed.fibersocial.feed.models.Post
 import com.autom8ed.fibersocial.feed.models.RavelryUser
 import com.autom8ed.fibersocial.feed.models.Topic
 import io.ktor.client.HttpClient
@@ -125,6 +126,18 @@ class RavelryApiClient(
     }
 
     /**
+     * Returns all posts (replies) for a topic, ordered oldest-first.
+     *
+     * @param topicId Ravelry topic ID.
+     */
+    suspend fun getTopicPosts(topicId: Long): List<Post> {
+        val raw = httpClient.get("$BASE_URL/topics/$topicId/posts.json") {
+            header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
+        }.bodyAsText()
+        return lenientJson.decodeFromString<PostsResponse>(raw).posts
+    }
+
+    /**
      * Returns the full detail for a single topic, including [Topic.createdByUser] and [Topic.summary].
      *
      * @param topicId Ravelry topic ID.
@@ -136,6 +149,7 @@ class RavelryApiClient(
         return lenientJson.decodeFromString<TopicDetailResponse>(raw).topic
     }
 
+    @Serializable private data class PostsResponse(val posts: List<Post> = emptyList())
     @Serializable private data class CurrentUserResponse(val user: RavelryUser)
     @Serializable private data class GroupsSearchResponse(val groups: List<Group> = emptyList())
     @Serializable private data class TopicsResponse(
