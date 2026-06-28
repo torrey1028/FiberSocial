@@ -1,19 +1,20 @@
 package com.autom8ed.fibersocial.auth
 
 import android.content.Context
+import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKeys
 
-class AndroidTokenStorage(context: Context) : TokenStorage {
+class AndroidTokenStorage(private val prefs: SharedPreferences) : TokenStorage {
 
-    private val masterKeyAlias = MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC)
-
-    private val prefs = EncryptedSharedPreferences.create(
-        "fibersocial_auth",
-        masterKeyAlias,
-        context.applicationContext,
-        EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-        EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
+    constructor(context: Context) : this(
+        EncryptedSharedPreferences.create(
+            "fibersocial_auth",
+            MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC),
+            context.applicationContext,
+            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
+        )
     )
 
     override suspend fun save(token: AuthToken) {

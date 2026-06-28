@@ -4,6 +4,7 @@ plugins {
     kotlin("multiplatform")
     id("com.android.library")
     kotlin("plugin.serialization")
+    id("jacoco")
 }
 
 kotlin {
@@ -32,6 +33,13 @@ kotlin {
             implementation("io.ktor:ktor-client-android:2.3.12")
             implementation("androidx.security:security-crypto:1.0.0")
         }
+        val androidUnitTest by getting {
+            dependencies {
+                implementation(kotlin("test"))
+                implementation("junit:junit:4.13.2")
+                implementation("org.robolectric:robolectric:4.12.2")
+            }
+        }
     }
 }
 
@@ -41,8 +49,36 @@ android {
     defaultConfig {
         minSdk = 26
     }
+    testOptions {
+        unitTests {
+            isIncludeAndroidResources = true
+        }
+    }
+    buildTypes {
+        debug {
+            enableUnitTestCoverage = true
+        }
+    }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+    }
+}
+
+// Generates HTML + XML reports.
+// CI compares the XML against the last successful main-branch run and fails if coverage dropped.
+tasks.register<JacocoReport>("jvmCoverageReport") {
+    dependsOn("jvmTest")
+    executionData.setFrom(layout.buildDirectory.file("jacoco/jvmTest.exec"))
+    sourceDirectories.setFrom(files("src/commonMain/kotlin"))
+    classDirectories.setFrom(
+        fileTree(layout.buildDirectory.dir("classes/kotlin/jvm/main")) {
+            exclude("**/*\$\$serializer.class")
+        }
+    )
+    reports {
+        html.required.set(true)
+        xml.required.set(true)
+        xml.outputLocation.set(layout.buildDirectory.file("reports/jacoco/jvmCoverageReport/report.xml"))
     }
 }

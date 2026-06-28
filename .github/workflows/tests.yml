@@ -1,0 +1,199 @@
+name: Tests
+
+on:
+  push:
+    branches: ["main", "feat/**"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  common-jvm-tests:
+    name: Common module JVM tests + coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: "temurin"
+
+      - name: Write local.properties
+        run: |
+          echo "sdk.dir=$ANDROID_HOME" > src/platform/android/local.properties
+          echo "ravelry.client_id=" >> src/platform/android/local.properties
+          echo "ravelry.client_secret=" >> src/platform/android/local.properties
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Run JVM tests and generate coverage report
+        working-directory: src/platform/android
+        run: ./gradlew :common:jvmCoverageReport
+
+      # On PRs: fetch the XML from the latest successful main run and compare.
+      # If no baseline exists yet (first-ever run) the comparison is skipped.
+      - name: Download JVM coverage baseline from latest main run
+        if: github.event_name == 'pull_request'
+        id: baseline-jvm
+        run: |
+          LATEST=$(gh run list \
+            --repo "${{ github.repository }}" \
+            --branch main \
+            --workflow tests.yml \
+            --status success \
+            --limit 1 \
+            --json databaseId \
+            --jq '.[0].databaseId // empty')
+          if [ -n "$LATEST" ]; then
+            gh run download "$LATEST" \
+              --repo "${{ github.repository }}" \
+              --name jvm-coverage-baseline \
+              --dir /tmp/jvm-baseline \
+            && echo "available=true" >> "$GITHUB_OUTPUT" \
+            || echo "Baseline artifact not found, skipping comparison"
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Compare JVM coverage to baseline
+        if: github.event_name == 'pull_request' && steps.baseline-jvm.outputs.available == 'true'
+        run: |
+          python3 - << 'PYEOF'
+          import xml.etree.ElementTree as ET, sys
+
+          METRICS = ("INSTRUCTION", "BRANCH")
+
+          def total_coverage(path):
+              # Top-level <counter> elements are the report-wide totals across all packages.
+              root = ET.parse(path).getroot()
+              return {
+                  c.get("type"): int(c.get("covered")) / (int(c.get("missed")) + int(c.get("covered")))
+                  for c in root.findall("counter")
+                  if c.get("type") in METRICS
+              }
+
+          baseline = total_coverage("/tmp/jvm-baseline/report.xml")
+          current  = total_coverage("src/common/build/reports/jacoco/jvmCoverageReport/report.xml")
+
+          failed = False
+          for t in METRICS:
+              b, c = baseline.get(t, 0), current.get(t, 0)
+              ok = c >= b - 0.001          # 0.1 % rounding tolerance
+              print(f"JVM {t}: {c:.1%} vs baseline {b:.1%}  {'OK' if ok else 'REGRESSION'}")
+              if not ok:
+                  failed = True
+          sys.exit(1 if failed else 0)
+          PYEOF
+
+      - name: Upload JVM coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jvm-coverage-report
+          path: src/common/build/reports/jacoco/jvmCoverageReport/html/
+          retention-days: 7
+
+      # Publish the XML on main so future PRs can download it as their baseline.
+      - name: Publish JVM coverage baseline
+        if: github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: jvm-coverage-baseline
+          path: src/common/build/reports/jacoco/jvmCoverageReport/report.xml
+          retention-days: 90
+
+  common-android-unit-tests:
+    name: Common module Android unit tests (Robolectric) + coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: "temurin"
+
+      - name: Write local.properties
+        run: |
+          echo "sdk.dir=$ANDROID_HOME" > src/platform/android/local.properties
+          echo "ravelry.client_id=" >> src/platform/android/local.properties
+          echo "ravelry.client_secret=" >> src/platform/android/local.properties
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Run Android unit tests and generate coverage report
+        working-directory: src/platform/android
+        run: ./gradlew :common:createDebugUnitTestCoverageReport
+
+      - name: Download Android coverage baseline from latest main run
+        if: github.event_name == 'pull_request'
+        id: baseline-android
+        run: |
+          LATEST=$(gh run list \
+            --repo "${{ github.repository }}" \
+            --branch main \
+            --workflow tests.yml \
+            --status success \
+            --limit 1 \
+            --json databaseId \
+            --jq '.[0].databaseId // empty')
+          if [ -n "$LATEST" ]; then
+            gh run download "$LATEST" \
+              --repo "${{ github.repository }}" \
+              --name android-coverage-baseline \
+              --dir /tmp/android-baseline \
+            && echo "available=true" >> "$GITHUB_OUTPUT" \
+            || echo "Baseline artifact not found, skipping comparison"
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Compare Android coverage to baseline
+        if: github.event_name == 'pull_request' && steps.baseline-android.outputs.available == 'true'
+        run: |
+          python3 - << 'PYEOF'
+          import xml.etree.ElementTree as ET, sys
+
+          METRICS = ("INSTRUCTION", "BRANCH")
+
+          def total_coverage(path):
+              # Top-level <counter> elements are the report-wide totals across all packages.
+              root = ET.parse(path).getroot()
+              return {
+                  c.get("type"): int(c.get("covered")) / (int(c.get("missed")) + int(c.get("covered")))
+                  for c in root.findall("counter")
+                  if c.get("type") in METRICS
+              }
+
+          baseline = total_coverage("/tmp/android-baseline/report.xml")
+          current  = total_coverage("src/common/build/reports/coverage/test/debug/report.xml")
+
+          failed = False
+          for t in METRICS:
+              b, c = baseline.get(t, 0), current.get(t, 0)
+              ok = c >= b - 0.001
+              print(f"Android {t}: {c:.1%} vs baseline {b:.1%}  {'OK' if ok else 'REGRESSION'}")
+              if not ok:
+                  failed = True
+          sys.exit(1 if failed else 0)
+          PYEOF
+
+      - name: Upload Android coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-coverage-report
+          path: src/common/build/reports/coverage/test/debug/
+          retention-days: 7
+
+      - name: Publish Android coverage baseline
+        if: github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-coverage-baseline
+          path: src/common/build/reports/coverage/test/debug/report.xml
+          retention-days: 90
