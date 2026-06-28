@@ -4,12 +4,15 @@ package com.autom8ed.fibersocial.feed.models
  * All group content comes through Ravelry's forum topics endpoint. We classify
  * topics into three card types based on fields the API actually provides:
  *
- * ProjectPost    — topic has images (forum_images_count > 0): someone sharing photos of a WIP/FO
- * AnnouncementPost — topic is sticky: KAL sign-ups, group events, mod notices
- * DiscussionPost — everything else: questions, general conversation
+ * ProjectPost      — topic has images (forum_images_count > 0): someone sharing photos of a WIP/FO
+ * AnnouncementPost — topic is sticky: KAL sign-ups, mod notices, pinned info
+ * DiscussionPost   — everything else: questions, general conversation
  *
  * Image URLs are not available in the topic list or detail response — only a count.
  * Actual image loading is deferred to a future phase (requires fetching posts).
+ *
+ * Note: Ravelry group events (meetups, etc.) exist at ravelry.com/events/ but are not
+ * exposed by the API. EventPost is deferred until Ravelry provides an events endpoint.
  */
 sealed class FeedItem {
     abstract val id: Long
