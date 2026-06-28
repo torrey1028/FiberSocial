@@ -7,6 +7,7 @@ plugins {
 }
 
 kotlin {
+    jvm()
     androidTarget {
         compilerOptions {
             jvmTarget.set(JvmTarget.JVM_17)
@@ -21,6 +22,11 @@ kotlin {
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1")
             implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.1")
             implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.6.0")
+        }
+        commonTest.dependencies {
+            implementation(kotlin("test"))
+            implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
+            implementation("io.ktor:ktor-client-mock:2.3.12")
         }
         androidMain.dependencies {
             implementation("io.ktor:ktor-client-android:2.3.12")
