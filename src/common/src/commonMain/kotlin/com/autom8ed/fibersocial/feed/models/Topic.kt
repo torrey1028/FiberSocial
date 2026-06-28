@@ -3,7 +3,25 @@ package com.autom8ed.fibersocial.feed.models
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
-/** Covers both list-view fields and detail-view fields (detail adds createdByUser + summary). */
+/**
+ * A Ravelry forum topic, returned by both list and detail endpoints.
+ *
+ * The list endpoint (`/forums/{id}/topics.json`) returns most fields but omits
+ * [createdByUser] and [summary]. The detail endpoint (`/topics/{id}.json`) includes
+ * both, so [FeedRepository] fetches details in parallel after loading the list.
+ *
+ * @property id Ravelry topic ID.
+ * @property title Topic title as entered by the author.
+ * @property forumId ID of the forum this topic belongs to. Zero in detail responses.
+ * @property postsCount Total number of replies (including the opening post).
+ * @property imagesCount Number of images attached across all posts in the topic.
+ * @property repliedAt ISO-8601 timestamp of the most recent reply.
+ * @property createdAt ISO-8601 timestamp when the topic was first posted.
+ * @property sticky Whether a moderator has pinned this topic to the top of the forum.
+ * @property archived Whether the topic is closed for new replies.
+ * @property createdByUser Author of the opening post. Only present in detail responses.
+ * @property summary Plain-text excerpt of the opening post body. Only present in detail responses.
+ */
 @Serializable
 data class Topic(
     val id: Long,
@@ -15,7 +33,6 @@ data class Topic(
     @SerialName("created_at") val createdAt: String? = null,
     val sticky: Boolean = false,
     val archived: Boolean = false,
-    // Only present in /topics/{id}.json detail response
     @SerialName("created_by_user") val createdByUser: RavelryUser? = null,
     val summary: String? = null,
 )

@@ -1,18 +1,25 @@
 package com.autom8ed.fibersocial.feed.models
 
 /**
- * All group content comes through Ravelry's forum topics endpoint. We classify
- * topics into three card types based on fields the API actually provides:
+ * A single card in the group feed, derived from a Ravelry forum [Topic].
  *
- * ProjectPost      — topic has images (forum_images_count > 0): someone sharing photos of a WIP/FO
- * AnnouncementPost — topic is sticky: KAL sign-ups, mod notices, pinned info
- * DiscussionPost   — everything else: questions, general conversation
+ * All group content comes through Ravelry's forum topics endpoint. Topics are classified
+ * into three card types based on fields the API provides:
+ *
+ * - [DiscussionPost] — general conversation or questions (the common case).
+ * - [AnnouncementPost] — sticky topics: KAL sign-ups, mod notices, pinned info.
+ * - [ProjectPost] — topics with attached images: WIP/FO shares.
  *
  * Image URLs are not available in the topic list or detail response — only a count.
- * Actual image loading is deferred to a future phase (requires fetching posts).
+ * Actual image loading requires fetching individual posts and is deferred to a future phase.
  *
- * Note: Ravelry group events (meetups, etc.) exist at ravelry.com/events/ but are not
- * exposed by the API. EventPost is deferred until Ravelry provides an events endpoint.
+ * Note: Ravelry group events exist at `ravelry.com/events/` but are not exposed by the API.
+ * An `EventPost` type is deferred until Ravelry provides an events endpoint.
+ *
+ * @property id Ravelry topic ID.
+ * @property groupId ID of the [Group] this item belongs to.
+ * @property groupName Display name of the group, shown on the card.
+ * @property lastPostAt ISO-8601 timestamp of the most recent reply, used for feed sorting.
  */
 sealed class FeedItem {
     abstract val id: Long
@@ -20,6 +27,15 @@ sealed class FeedItem {
     abstract val groupName: String
     abstract val lastPostAt: String?
 
+    /**
+     * A topic where at least one post contains an image.
+     *
+     * @property author User who created the opening post.
+     * @property title Topic title.
+     * @property imageCount Total number of images across all posts.
+     * @property imageUrls Direct image URLs. Empty until post-level fetching is implemented.
+     * @property replyCount Total number of posts in the thread.
+     */
     data class ProjectPost(
         override val id: Long,
         override val groupId: Long,
@@ -28,10 +44,18 @@ sealed class FeedItem {
         val author: RavelryUser,
         val title: String,
         val imageCount: Int,
-        val imageUrls: List<String>, // deferred: requires fetching posts
+        val imageUrls: List<String>,
         val replyCount: Int,
     ) : FeedItem()
 
+    /**
+     * A sticky/pinned topic such as a KAL announcement or moderator notice.
+     *
+     * @property author User who created the opening post.
+     * @property title Topic title.
+     * @property bodyPreview Truncated plain-text excerpt of the opening post (max 200 chars).
+     * @property replyCount Total number of posts in the thread.
+     */
     data class AnnouncementPost(
         override val id: Long,
         override val groupId: Long,
@@ -43,6 +67,14 @@ sealed class FeedItem {
         val replyCount: Int,
     ) : FeedItem()
 
+    /**
+     * A general discussion topic — questions, conversation, sharing without images.
+     *
+     * @property author User who created the opening post.
+     * @property title Topic title.
+     * @property bodyPreview Truncated plain-text excerpt of the opening post (max 200 chars).
+     * @property replyCount Total number of posts in the thread.
+     */
     data class DiscussionPost(
         override val id: Long,
         override val groupId: Long,
