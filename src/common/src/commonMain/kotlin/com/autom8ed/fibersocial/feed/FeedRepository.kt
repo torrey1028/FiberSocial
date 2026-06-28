@@ -49,9 +49,10 @@ class FeedRepository(private val apiClient: RavelryApiClient) {
 
     private fun Topic.toFeedItem(groupId: Long, groupName: String): FeedItem {
         val author = createdByUser ?: RavelryUser(username = "unknown")
-        val preview = summary?.take(200) ?: ""
+        val full = summary ?: ""
+        val preview = full.take(200)
         return when {
-            imagesCount > 0 -> FeedItem.ProjectPost(
+            imagesCount > 0 -> FeedItem.ProjectTopic(
                 id = id,
                 groupId = groupId,
                 groupName = groupName,
@@ -62,7 +63,7 @@ class FeedRepository(private val apiClient: RavelryApiClient) {
                 imageUrls = emptyList(), // requires fetching posts; deferred to future phase
                 replyCount = postsCount,
             )
-            sticky -> FeedItem.AnnouncementPost(
+            sticky -> FeedItem.AnnouncementTopic(
                 id = id,
                 groupId = groupId,
                 groupName = groupName,
@@ -70,9 +71,10 @@ class FeedRepository(private val apiClient: RavelryApiClient) {
                 author = author,
                 title = title,
                 bodyPreview = preview,
+                bodySummary = full,
                 replyCount = postsCount,
             )
-            else -> FeedItem.DiscussionPost(
+            else -> FeedItem.DiscussionTopic(
                 id = id,
                 groupId = groupId,
                 groupName = groupName,
@@ -80,6 +82,7 @@ class FeedRepository(private val apiClient: RavelryApiClient) {
                 author = author,
                 title = title,
                 bodyPreview = preview,
+                bodySummary = full,
                 replyCount = postsCount,
             )
         }

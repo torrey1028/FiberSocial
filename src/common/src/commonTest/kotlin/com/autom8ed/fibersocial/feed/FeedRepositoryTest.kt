@@ -29,29 +29,29 @@ class FeedRepositoryTest {
     }
 
     @Test
-    fun `getFeedItems classifies topic with images as ProjectPost`() = runTest {
+    fun `getFeedItems classifies topic with images as ProjectTopic`() = runTest {
         val items = singleTopicRepo(imagesCount = 3).getFeedItems(listOf(group))
-        assertIs<FeedItem.ProjectPost>(items.single())
-        assertEquals(3, (items.single() as FeedItem.ProjectPost).imageCount)
+        assertIs<FeedItem.ProjectTopic>(items.single())
+        assertEquals(3, (items.single() as FeedItem.ProjectTopic).imageCount)
     }
 
     @Test
-    fun `getFeedItems classifies sticky topic as AnnouncementPost`() = runTest {
+    fun `getFeedItems classifies sticky topic as AnnouncementTopic`() = runTest {
         val items = singleTopicRepo(sticky = true).getFeedItems(listOf(group))
-        assertIs<FeedItem.AnnouncementPost>(items.single())
+        assertIs<FeedItem.AnnouncementTopic>(items.single())
     }
 
     @Test
-    fun `getFeedItems classifies plain topic as DiscussionPost`() = runTest {
+    fun `getFeedItems classifies plain topic as DiscussionTopic`() = runTest {
         val items = singleTopicRepo().getFeedItems(listOf(group))
-        assertIs<FeedItem.DiscussionPost>(items.single())
+        assertIs<FeedItem.DiscussionTopic>(items.single())
     }
 
     @Test
     fun `getFeedItems images flag takes precedence over sticky`() = runTest {
         // imagesCount > 0 wins even when sticky = true
         val items = singleTopicRepo(imagesCount = 1, sticky = true).getFeedItems(listOf(group))
-        assertIs<FeedItem.ProjectPost>(items.single())
+        assertIs<FeedItem.ProjectTopic>(items.single())
     }
 
     @Test
@@ -70,7 +70,7 @@ class FeedRepositoryTest {
                 else -> error("Unexpected: $path")
             }
         }
-        val item = repo.getFeedItems(listOf(group)).single() as FeedItem.DiscussionPost
+        val item = repo.getFeedItems(listOf(group)).single() as FeedItem.DiscussionTopic
         assertEquals("unknown", item.author.username)
     }
 
@@ -78,14 +78,14 @@ class FeedRepositoryTest {
     fun `getFeedItems truncates summary to 200 chars`() = runTest {
         val long = "x".repeat(300)
         val items = singleTopicRepo(summary = long).getFeedItems(listOf(group))
-        val preview = (items.single() as FeedItem.DiscussionPost).bodyPreview
+        val preview = (items.single() as FeedItem.DiscussionTopic).bodyPreview
         assertEquals(200, preview.length)
     }
 
     @Test
     fun `getFeedItems uses empty string when summary is null`() = runTest {
         val items = singleTopicRepo(summary = null).getFeedItems(listOf(group))
-        assertEquals("", (items.single() as FeedItem.DiscussionPost).bodyPreview)
+        assertEquals("", (items.single() as FeedItem.DiscussionTopic).bodyPreview)
     }
 
     @Test

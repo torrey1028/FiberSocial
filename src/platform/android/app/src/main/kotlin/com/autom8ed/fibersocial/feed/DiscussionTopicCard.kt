@@ -30,7 +30,7 @@ import java.time.format.DateTimeFormatter
 
 private val RAVELRY_DATE_FORMAT = DateTimeFormatter.ofPattern("yyyy/MM/dd HH:mm:ss Z")
 
-private fun relativeTime(dateString: String?): String {
+internal fun relativeTime(dateString: String?): String {
     if (dateString == null) return ""
     return try {
         val then = OffsetDateTime.parse(dateString, RAVELRY_DATE_FORMAT)
@@ -47,8 +47,15 @@ private fun relativeTime(dateString: String?): String {
 }
 
 @Composable
-fun DiscussionPostCard(item: FeedItem.DiscussionPost, modifier: Modifier = Modifier) {
-    ElevatedCard(modifier = modifier.fillMaxWidth()) {
+fun DiscussionTopicCard(
+    item: FeedItem.DiscussionTopic,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    ElevatedCard(
+        onClick = onClick,
+        modifier = modifier.fillMaxWidth(),
+    ) {
         Column(modifier = Modifier.padding(12.dp)) {
             Row(verticalAlignment = Alignment.Top) {
                 AsyncImage(

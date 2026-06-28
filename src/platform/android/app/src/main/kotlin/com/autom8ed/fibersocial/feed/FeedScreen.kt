@@ -28,7 +28,10 @@ import androidx.compose.material3.DrawerValue
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -40,6 +43,16 @@ import kotlinx.coroutines.launch
 @Composable
 fun FeedScreen(viewModel: FeedAndroidViewModel) {
     val state by viewModel.feed.state.collectAsState()
+    var selectedTopic by remember { mutableStateOf<FeedItem.DiscussionTopic?>(null) }
+
+    if (selectedTopic != null) {
+        TopicDetailScreen(
+            topic = selectedTopic!!,
+            onBack = { selectedTopic = null },
+        )
+        return
+    }
+
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
 
@@ -104,8 +117,16 @@ fun FeedScreen(viewModel: FeedAndroidViewModel) {
                     Text(message, color = MaterialTheme.colorScheme.error)
                 }
 
-                is FeedState.Loaded -> FeedList(s.items, Modifier.padding(padding))
-                is FeedState.Refreshing -> FeedList(s.stale.items, Modifier.padding(padding))
+                is FeedState.Loaded -> FeedList(
+                    items = s.items,
+                    modifier = Modifier.padding(padding),
+                    onTopicClick = { selectedTopic = it },
+                )
+                is FeedState.Refreshing -> FeedList(
+                    items = s.stale.items,
+                    modifier = Modifier.padding(padding),
+                    onTopicClick = { selectedTopic = it },
+                )
             }
         }
     }
@@ -151,16 +172,21 @@ private fun GroupDrawer(
 }
 
 @Composable
-private fun FeedList(items: List<FeedItem>, modifier: Modifier = Modifier) {
-    val renderable = items.filterIsInstance<FeedItem.DiscussionPost>()
+private fun FeedList(
+    items: List<FeedItem>,
+    modifier: Modifier = Modifier,
+    onTopicClick: (FeedItem.DiscussionTopic) -> Unit,
+) {
+    val renderable = items.filterIsInstance<FeedItem.DiscussionTopic>()
     LazyColumn(
         modifier = modifier.fillMaxSize(),
         contentPadding = PaddingValues(vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         items(renderable, key = { it.id }) { item ->
-            DiscussionPostCard(
+            DiscussionTopicCard(
                 item = item,
+                onClick = { onTopicClick(item) },
                 modifier = Modifier.padding(horizontal = 16.dp),
             )
         }
