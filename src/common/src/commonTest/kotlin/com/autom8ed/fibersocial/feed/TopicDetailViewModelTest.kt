@@ -9,6 +9,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertNotEquals
+import kotlin.test.assertTrue
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
@@ -84,17 +85,21 @@ class TopicDetailViewModelTest {
     }
 
     @Test
-    fun `TopicDetailState data classes support equality and copy`() {
+    fun `TopicDetailState data classes support equality copy hashCode and toString`() {
         val posts = listOf<com.autom8ed.fibersocial.feed.models.Post>()
         val loaded1 = TopicDetailState.Loaded(posts)
         val loaded2 = TopicDetailState.Loaded(posts)
         assertEquals(loaded1, loaded2)
+        assertEquals(loaded1.hashCode(), loaded2.hashCode())
         assertEquals(loaded1, loaded1.copy())
+        assertTrue(loaded1.toString().contains("Loaded"))
 
         val err1 = TopicDetailState.Error("oops")
         val err2 = TopicDetailState.Error("oops")
         assertEquals(err1, err2)
+        assertEquals(err1.hashCode(), err2.hashCode())
         assertNotEquals(err1, TopicDetailState.Error("other"))
         assertEquals("oops", err1.copy().message)
+        assertTrue(err1.toString().contains("oops"))
     }
 }

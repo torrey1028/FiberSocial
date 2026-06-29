@@ -4,6 +4,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertNull
+import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 import kotlinx.serialization.json.Json
 
@@ -196,5 +197,16 @@ class PostTest {
         val p = json.decodeFromString<Post>("""{"id":3,"unexpected":"ignored"}""")
         assertEquals(3L, p.id)
         assertTrue(p.bodyHtml.isEmpty())
+    }
+
+    @Test
+    fun `equality copy and hashCode`() {
+        val p1 = Post(id = 1L, bodyHtml = "<p>hi</p>", createdAt = "2024-01-15T10:00:00Z")
+        val p2 = Post(id = 1L, bodyHtml = "<p>hi</p>", createdAt = "2024-01-15T10:00:00Z")
+        assertEquals(p1, p2)
+        assertEquals(p1.hashCode(), p2.hashCode())
+        assertEquals(p1, p1.copy())
+        assertNotEquals(p1, p1.copy(id = 2L))
+        assertTrue(p1.toString().contains("1"))
     }
 }
