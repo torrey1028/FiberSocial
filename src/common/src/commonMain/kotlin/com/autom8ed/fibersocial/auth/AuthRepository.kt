@@ -46,6 +46,7 @@ class AuthRepository(
     suspend fun refreshToken(): AuthToken {
         val stored = tokenStorage.load() ?: error("No stored token to refresh")
         val refreshed = oauthClient.refreshAccessToken(stored.refreshToken)
+            .copy(sessionCookie = stored.sessionCookie)
         tokenStorage.save(refreshed)
         return refreshed
     }

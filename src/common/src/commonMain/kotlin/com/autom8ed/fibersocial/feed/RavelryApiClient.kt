@@ -1,5 +1,6 @@
 package com.autom8ed.fibersocial.feed
 
+import com.autom8ed.fibersocial.auth.SessionExpiredException
 import com.autom8ed.fibersocial.auth.TokenStorage
 import com.autom8ed.fibersocial.feed.models.Group
 import com.autom8ed.fibersocial.feed.models.Post
@@ -8,11 +9,14 @@ import com.autom8ed.fibersocial.feed.models.Topic
 import io.ktor.client.HttpClient
 import io.ktor.client.request.get
 import io.ktor.client.request.header
+import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpStatusCode
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.datetime.Clock
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -28,16 +32,23 @@ private val GROUP_PERMALINK_REGEX = Regex("""href="https://www\.ravelry\.com/gro
 /**
  * Low-level HTTP client for the Ravelry API and Ravelry web scraping.
  *
- * All API calls use the Bearer token from [TokenStorage]. Group membership data is obtained
- * by scraping `www.ravelry.com` with the session cookie (also from [TokenStorage]), because
- * Ravelry exposes no API endpoint for listing a user's group memberships.
+ * All API calls use the Bearer token from [TokenStorage]. On a 401/403 response,
+ * [refreshToken] is invoked (if provided) and the request is retried once. If the
+ * refresh fails or [refreshToken] is null, [SessionExpiredException] is thrown.
+ * Group membership data is obtained by scraping `www.ravelry.com` with the session
+ * cookie (also from [TokenStorage]), because Ravelry exposes no API endpoint for
+ * listing a user's group memberships.
  *
  * @param httpClient Ktor client with JSON content negotiation configured.
  * @param tokenStorage Source of the Bearer token and session cookie.
+ * @param refreshToken Suspend callback that refreshes the access token and saves the
+ *   new token to [tokenStorage]. Called on 401/403 responses and proactively when
+ *   the token is within 60 seconds of expiry. Pass `null` to disable auto-refresh.
  */
 class RavelryApiClient(
     private val httpClient: HttpClient,
     private val tokenStorage: TokenStorage,
+    private val refreshToken: (suspend () -> Unit)? = null,
 ) {
     private suspend fun accessToken(): String =
         tokenStorage.load()?.accessToken ?: error("Not authenticated")
@@ -45,15 +56,49 @@ class RavelryApiClient(
     private suspend fun sessionCookie(): String =
         tokenStorage.load()?.sessionCookie ?: error("No session cookie — re-login required")
 
+    private suspend fun authenticatedRequest(block: suspend () -> HttpResponse): String {
+        // Proactive: refresh if token expires within 60 seconds (best-effort; 401 path handles failures)
+        tokenStorage.load()?.let { token ->
+            val now = Clock.System.now().toEpochMilliseconds()
+            if (token.refreshToken.isNotEmpty() && token.expiresAt - now < 60_000L) {
+                runCatching { tryRefresh() }
+            }
+        }
+
+        val response = block()
+        if (response.status == HttpStatusCode.Unauthorized || response.status == HttpStatusCode.Forbidden) {
+            tryRefresh()
+            val retried = block()
+            if (retried.status == HttpStatusCode.Unauthorized || retried.status == HttpStatusCode.Forbidden) {
+                throw SessionExpiredException("Session expired")
+            }
+            return retried.bodyAsText()
+        }
+        return response.bodyAsText()
+    }
+
+    private suspend fun tryRefresh() {
+        val doRefresh = refreshToken ?: throw SessionExpiredException("Session expired")
+        try {
+            doRefresh()
+        } catch (e: SessionExpiredException) {
+            throw e
+        } catch (e: Exception) {
+            throw SessionExpiredException("Token refresh failed: ${e.message}")
+        }
+    }
+
     /**
      * Returns the currently authenticated Ravelry user.
      *
      * @return [RavelryUser] for the owner of the stored Bearer token.
      */
     suspend fun getCurrentUser(): RavelryUser {
-        val raw = httpClient.get("$BASE_URL/current_user.json") {
-            header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
-        }.bodyAsText()
+        val raw = authenticatedRequest {
+            httpClient.get("$BASE_URL/current_user.json") {
+                header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
+            }
+        }
         return lenientJson.decodeFromString<CurrentUserResponse>(raw).user
     }
 
@@ -90,17 +135,21 @@ class RavelryApiClient(
     }
 
     private suspend fun getGroup(permalink: String): Group? = try {
-        val raw = httpClient.get("$BASE_URL/groups/search.json") {
-            header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
-            url.parameters.apply {
-                append("query", permalink.replace("-", " "))
-                append("page_size", "25")
+        val raw = authenticatedRequest {
+            httpClient.get("$BASE_URL/groups/search.json") {
+                header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
+                url.parameters.apply {
+                    append("query", permalink.replace("-", " "))
+                    append("page_size", "25")
+                }
             }
-        }.bodyAsText()
+        }
         val match = lenientJson.decodeFromString<GroupsSearchResponse>(raw).groups
             .find { it.permalink == permalink }
         println("FiberSocial: getGroup($permalink) -> ${if (match != null) "found forum_id=${match.forumId}" else "NOT FOUND"}")
         match
+    } catch (e: SessionExpiredException) {
+        throw e
     } catch (e: Exception) {
         println("FiberSocial: getGroup($permalink) error: ${e.message}")
         null
@@ -115,13 +164,15 @@ class RavelryApiClient(
      * @return Topics ordered by most-recently-replied first (Ravelry default).
      */
     suspend fun getGroupTopics(forumId: Long, page: Int = 1, pageSize: Int = 25): List<Topic> {
-        val raw = httpClient.get("$BASE_URL/forums/$forumId/topics.json") {
-            header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
-            url.parameters.apply {
-                append("page", page.toString())
-                append("page_size", pageSize.toString())
+        val raw = authenticatedRequest {
+            httpClient.get("$BASE_URL/forums/$forumId/topics.json") {
+                header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
+                url.parameters.apply {
+                    append("page", page.toString())
+                    append("page_size", pageSize.toString())
+                }
             }
-        }.bodyAsText()
+        }
         return lenientJson.decodeFromString<TopicsResponse>(raw).topics
     }
 
@@ -131,9 +182,11 @@ class RavelryApiClient(
      * @param topicId Ravelry topic ID.
      */
     suspend fun getTopicPosts(topicId: Long): List<Post> {
-        val raw = httpClient.get("$BASE_URL/topics/$topicId/posts.json") {
-            header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
-        }.bodyAsText()
+        val raw = authenticatedRequest {
+            httpClient.get("$BASE_URL/topics/$topicId/posts.json") {
+                header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
+            }
+        }
         return lenientJson.decodeFromString<PostsResponse>(raw).posts
     }
 
@@ -143,9 +196,11 @@ class RavelryApiClient(
      * @param topicId Ravelry topic ID.
      */
     suspend fun getTopicDetail(topicId: Long): Topic {
-        val raw = httpClient.get("$BASE_URL/topics/$topicId.json") {
-            header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
-        }.bodyAsText()
+        val raw = authenticatedRequest {
+            httpClient.get("$BASE_URL/topics/$topicId.json") {
+                header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
+            }
+        }
         return lenientJson.decodeFromString<TopicDetailResponse>(raw).topic
     }
 
