@@ -11,6 +11,7 @@ import kotlin.test.assertIs
 import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
@@ -83,6 +84,18 @@ class TopicDetailViewModelTest {
         val state = assertIs<TopicDetailState.Error>(vm.state.value)
         assertEquals("Failed to load replies", state.message)
     }
+
+    @Test
+    fun `load signals sessionExpired and stays Loading when session expires`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val vm = TopicDetailViewModel(sessionExpiredApiClient(), this)
+            vm.load(42L)
+            awaitChildren(coroutineContext[Job]!!)
+            assertIs<TopicDetailState.Loading>(vm.state.value)
+            // sessionExpired is filter{it}.map{} on a StateFlow, so first() returns
+            // immediately without suspension when the flag is already true
+            vm.sessionExpired.first()
+        }
 
     @Test
     fun `TopicDetailState data classes support equality copy hashCode and toString`() {
