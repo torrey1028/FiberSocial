@@ -55,6 +55,14 @@ fun sessionExpiredApiClient(storage: TokenStorage = FakeFeedTokenStorage()): Rav
     return RavelryApiClient(client, storage)
 }
 
+fun nullMessageApiClient(storage: TokenStorage = FakeFeedTokenStorage()): RavelryApiClient {
+    val engine = MockEngine { throw RuntimeException() }
+    val client = HttpClient(engine) {
+        install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+    }
+    return RavelryApiClient(client, storage)
+}
+
 // Minimal fixture JSONs shared across test classes
 const val CURRENT_USER_JSON = """{"user":{"username":"yarnie","small_photo_url":"https://example.com/a.jpg"}}"""
 const val GROUPS_JSON = """{"groups":[{"id":10,"name":"KAL Hub","permalink":"kal-hub","forum_id":42}]}"""

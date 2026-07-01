@@ -268,6 +268,32 @@ class RavelryApiClientTest {
     }
 
     @Test
+    fun `on 401 when retry also returns 401 throws SessionExpiredException`() = runTest {
+        val engine = MockEngine { respond("", HttpStatusCode.Unauthorized, headersOf()) }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val client = RavelryApiClient(httpClient, FakeFeedTokenStorage(),
+            refreshToken = { /* refresh succeeds, but retry still fails */ })
+        assertFailsWith<SessionExpiredException> {
+            client.getCurrentUser()
+        }
+    }
+
+    @Test
+    fun `on 403 when retry also returns 403 throws SessionExpiredException`() = runTest {
+        val engine = MockEngine { respond("", HttpStatusCode.Forbidden, headersOf()) }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val client = RavelryApiClient(httpClient, FakeFeedTokenStorage(),
+            refreshToken = { /* refresh succeeds, but retry still fails */ })
+        assertFailsWith<SessionExpiredException> {
+            client.getCurrentUser()
+        }
+    }
+
+    @Test
     fun `proactively refreshes when token expires within 60 seconds`() = runTest {
         val nearExpiry = Clock.System.now().toEpochMilliseconds() + 30_000L
         val storage = FakeFeedTokenStorage(
