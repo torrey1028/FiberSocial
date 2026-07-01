@@ -191,6 +191,83 @@ class RavelryApiClientTest {
     }
 
     @Test
+    fun `getTopicPosts requests vote_totals and user_votes`() = runTest {
+        var capturedInclude: String? = null
+        val engine = MockEngine { request ->
+            capturedInclude = request.url.parameters["include"]
+            respond(postsJson(1L), HttpStatusCode.OK,
+                headersOf("Content-Type", ContentType.Application.Json.toString()))
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        RavelryApiClient(httpClient, FakeFeedTokenStorage()).getTopicPosts(42L)
+        assertEquals("vote_totals user_votes", capturedInclude)
+    }
+
+    @Test
+    fun `getTopicPosts decodes vote_totals and user_votes when present`() = runTest {
+        val client = routingApiClient {
+            """{"posts":[{"id":1,"body_html":"<p>Reply</p>","user":{"username":"user1"},"vote_totals":{"love":3},"user_votes":["love"]}]}"""
+        }
+        val posts = client.getTopicPosts(42L)
+        assertEquals(mapOf("love" to 3), posts[0].voteTotals)
+        assertEquals(listOf("love"), posts[0].userVotes)
+    }
+
+    @Test
+    fun `getTopicPosts defaults vote fields to empty when absent`() = runTest {
+        val client = routingApiClient { postsJson(1L) }
+        val posts = client.getTopicPosts(42L)
+        assertEquals(emptyMap(), posts[0].voteTotals)
+        assertEquals(emptyList(), posts[0].userVotes)
+    }
+
+    @Test
+    fun `voteOnPost posts to forum_posts vote endpoint with love type`() = runTest {
+        var capturedPath: String? = null
+        var capturedMethod: String? = null
+        var capturedType: String? = null
+        var capturedVote: String? = null
+        val engine = MockEngine { request ->
+            capturedPath = request.url.encodedPath
+            capturedMethod = request.method.value
+            capturedType = request.url.parameters["type"]
+            capturedVote = request.url.parameters["vote"]
+            respond(voteResponseJson(loveCount = 1, userVoted = true), HttpStatusCode.OK,
+                headersOf("Content-Type", ContentType.Application.Json.toString()))
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val result = RavelryApiClient(httpClient, FakeFeedTokenStorage()).voteOnPost(1000L, liked = true)
+
+        assertEquals("/forum_posts/1000/vote.json", capturedPath)
+        assertEquals("POST", capturedMethod)
+        assertEquals("love", capturedType)
+        assertEquals("1", capturedVote)
+        assertEquals(mapOf("love" to 1), result.voteTotals)
+        assertEquals(listOf("love"), result.userVotes)
+    }
+
+    @Test
+    fun `voteOnPost clears vote when liked is false`() = runTest {
+        var capturedVote: String? = null
+        val engine = MockEngine { request ->
+            capturedVote = request.url.parameters["vote"]
+            respond(voteResponseJson(loveCount = 0, userVoted = false), HttpStatusCode.OK,
+                headersOf("Content-Type", ContentType.Application.Json.toString()))
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val result = RavelryApiClient(httpClient, FakeFeedTokenStorage()).voteOnPost(1000L, liked = false)
+
+        assertEquals("0", capturedVote)
+        assertEquals(emptyList(), result.userVotes)
+    }
+
+    @Test
     fun `getCurrentUser throws when no token stored`() = runTest {
         val emptyStorage = FakeFeedTokenStorage(initial = null)
         val engine = MockEngine { respond("", HttpStatusCode.OK, headersOf()) }

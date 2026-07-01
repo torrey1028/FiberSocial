@@ -9,6 +9,7 @@ import com.autom8ed.fibersocial.feed.models.Topic
 import io.ktor.client.HttpClient
 import io.ktor.client.request.get
 import io.ktor.client.request.header
+import io.ktor.client.request.post
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpHeaders
@@ -23,6 +24,11 @@ import kotlinx.serialization.json.Json
 
 private const val BASE_URL = "https://api.ravelry.com"
 private val lenientJson = Json { ignoreUnknownKeys = true }
+
+// Ravelry has no dedicated "like" reaction — forum posts support a set of named vote
+// types (interesting, educational, funny, agree, disagree, love). We use "love" (the
+// heart icon on ravelry.com) as the sole reaction surfaced as "like" in this app.
+private const val LOVE_VOTE_TYPE = "love"
 
 // Ravelry has no API endpoint for "groups this user is a member of".
 // We scrape the memberships page on www.ravelry.com using the session cookie
@@ -215,7 +221,8 @@ class RavelryApiClient(
     }
 
     /**
-     * Returns all posts (replies) for a topic, ordered oldest-first.
+     * Returns all posts (replies) for a topic, ordered oldest-first. Each post's
+     * [Post.voteTotals] and [Post.userVotes] are populated with its current reaction state.
      *
      * @param topicId Ravelry topic ID.
      */
@@ -223,9 +230,31 @@ class RavelryApiClient(
         val raw = authenticatedRequest {
             httpClient.get("$BASE_URL/topics/$topicId/posts.json") {
                 header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
+                url.parameters.append("include", "vote_totals user_votes")
             }
         }
         return lenientJson.decodeFromString<PostsResponse>(raw).posts
+    }
+
+    /**
+     * Casts or clears the current user's "like" (Ravelry's "love" vote type) on a forum post.
+     *
+     * @param postId Ravelry forum post ID.
+     * @param liked `true` to cast the vote, `false` to clear it.
+     * @return The post's updated vote totals and the current user's vote types.
+     */
+    suspend fun voteOnPost(postId: Long, liked: Boolean): VoteResult {
+        val raw = authenticatedRequest {
+            httpClient.post("$BASE_URL/forum_posts/$postId/vote.json") {
+                header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
+                url.parameters.apply {
+                    append("type", LOVE_VOTE_TYPE)
+                    append("vote", if (liked) "1" else "0")
+                }
+            }
+        }
+        val response = lenientJson.decodeFromString<VoteResponse>(raw)
+        return VoteResult(voteTotals = response.voteTotals, userVotes = response.userVotes)
     }
 
     /**
@@ -255,4 +284,19 @@ class RavelryApiClient(
         @SerialName("page_count") val pageCount: Int = 1,
         @SerialName("results") val totalResults: Int = 0,
     )
+    @Serializable private data class VoteResponse(
+        @SerialName("vote_totals") val voteTotals: Map<String, Int> = emptyMap(),
+        @SerialName("user_votes") val userVotes: List<String> = emptyList(),
+    )
 }
+
+/**
+ * Result of casting or clearing a vote on a forum post.
+ *
+ * @property voteTotals Vote-type name to total vote count on the post, after the vote.
+ * @property userVotes Vote-type names the current user has cast on the post, after the vote.
+ */
+data class VoteResult(
+    val voteTotals: Map<String, Int>,
+    val userVotes: List<String>,
+)
