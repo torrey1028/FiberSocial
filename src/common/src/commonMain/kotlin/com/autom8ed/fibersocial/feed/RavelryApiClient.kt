@@ -25,6 +25,12 @@ private val lenientJson = Json { ignoreUnknownKeys = true }
 // captured during WebView OAuth login, then resolve each group's forum_id via the API.
 private val GROUP_PERMALINK_REGEX = Regex("""href="https://www\.ravelry\.com/groups/([^"]+)"""")
 
+// Ravelry appends "-2", "-3", etc. to a group's permalink when its base slug is already
+// taken by another group (e.g. "kirkland-fiber-arts-circle-2"). That trailing digit isn't
+// part of the group's actual name, so including it in a search query pollutes the match
+// and can push small/niche groups out of the top page_size=25 results.
+private val TRAILING_DISAMBIGUATOR_REGEX = Regex("""-\d+$""")
+
 /**
  * Low-level HTTP client for the Ravelry API and Ravelry web scraping.
  *
@@ -89,20 +95,52 @@ class RavelryApiClient(
         }.awaitAll().filterNotNull()
     }
 
-    private suspend fun getGroup(permalink: String): Group? = try {
+    /**
+     * Resolves [permalink] to a [Group] by searching, trying progressively narrower
+     * queries until a match is found. The full permalink-derived query misses for small
+     * or local groups that rank low in Ravelry's search index (see [searchQueriesFor]).
+     */
+    private suspend fun getGroup(permalink: String): Group? {
+        for (query in searchQueriesFor(permalink)) {
+            val match = searchGroupByQuery(query, permalink)
+            if (match != null) {
+                println("FiberSocial: getGroup($permalink) -> found forum_id=${match.forumId} via query=\"$query\"")
+                return match
+            }
+        }
+        println("FiberSocial: getGroup($permalink) -> NOT FOUND")
+        return null
+    }
+
+    /**
+     * Builds an ordered list of search queries to try for [permalink], from most to
+     * least specific: the full permalink, then the permalink with any trailing
+     * Ravelry disambiguation number (e.g. "-2") stripped, then progressively fewer
+     * leading words of that stripped form.
+     */
+    private fun searchQueriesFor(permalink: String): List<String> {
+        val withoutSuffix = permalink.replace(TRAILING_DISAMBIGUATOR_REGEX, "")
+        val words = withoutSuffix.split("-").filter { it.isNotEmpty() }
+        return buildList {
+            add(permalink.replace("-", " "))
+            add(words.joinToString(" "))
+            if (words.size > 3) add(words.take(3).joinToString(" "))
+            if (words.size > 2) add(words.take(2).joinToString(" "))
+        }.distinct()
+    }
+
+    private suspend fun searchGroupByQuery(query: String, permalink: String): Group? = try {
         val raw = httpClient.get("$BASE_URL/groups/search.json") {
             header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
             url.parameters.apply {
-                append("query", permalink.replace("-", " "))
+                append("query", query)
                 append("page_size", "25")
             }
         }.bodyAsText()
-        val match = lenientJson.decodeFromString<GroupsSearchResponse>(raw).groups
+        lenientJson.decodeFromString<GroupsSearchResponse>(raw).groups
             .find { it.permalink == permalink }
-        println("FiberSocial: getGroup($permalink) -> ${if (match != null) "found forum_id=${match.forumId}" else "NOT FOUND"}")
-        match
     } catch (e: Exception) {
-        println("FiberSocial: getGroup($permalink) error: ${e.message}")
+        println("FiberSocial: getGroup($permalink) query=\"$query\" error: ${e.message}")
         null
     }
 
