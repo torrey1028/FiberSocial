@@ -69,6 +69,54 @@ class RavelryApiClientTest {
     }
 
     @Test
+    fun `getUserGroups falls back to a narrower query when the full permalink query misses`() = runTest {
+        // Regression test for #23: Ravelry appends "-2" to disambiguate a group's slug from
+        // an existing one, but that digit isn't part of the group's name and pollutes the
+        // search query enough that a small/niche group can fall out of the top 25 results.
+        val membershipsHtml = """<html><body>
+            <a href="https://www.ravelry.com/groups/kirkland-fiber-arts-circle-2">Kirkland Fiber Arts Circle</a>
+        </body></html>"""
+        val targetGroupJson =
+            """{"groups":[{"id":99,"name":"Kirkland Fiber Arts Circle","permalink":"kirkland-fiber-arts-circle-2","forum_id":77}]}"""
+        val queriesSeen = mutableListOf<String>()
+        val engine = MockEngine { request ->
+            val path = request.url.encodedPath
+            val body = when {
+                path.contains("memberships") -> membershipsHtml
+                path.contains("groups/search") -> {
+                    val query = request.url.parameters["query"].orEmpty()
+                    queriesSeen.add(query)
+                    if (query == "kirkland fiber arts circle") targetGroupJson else """{"groups":[]}"""
+                }
+                else -> """{"groups":[]}"""
+            }
+            respond(body, HttpStatusCode.OK, headersOf("Content-Type", ContentType.Application.Json.toString()))
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val client = RavelryApiClient(httpClient, FakeFeedTokenStorage())
+
+        val groups = client.getUserGroups("yarnie")
+
+        assertEquals(1, groups.size)
+        assertEquals(77L, groups[0].forumId)
+        assertEquals(listOf("kirkland fiber arts circle 2", "kirkland fiber arts circle"), queriesSeen)
+    }
+
+    @Test
+    fun `getUserGroups omits a group when every fallback query misses`() = runTest {
+        val client = routingApiClient { path ->
+            when {
+                path.contains("memberships") -> MEMBERSHIPS_HTML
+                path.contains("groups/search") -> """{"groups":[]}"""
+                else -> """{"groups":[]}"""
+            }
+        }
+        assertEquals(emptyList(), client.getUserGroups("yarnie"))
+    }
+
+    @Test
     fun `getUserGroups fails when no session cookie stored`() = runTest {
         val storage = FakeFeedTokenStorage(
             initial = com.autom8ed.fibersocial.auth.AuthToken("tok", "ref", Long.MAX_VALUE, null)
