@@ -4,6 +4,7 @@ import com.autom8ed.fibersocial.feed.models.Group
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
@@ -145,4 +146,16 @@ class FeedViewModelTest {
         awaitChildren(coroutineContext[Job]!!)
         assertIs<FeedState.Loading>(vm.state.value)
     }
+
+    @Test
+    fun `load signals sessionExpired and stays Loading when session expires`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val vm = FeedViewModel(FeedRepository(sessionExpiredApiClient()), this)
+            vm.load()
+            awaitChildren(coroutineContext[Job]!!)
+            assertIs<FeedState.Loading>(vm.state.value)
+            // sessionExpired is filter{it}.map{} on a StateFlow, so first() returns
+            // immediately without suspension when the flag is already true
+            vm.sessionExpired.first()
+        }
 }
