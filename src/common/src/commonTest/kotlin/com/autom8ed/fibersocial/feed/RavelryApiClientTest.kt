@@ -2,6 +2,7 @@ package com.autom8ed.fibersocial.feed
 
 import com.autom8ed.fibersocial.auth.AuthToken
 import com.autom8ed.fibersocial.auth.SessionExpiredException
+import com.autom8ed.fibersocial.feed.models.VoteType
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
@@ -224,7 +225,7 @@ class RavelryApiClientTest {
     }
 
     @Test
-    fun `voteOnPost posts to forum_posts vote endpoint with love type`() = runTest {
+    fun `voteOnPost posts to forum_posts vote endpoint with the given type`() = runTest {
         var capturedPath: String? = null
         var capturedMethod: String? = null
         var capturedType: String? = null
@@ -234,13 +235,14 @@ class RavelryApiClientTest {
             capturedMethod = request.method.value
             capturedType = request.url.parameters["type"]
             capturedVote = request.url.parameters["vote"]
-            respond(voteResponseJson(loveCount = 1, userVoted = true), HttpStatusCode.OK,
+            respond(voteResponseJson("love", 1, userVoted = true), HttpStatusCode.OK,
                 headersOf("Content-Type", ContentType.Application.Json.toString()))
         }
         val httpClient = HttpClient(engine) {
             install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
         }
-        val result = RavelryApiClient(httpClient, FakeFeedTokenStorage()).voteOnPost(1000L, liked = true)
+        val result = RavelryApiClient(httpClient, FakeFeedTokenStorage())
+            .voteOnPost(1000L, VoteType.LOVE, voted = true)
 
         assertEquals("/forum_posts/1000/vote.json", capturedPath)
         assertEquals("POST", capturedMethod)
@@ -251,17 +253,37 @@ class RavelryApiClientTest {
     }
 
     @Test
-    fun `voteOnPost clears vote when liked is false`() = runTest {
-        var capturedVote: String? = null
+    fun `voteOnPost passes through non-love vote types`() = runTest {
+        var capturedType: String? = null
         val engine = MockEngine { request ->
-            capturedVote = request.url.parameters["vote"]
-            respond(voteResponseJson(loveCount = 0, userVoted = false), HttpStatusCode.OK,
+            capturedType = request.url.parameters["type"]
+            respond(voteResponseJson("funny", 1, userVoted = true), HttpStatusCode.OK,
                 headersOf("Content-Type", ContentType.Application.Json.toString()))
         }
         val httpClient = HttpClient(engine) {
             install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
         }
-        val result = RavelryApiClient(httpClient, FakeFeedTokenStorage()).voteOnPost(1000L, liked = false)
+        val result = RavelryApiClient(httpClient, FakeFeedTokenStorage())
+            .voteOnPost(1000L, VoteType.FUNNY, voted = true)
+
+        assertEquals("funny", capturedType)
+        assertEquals(mapOf("funny" to 1), result.voteTotals)
+        assertEquals(listOf("funny"), result.userVotes)
+    }
+
+    @Test
+    fun `voteOnPost clears vote when voted is false`() = runTest {
+        var capturedVote: String? = null
+        val engine = MockEngine { request ->
+            capturedVote = request.url.parameters["vote"]
+            respond(voteResponseJson("love", 0, userVoted = false), HttpStatusCode.OK,
+                headersOf("Content-Type", ContentType.Application.Json.toString()))
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val result = RavelryApiClient(httpClient, FakeFeedTokenStorage())
+            .voteOnPost(1000L, VoteType.LOVE, voted = false)
 
         assertEquals("0", capturedVote)
         assertEquals(emptyList(), result.userVotes)

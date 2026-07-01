@@ -6,6 +6,7 @@ import com.autom8ed.fibersocial.feed.models.Group
 import com.autom8ed.fibersocial.feed.models.Post
 import com.autom8ed.fibersocial.feed.models.RavelryUser
 import com.autom8ed.fibersocial.feed.models.Topic
+import com.autom8ed.fibersocial.feed.models.VoteType
 import io.ktor.client.HttpClient
 import io.ktor.client.request.get
 import io.ktor.client.request.header
@@ -24,11 +25,6 @@ import kotlinx.serialization.json.Json
 
 private const val BASE_URL = "https://api.ravelry.com"
 private val lenientJson = Json { ignoreUnknownKeys = true }
-
-// Ravelry has no dedicated "like" reaction — forum posts support a set of named vote
-// types (interesting, educational, funny, agree, disagree, love). We use "love" (the
-// heart icon on ravelry.com) as the sole reaction surfaced as "like" in this app.
-private const val LOVE_VOTE_TYPE = "love"
 
 // Ravelry has no API endpoint for "groups this user is a member of".
 // We scrape the memberships page on www.ravelry.com using the session cookie
@@ -237,19 +233,20 @@ class RavelryApiClient(
     }
 
     /**
-     * Casts or clears the current user's "like" (Ravelry's "love" vote type) on a forum post.
+     * Casts or clears the current user's vote of [type] on a forum post.
      *
      * @param postId Ravelry forum post ID.
-     * @param liked `true` to cast the vote, `false` to clear it.
+     * @param type Which reaction to cast (interesting, educational, funny, agree, disagree, love).
+     * @param voted `true` to cast the vote, `false` to clear it.
      * @return The post's updated vote totals and the current user's vote types.
      */
-    suspend fun voteOnPost(postId: Long, liked: Boolean): VoteResult {
+    suspend fun voteOnPost(postId: Long, type: VoteType, voted: Boolean): VoteResult {
         val raw = authenticatedRequest {
             httpClient.post("$BASE_URL/forum_posts/$postId/vote.json") {
                 header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
                 url.parameters.apply {
-                    append("type", LOVE_VOTE_TYPE)
-                    append("vote", if (liked) "1" else "0")
+                    append("type", type.wireValue)
+                    append("vote", if (voted) "1" else "0")
                 }
             }
         }

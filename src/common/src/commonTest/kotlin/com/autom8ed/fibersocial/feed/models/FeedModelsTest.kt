@@ -2,6 +2,7 @@ package com.autom8ed.fibersocial.feed.models
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertNotEquals
@@ -208,5 +209,28 @@ class PostTest {
         assertEquals(p1, p1.copy())
         assertNotEquals(p1, p1.copy(id = 2L))
         assertTrue(p1.toString().contains("1"))
+    }
+
+    @Test
+    fun `deserializes vote_totals and user_votes when present`() {
+        val p = json.decodeFromString<Post>(
+            """{"id":4,"vote_totals":{"love":2,"funny":1},"user_votes":["love"]}"""
+        )
+        assertEquals(mapOf("love" to 2, "funny" to 1), p.voteTotals)
+        assertEquals(listOf("love"), p.userVotes)
+        assertTrue(p.hasVoted(VoteType.LOVE))
+        assertFalse(p.hasVoted(VoteType.FUNNY))
+        assertEquals(2, p.voteCount(VoteType.LOVE))
+        assertEquals(1, p.voteCount(VoteType.FUNNY))
+        assertEquals(0, p.voteCount(VoteType.AGREE))
+    }
+
+    @Test
+    fun `vote fields default to empty and unvoted when absent`() {
+        val p = json.decodeFromString<Post>("""{"id":5}""")
+        assertEquals(emptyMap(), p.voteTotals)
+        assertEquals(emptyList(), p.userVotes)
+        assertFalse(p.hasVoted(VoteType.LOVE))
+        assertEquals(0, p.voteCount(VoteType.LOVE))
     }
 }
