@@ -123,6 +123,23 @@ class RavelryApiClientTest {
     }
 
     @Test
+    fun `getTopicPosts returns posts list`() = runTest {
+        val client = routingApiClient { postsJson(1L, 2L) }
+        val posts = client.getTopicPosts(42L)
+        assertEquals(2, posts.size)
+        assertEquals(1L, posts[0].id)
+        assertEquals("<p>Reply 1</p>", posts[0].bodyHtml)
+        assertEquals("user1", posts[0].user?.username)
+        assertEquals("2024-01-15T10:00:00Z", posts[0].createdAt)
+    }
+
+    @Test
+    fun `getTopicPosts returns empty list when topic has no posts`() = runTest {
+        val client = routingApiClient { """{"posts":[]}""" }
+        assertEquals(emptyList(), client.getTopicPosts(42L))
+    }
+
+    @Test
     fun `getCurrentUser throws when no token stored`() = runTest {
         val emptyStorage = FakeFeedTokenStorage(initial = null)
         val engine = MockEngine { respond("", HttpStatusCode.OK, headersOf()) }

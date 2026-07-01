@@ -75,17 +75,28 @@ class FeedRepositoryTest {
     }
 
     @Test
-    fun `getFeedItems truncates summary to 200 chars`() = runTest {
+    fun `getFeedItems truncates bodyPreview to 200 chars but keeps full bodySummary`() = runTest {
         val long = "x".repeat(300)
         val items = singleTopicRepo(summary = long).getFeedItems(listOf(group))
-        val preview = (items.single() as FeedItem.DiscussionTopic).bodyPreview
-        assertEquals(200, preview.length)
+        val item = items.single() as FeedItem.DiscussionTopic
+        assertEquals(200, item.bodyPreview.length)
+        assertEquals(300, item.bodySummary.length)
     }
 
     @Test
-    fun `getFeedItems uses empty string when summary is null`() = runTest {
+    fun `getFeedItems uses empty string for both preview and summary when summary is null`() = runTest {
         val items = singleTopicRepo(summary = null).getFeedItems(listOf(group))
-        assertEquals("", (items.single() as FeedItem.DiscussionTopic).bodyPreview)
+        val item = items.single() as FeedItem.DiscussionTopic
+        assertEquals("", item.bodyPreview)
+        assertEquals("", item.bodySummary)
+    }
+
+    @Test
+    fun `getFeedItems populates bodySummary on AnnouncementTopic`() = runTest {
+        val items = singleTopicRepo(sticky = true, summary = "Pinned info").getFeedItems(listOf(group))
+        val item = items.single() as FeedItem.AnnouncementTopic
+        assertEquals("Pinned info", item.bodySummary)
+        assertEquals("Pinned info", item.bodyPreview)
     }
 
     @Test

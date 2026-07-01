@@ -55,6 +55,12 @@ const val MEMBERSHIPS_HTML = """<html><body>
 fun topicsJson(vararg ids: Long) = """{"topics":[${
     ids.joinToString(",") { """{"id":$it,"title":"Topic $it"}""" }
 }]}"""
+fun postsJson(vararg ids: Long) = """{"posts":[${
+    ids.joinToString(",") { id ->
+        """{"id":$id,"body_html":"<p>Reply $id</p>","created_at":"2024-01-15T10:00:00Z","user":{"username":"user$id"}}"""
+    }
+}]}"""
+
 fun topicDetailJson(
     id: Long,
     imagesCount: Int = 0,

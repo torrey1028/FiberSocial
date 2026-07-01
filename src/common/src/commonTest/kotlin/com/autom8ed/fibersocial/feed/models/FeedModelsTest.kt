@@ -4,6 +4,8 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertNull
+import kotlin.test.assertNotEquals
+import kotlin.test.assertTrue
 import kotlinx.serialization.json.Json
 
 private val json = Json { ignoreUnknownKeys = true }
@@ -165,5 +167,46 @@ class FeedItemTest {
         )
         assertEquals(listOf(1L, 2L, 3L), items.map { it.id })
         assertEquals(listOf(10L, 10L, 10L), items.map { it.groupId })
+    }
+}
+
+class PostTest {
+    @Test
+    fun `deserializes all fields`() {
+        val p = json.decodeFromString<Post>(
+            """{"id":1,"body_html":"<p>Hello</p>","created_at":"2024-01-15T10:00:00Z","user":{"username":"yarnie","small_photo_url":"https://example.com/a.jpg"}}"""
+        )
+        assertEquals(1L, p.id)
+        assertEquals("<p>Hello</p>", p.bodyHtml)
+        assertEquals("2024-01-15T10:00:00Z", p.createdAt)
+        assertEquals("yarnie", p.user?.username)
+        assertEquals("https://example.com/a.jpg", p.user?.avatarUrl)
+    }
+
+    @Test
+    fun `optional fields default gracefully`() {
+        val p = json.decodeFromString<Post>("""{"id":2}""")
+        assertEquals(2L, p.id)
+        assertEquals("", p.bodyHtml)
+        assertNull(p.createdAt)
+        assertNull(p.user)
+    }
+
+    @Test
+    fun `ignores unknown keys`() {
+        val p = json.decodeFromString<Post>("""{"id":3,"unexpected":"ignored"}""")
+        assertEquals(3L, p.id)
+        assertTrue(p.bodyHtml.isEmpty())
+    }
+
+    @Test
+    fun `equality copy and hashCode`() {
+        val p1 = Post(id = 1L, bodyHtml = "<p>hi</p>", createdAt = "2024-01-15T10:00:00Z")
+        val p2 = Post(id = 1L, bodyHtml = "<p>hi</p>", createdAt = "2024-01-15T10:00:00Z")
+        assertEquals(p1, p2)
+        assertEquals(p1.hashCode(), p2.hashCode())
+        assertEquals(p1, p1.copy())
+        assertNotEquals(p1, p1.copy(id = 2L))
+        assertTrue(p1.toString().contains("1"))
     }
 }

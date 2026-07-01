@@ -43,11 +43,13 @@ import kotlinx.coroutines.launch
 @Composable
 fun FeedScreen(viewModel: FeedAndroidViewModel) {
     val state by viewModel.feed.state.collectAsState()
+    val topicDetailState by viewModel.topicDetail.state.collectAsState()
     var selectedTopic by remember { mutableStateOf<FeedItem.DiscussionTopic?>(null) }
 
     if (selectedTopic != null) {
         TopicDetailScreen(
             topic = selectedTopic!!,
+            postsState = topicDetailState,
             onBack = { selectedTopic = null },
         )
         return
@@ -120,12 +122,18 @@ fun FeedScreen(viewModel: FeedAndroidViewModel) {
                 is FeedState.Loaded -> FeedList(
                     items = s.items,
                     modifier = Modifier.padding(padding),
-                    onTopicClick = { selectedTopic = it },
+                    onTopicClick = { topic ->
+                        viewModel.topicDetail.load(topic.id)
+                        selectedTopic = topic
+                    },
                 )
                 is FeedState.Refreshing -> FeedList(
                     items = s.stale.items,
                     modifier = Modifier.padding(padding),
-                    onTopicClick = { selectedTopic = it },
+                    onTopicClick = { topic ->
+                        viewModel.topicDetail.load(topic.id)
+                        selectedTopic = topic
+                    },
                 )
             }
         }
