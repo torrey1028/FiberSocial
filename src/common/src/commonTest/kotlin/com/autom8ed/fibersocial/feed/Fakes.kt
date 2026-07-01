@@ -1,6 +1,7 @@
 package com.autom8ed.fibersocial.feed
 
 import com.autom8ed.fibersocial.auth.AuthToken
+import com.autom8ed.fibersocial.auth.SessionExpiredException
 import com.autom8ed.fibersocial.auth.TokenStorage
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
@@ -40,6 +41,22 @@ fun routingApiClient(
 
 fun errorApiClient(storage: TokenStorage = FakeFeedTokenStorage()): RavelryApiClient {
     val engine = MockEngine { error("Simulated network error") }
+    val client = HttpClient(engine) {
+        install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+    }
+    return RavelryApiClient(client, storage)
+}
+
+fun sessionExpiredApiClient(storage: TokenStorage = FakeFeedTokenStorage()): RavelryApiClient {
+    val engine = MockEngine { throw SessionExpiredException("Token expired") }
+    val client = HttpClient(engine) {
+        install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+    }
+    return RavelryApiClient(client, storage)
+}
+
+fun nullMessageApiClient(storage: TokenStorage = FakeFeedTokenStorage()): RavelryApiClient {
+    val engine = MockEngine { throw RuntimeException() }
     val client = HttpClient(engine) {
         install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
     }

@@ -3,12 +3,17 @@ package com.autom8ed.fibersocial.feed
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.autom8ed.fibersocial.BuildConfig
 import com.autom8ed.fibersocial.auth.AndroidTokenStorage
+import com.autom8ed.fibersocial.auth.AuthRepository
+import com.autom8ed.fibersocial.auth.RavelryOAuthClient
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.android.Android
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.serialization.kotlinx.json.json
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.merge
 import kotlinx.serialization.json.Json
 
 class FeedAndroidViewModel(app: Application) : AndroidViewModel(app) {
@@ -25,12 +30,27 @@ class FeedAndroidViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private val tokenStorage = AndroidTokenStorage(app)
-    private val apiClient = RavelryApiClient(httpClient, tokenStorage)
+    private val oauthClient = RavelryOAuthClient(
+        httpClient = httpClient,
+        clientId = BuildConfig.RAVELRY_CLIENT_ID,
+        clientSecret = BuildConfig.RAVELRY_CLIENT_SECRET,
+    )
+    private val authRepository = AuthRepository(oauthClient, tokenStorage)
+    private val apiClient = RavelryApiClient(
+        httpClient = httpClient,
+        tokenStorage = tokenStorage,
+        refreshToken = { authRepository.refreshToken() },
+    )
     private val repository = FeedRepository(apiClient)
     val feed = FeedViewModel(repository, viewModelScope)
     val topicDetail = TopicDetailViewModel(apiClient, viewModelScope)
 
+    /** Emits when either the feed or topic detail encounters a session expiry. */
+    val sessionExpired: Flow<Unit> = merge(feed.sessionExpired, topicDetail.sessionExpired)
+
     fun load() = feed.load()
+
+    fun debugForceSessionExpiry() = feed.forceSessionExpiry()
 
     override fun onCleared() {
         super.onCleared()

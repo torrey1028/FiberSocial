@@ -1,5 +1,7 @@
 package com.autom8ed.fibersocial.feed
 
+import com.autom8ed.fibersocial.auth.AuthToken
+import com.autom8ed.fibersocial.auth.SessionExpiredException
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
@@ -14,6 +16,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import kotlinx.coroutines.test.runTest
+import kotlinx.datetime.Clock
 import kotlinx.serialization.json.Json
 
 class RavelryApiClientTest {
@@ -197,5 +200,116 @@ class RavelryApiClientTest {
         assertFailsWith<IllegalStateException> {
             RavelryApiClient(httpClient, emptyStorage).getCurrentUser()
         }
+    }
+
+    @Test
+    fun `on 401 retries request after successful token refresh`() = runTest {
+        var callCount = 0
+        val engine = MockEngine {
+            callCount++
+            if (callCount == 1) respond("", HttpStatusCode.Unauthorized, headersOf())
+            else respond(CURRENT_USER_JSON, HttpStatusCode.OK,
+                headersOf("Content-Type", ContentType.Application.Json.toString()))
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        var refreshCalled = false
+        val client = RavelryApiClient(httpClient, FakeFeedTokenStorage(),
+            refreshToken = { refreshCalled = true })
+        val user = client.getCurrentUser()
+        assertEquals("yarnie", user.username)
+        assertTrue(refreshCalled)
+        assertEquals(2, callCount)
+    }
+
+    @Test
+    fun `on 401 without refresh callback throws SessionExpiredException`() = runTest {
+        val engine = MockEngine { respond("", HttpStatusCode.Unauthorized, headersOf()) }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        assertFailsWith<SessionExpiredException> {
+            RavelryApiClient(httpClient, FakeFeedTokenStorage()).getCurrentUser()
+        }
+    }
+
+    @Test
+    fun `on 401 when refresh throws SessionExpiredException is propagated`() = runTest {
+        val engine = MockEngine { respond("", HttpStatusCode.Unauthorized, headersOf()) }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val client = RavelryApiClient(httpClient, FakeFeedTokenStorage(),
+            refreshToken = { throw Exception("network error") })
+        assertFailsWith<SessionExpiredException> {
+            client.getCurrentUser()
+        }
+    }
+
+    @Test
+    fun `on 403 retries request after successful token refresh`() = runTest {
+        var callCount = 0
+        val engine = MockEngine {
+            callCount++
+            if (callCount == 1) respond("", HttpStatusCode.Forbidden, headersOf())
+            else respond(CURRENT_USER_JSON, HttpStatusCode.OK,
+                headersOf("Content-Type", ContentType.Application.Json.toString()))
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        var refreshCalled = false
+        val client = RavelryApiClient(httpClient, FakeFeedTokenStorage(),
+            refreshToken = { refreshCalled = true })
+        client.getCurrentUser()
+        assertTrue(refreshCalled)
+        assertEquals(2, callCount)
+    }
+
+    @Test
+    fun `on 401 when retry also returns 401 throws SessionExpiredException`() = runTest {
+        val engine = MockEngine { respond("", HttpStatusCode.Unauthorized, headersOf()) }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val client = RavelryApiClient(httpClient, FakeFeedTokenStorage(),
+            refreshToken = { /* refresh succeeds, but retry still fails */ })
+        assertFailsWith<SessionExpiredException> {
+            client.getCurrentUser()
+        }
+    }
+
+    @Test
+    fun `on 403 when retry also returns 403 throws SessionExpiredException`() = runTest {
+        val engine = MockEngine { respond("", HttpStatusCode.Forbidden, headersOf()) }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val client = RavelryApiClient(httpClient, FakeFeedTokenStorage(),
+            refreshToken = { /* refresh succeeds, but retry still fails */ })
+        assertFailsWith<SessionExpiredException> {
+            client.getCurrentUser()
+        }
+    }
+
+    @Test
+    fun `proactively refreshes when token expires within 60 seconds`() = runTest {
+        val nearExpiry = Clock.System.now().toEpochMilliseconds() + 30_000L
+        val storage = FakeFeedTokenStorage(
+            initial = AuthToken("test-token", "test-refresh", nearExpiry, "sess=test")
+        )
+        val engine = MockEngine {
+            respond(CURRENT_USER_JSON, HttpStatusCode.OK,
+                headersOf("Content-Type", ContentType.Application.Json.toString()))
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        var refreshCalled = false
+        val client = RavelryApiClient(httpClient, storage,
+            refreshToken = { refreshCalled = true })
+        client.getCurrentUser()
+        assertTrue(refreshCalled)
     }
 }

@@ -87,4 +87,18 @@ class AuthRepositoryTest {
         repo.login("code", "verifier", "https://redirect", sessionCookie = null)
         assertNull(storage.load()?.sessionCookie)
     }
+
+    @Test
+    fun `refreshToken preserves sessionCookie from stored token`() = runTest {
+        val storage = FakeTokenStorage()
+        val repo = makeRepo(storage = storage)
+        repo.login("code", "verifier", "https://redirect", sessionCookie = "sess=abc")
+
+        val refreshJson =
+            """{"access_token":"new-access","refresh_token":"new-refresh","expires_in":3600}"""
+        val refreshed = AuthRepository(mockOAuthClient(refreshJson), storage).refreshToken()
+
+        assertEquals("sess=abc", refreshed.sessionCookie)
+        assertEquals("sess=abc", storage.load()?.sessionCookie)
+    }
 }

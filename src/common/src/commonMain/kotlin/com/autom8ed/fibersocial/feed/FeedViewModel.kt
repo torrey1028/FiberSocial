@@ -1,12 +1,16 @@
 package com.autom8ed.fibersocial.feed
 
+import com.autom8ed.fibersocial.auth.SessionExpiredException
 import com.autom8ed.fibersocial.feed.models.FeedItem
 import com.autom8ed.fibersocial.feed.models.Group
 import com.autom8ed.fibersocial.feed.models.RavelryUser
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 
 /**
@@ -59,9 +63,19 @@ class FeedViewModel(
     private val scope: CoroutineScope,
 ) {
     private val _state = MutableStateFlow<FeedState>(FeedState.Loading)
+    private val _sessionExpired = Channel<Unit>(Channel.BUFFERED)
 
     /** Observable feed state. */
     val state: StateFlow<FeedState> = _state.asStateFlow()
+
+    /**
+     * Emits [Unit] when a [SessionExpiredException] is caught. Each emission is consumed
+     * exactly once — no replay on re-subscription. Collect to navigate to login.
+     */
+    val sessionExpired: Flow<Unit> = _sessionExpired.receiveAsFlow()
+
+    /** Sets the session-expired signal. Call only from platform debug tooling. */
+    fun forceSessionExpiry() { _sessionExpired.trySend(Unit) }
 
     /** Performs an initial full load: user → groups → feed items. */
     fun load() {
@@ -109,6 +123,10 @@ class FeedViewModel(
                     selectedGroup = group,
                     items = items,
                 )
+            } catch (e: SessionExpiredException) {
+                println("FiberSocial: selectGroup session expired")
+                _sessionExpired.trySend(Unit)
+                current
             } catch (e: Exception) {
                 println("FiberSocial: selectGroup error: ${e.message}")
                 current
@@ -130,6 +148,10 @@ class FeedViewModel(
             selectedGroup = selectedGroup,
             items = items,
         )
+    } catch (e: SessionExpiredException) {
+        println("FiberSocial: fetchFeed session expired — navigating to login")
+        _sessionExpired.trySend(Unit)
+        FeedState.Loading
     } catch (e: Exception) {
         println("FiberSocial: fetchFeed error: ${e.message}")
         FeedState.Error(e.message ?: "Failed to load feed")

@@ -1,9 +1,11 @@
 package com.autom8ed.fibersocial.feed
 
+import com.autom8ed.fibersocial.auth.SessionExpiredException
 import com.autom8ed.fibersocial.feed.models.Group
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
@@ -145,4 +147,71 @@ class FeedViewModelTest {
         awaitChildren(coroutineContext[Job]!!)
         assertIs<FeedState.Loading>(vm.state.value)
     }
+
+    @Test
+    fun `load signals sessionExpired and stays Loading when session expires`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val vm = FeedViewModel(FeedRepository(sessionExpiredApiClient()), this)
+            vm.load()
+            awaitChildren(coroutineContext[Job]!!)
+            assertIs<FeedState.Loading>(vm.state.value)
+            // sessionExpired is filter{it}.map{} on a StateFlow, so first() returns
+            // immediately without suspension when the flag is already true
+            vm.sessionExpired.first()
+        }
+
+    @Test
+    fun `selectGroup signals sessionExpired and returns stale state when session expires`() =
+        runTest(UnconfinedTestDispatcher()) {
+            var topicCallCount = 0
+            val repo = FeedRepository(routingApiClient { path ->
+                when {
+                    path.contains("/current_user") -> CURRENT_USER_JSON
+                    path.contains("memberships") -> MEMBERSHIPS_HTML
+                    path.contains("/groups/search") -> GROUPS_JSON
+                    path.contains("/forums/") -> {
+                        topicCallCount++
+                        if (topicCallCount > 1) throw SessionExpiredException("expired")
+                        topicsJson(100L)
+                    }
+                    path.contains("/topics/") -> topicDetailJson(100L)
+                    else -> error("Unexpected: $path")
+                }
+            })
+            val vm = FeedViewModel(repo, this)
+            vm.load()
+            awaitChildren(coroutineContext[Job]!!)
+            assertIs<FeedState.Loaded>(vm.state.value)
+
+            vm.selectGroup((vm.state.value as FeedState.Loaded).groups.first())
+            awaitChildren(coroutineContext[Job]!!)
+            assertIs<FeedState.Loaded>(vm.state.value)
+            vm.sessionExpired.first()
+        }
+
+    @Test
+    fun `load error falls back to default message when exception has no message`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val vm = FeedViewModel(FeedRepository(nullMessageApiClient()), this)
+            vm.load()
+            awaitChildren(coroutineContext[Job]!!)
+            val state = assertIs<FeedState.Error>(vm.state.value)
+            assertEquals("Failed to load feed", state.message)
+        }
+
+    @Test
+    fun `refresh re-fetches with the current group filter`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val vm = FeedViewModel(successRepo(), this)
+            vm.load()
+            awaitChildren(coroutineContext[Job]!!)
+            vm.selectGroup(group)
+            awaitChildren(coroutineContext[Job]!!)
+            assertEquals(group, (vm.state.value as FeedState.Loaded).selectedGroup)
+
+            vm.refresh()
+            awaitChildren(coroutineContext[Job]!!)
+            val after = assertIs<FeedState.Loaded>(vm.state.value)
+            assertEquals(group, after.selectedGroup)
+        }
 }
