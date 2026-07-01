@@ -1,10 +1,14 @@
 package com.autom8ed.fibersocial.feed
 
+import com.autom8ed.fibersocial.auth.SessionExpiredException
 import com.autom8ed.fibersocial.feed.models.Post
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 /**
@@ -38,9 +42,16 @@ class TopicDetailViewModel(
     private val scope: CoroutineScope,
 ) {
     private val _state = MutableStateFlow<TopicDetailState>(TopicDetailState.Loading)
+    private val _sessionExpired = MutableStateFlow(false)
 
     /** Observable reply thread state. */
     val state: StateFlow<TopicDetailState> = _state.asStateFlow()
+
+    /**
+     * Emits [Unit] when a [SessionExpiredException] is caught. Backed by a [StateFlow] so
+     * late subscribers still receive the event. Collect to navigate to login.
+     */
+    val sessionExpired: Flow<Unit> = _sessionExpired.filter { it }.map { }
 
     /**
      * Fetches all posts for [topicId], replacing any previously loaded state.
@@ -55,6 +66,10 @@ class TopicDetailViewModel(
                 val posts = apiClient.getTopicPosts(topicId)
                 println("FiberSocial: TopicDetailViewModel loaded ${posts.size} posts")
                 TopicDetailState.Loaded(posts)
+            } catch (e: SessionExpiredException) {
+                println("FiberSocial: TopicDetailViewModel session expired")
+                _sessionExpired.value = true
+                TopicDetailState.Loading
             } catch (e: Exception) {
                 println("FiberSocial: TopicDetailViewModel.load error: ${e.message}")
                 TopicDetailState.Error(e.message ?: "Failed to load replies")

@@ -61,6 +61,14 @@ class MainActivity : ComponentActivity() {
                         }
                     is AuthState.Authenticated -> {
                         LaunchedEffect(Unit) { feedVm.load() }
+                        // On session expiry: show WebView login before clearing auth so there's no
+                        // LoginScreen flash between the state change and the WebView appearing.
+                        LaunchedEffect(feedVm) {
+                            feedVm.sessionExpired.collect {
+                                showWebView = true
+                                authVm.auth.logout()
+                            }
+                        }
                         FeedScreen(viewModel = feedVm)
                     }
                 }
