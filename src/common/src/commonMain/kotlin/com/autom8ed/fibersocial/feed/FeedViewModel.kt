@@ -74,6 +74,9 @@ class FeedViewModel(
      */
     val sessionExpired: Flow<Unit> = _sessionExpired.filter { it }.map { }
 
+    /** Sets the session-expired signal. Call only from platform debug tooling. */
+    fun forceSessionExpiry() { _sessionExpired.value = true }
+
     /** Performs an initial full load: user → groups → feed items. */
     fun load() {
         scope.launch {
