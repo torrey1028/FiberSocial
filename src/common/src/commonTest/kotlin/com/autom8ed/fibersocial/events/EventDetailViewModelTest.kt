@@ -249,6 +249,54 @@ class EventDetailViewModelToggleAttendanceTest {
     }
 
     @Test
+    fun `a successful toggle invokes onAttendanceChanged`() = runTest(UnconfinedTestDispatcher()) {
+        var changes = 0
+        val vm = EventDetailViewModel(rsvpApiClient(mutableListOf()), this, onAttendanceChanged = { changes++ })
+        vm.load("cozy-meetup")
+        awaitChildren(coroutineContext[Job]!!)
+
+        vm.toggleAttendance()
+        awaitChildren(coroutineContext[Job]!!)
+        assertEquals(1, changes)
+
+        vm.toggleAttendance()
+        awaitChildren(coroutineContext[Job]!!)
+        assertEquals(2, changes)
+    }
+
+    @Test
+    fun `a rejected toggle does not invoke onAttendanceChanged`() = runTest(UnconfinedTestDispatcher()) {
+        var changes = 0
+        val vm = EventDetailViewModel(
+            rsvpApiClient(mutableListOf(), postStatus = { HttpStatusCode.Forbidden }),
+            this,
+            onAttendanceChanged = { changes++ },
+        )
+        vm.load("cozy-meetup")
+        awaitChildren(coroutineContext[Job]!!)
+
+        vm.toggleAttendance()
+        awaitChildren(coroutineContext[Job]!!)
+        assertEquals(0, changes)
+    }
+
+    @Test
+    fun `a toggle without a csrf token does not invoke onAttendanceChanged`() = runTest(UnconfinedTestDispatcher()) {
+        var changes = 0
+        val vm = EventDetailViewModel(
+            routingApiClient { MINIMAL_EVENT_PAGE },
+            this,
+            onAttendanceChanged = { changes++ },
+        )
+        vm.load("cozy-meetup")
+        awaitChildren(coroutineContext[Job]!!)
+
+        vm.toggleAttendance()
+        awaitChildren(coroutineContext[Job]!!)
+        assertEquals(0, changes)
+    }
+
+    @Test
     fun `toggle before anything is loaded is a no-op`() = runTest(UnconfinedTestDispatcher()) {
         val vm = EventDetailViewModel(rsvpApiClient(mutableListOf()), this)
         vm.toggleAttendance()

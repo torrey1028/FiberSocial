@@ -9,6 +9,7 @@ import com.autom8ed.fibersocial.auth.AuthRepository
 import com.autom8ed.fibersocial.auth.RavelryOAuthClient
 import com.autom8ed.fibersocial.events.EventDetailViewModel
 import com.autom8ed.fibersocial.events.EventsViewModel
+import com.autom8ed.fibersocial.notifications.EventSyncWorker
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.android.Android
 import io.ktor.client.plugins.HttpTimeout
@@ -47,7 +48,14 @@ class FeedAndroidViewModel(app: Application) : AndroidViewModel(app) {
     val feed = FeedViewModel(repository, viewModelScope)
     val topicDetail = TopicDetailViewModel(apiClient, viewModelScope)
     val events = EventsViewModel(apiClient, viewModelScope)
-    val eventDetail = EventDetailViewModel(apiClient, viewModelScope)
+    val eventDetail = EventDetailViewModel(
+        apiClient,
+        viewModelScope,
+        // RSVP changes resync notifications immediately: reminders for a fresh RSVP are
+        // scheduled — and pending ones for a withdrawn RSVP cancelled — without waiting
+        // for the next background poll.
+        onAttendanceChanged = { EventSyncWorker.runOnce(app) },
+    )
 
     /** Emits when any screen's data source encounters a session expiry. */
     val sessionExpired: Flow<Unit> = merge(
