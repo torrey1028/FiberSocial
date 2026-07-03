@@ -20,10 +20,33 @@ jobs:
           distribution: "temurin"
 
       - name: Write local.properties
+        # Secrets go through env + printf %s, never ${{ }} inside the script:
+        # the expression is substituted textually before the shell runs, so a
+        # secret containing quotes/$/backslashes would corrupt the script (or
+        # the written value) silently.
+        env:
+          RAVELRY_CLIENT_ID: ${{ secrets.RAVELRY_CLIENT_ID }}
+          RAVELRY_CLIENT_SECRET: ${{ secrets.RAVELRY_CLIENT_SECRET }}
         run: |
-          echo "sdk.dir=$ANDROID_HOME" > src/platform/android/local.properties
-          echo "ravelry.client_id=${{ secrets.RAVELRY_CLIENT_ID }}" >> src/platform/android/local.properties
-          echo "ravelry.client_secret=${{ secrets.RAVELRY_CLIENT_SECRET }}" >> src/platform/android/local.properties
+          {
+            printf 'sdk.dir=%s\n' "$ANDROID_HOME"
+            printf 'ravelry.client_id=%s\n' "$RAVELRY_CLIENT_ID"
+            printf 'ravelry.client_secret=%s\n' "$RAVELRY_CLIENT_SECRET"
+          } > src/platform/android/local.properties
+
+      # Fail loudly on push builds if the repo secret is missing — otherwise CI
+      # goes green while publishing APKs that can't log in (issue #6). Fork PRs
+      # legitimately have no secrets and still build (their artifacts just
+      # can't log in, with the runtime warning explaining why).
+      - name: Verify OAuth credentials are configured
+        if: github.event_name == 'push'
+        env:
+          RAVELRY_CLIENT_SECRET: ${{ secrets.RAVELRY_CLIENT_SECRET }}
+        run: |
+          if [ -z "$RAVELRY_CLIENT_SECRET" ]; then
+            echo "::error::RAVELRY_CLIENT_SECRET repo secret is not set; CI APKs will fail login with invalid_client. Add it at Settings > Secrets and variables > Actions."
+            exit 1
+          fi
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
