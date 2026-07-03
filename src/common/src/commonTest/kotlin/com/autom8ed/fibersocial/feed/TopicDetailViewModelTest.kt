@@ -386,4 +386,95 @@ class TopicDetailViewModelTest {
         assertEquals("oops", err1.copy().message)
         assertTrue(err1.toString().contains("oops"))
     }
+
+    @Test
+    fun `sendReply appends created post and transitions to Sent`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = TopicDetailViewModel(
+            routingApiClient { path ->
+                if (path.contains("/reply.json")) replyResponseJson(id = 99L) else postsJson(1L)
+            },
+            this,
+        )
+        vm.load(42L)
+        awaitChildren(coroutineContext[Job]!!)
+        vm.sendReply(42L, "My new reply")
+        awaitChildren(coroutineContext[Job]!!)
+        assertIs<ReplyState.Sent>(vm.replyState.value)
+        val state = assertIs<TopicDetailState.Loaded>(vm.state.value)
+        assertEquals(listOf(1L, 99L), state.posts.map { it.id })
+    }
+
+    @Test
+    fun `sendReply ignores blank bodies`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = TopicDetailViewModel(errorApiClient(), this)
+        vm.sendReply(42L, "   ")
+        awaitChildren(coroutineContext[Job]!!)
+        assertIs<ReplyState.Idle>(vm.replyState.value)
+    }
+
+    @Test
+    fun `sendReply trims whitespace before submitting`() = runTest(UnconfinedTestDispatcher()) {
+        var sentBody: String? = null
+        val vm = TopicDetailViewModel(
+            routingApiClientCapturing(
+                onRequest = { url -> sentBody = url.parameters["body"] },
+                route = { path -> if (path.contains("/reply.json")) replyResponseJson() else postsJson(1L) },
+            ),
+            this,
+        )
+        vm.sendReply(42L, "  hello  ")
+        awaitChildren(coroutineContext[Job]!!)
+        assertEquals("hello", sentBody)
+    }
+
+    @Test
+    fun `sendReply failure keeps thread state and reports Error`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = TopicDetailViewModel(
+            routingApiClient { path ->
+                if (path.contains("/reply.json")) error("Simulated network error") else postsJson(1L, 2L)
+            },
+            this,
+        )
+        vm.load(42L)
+        awaitChildren(coroutineContext[Job]!!)
+        vm.sendReply(42L, "My new reply")
+        awaitChildren(coroutineContext[Job]!!)
+        assertIs<ReplyState.Error>(vm.replyState.value)
+        val state = assertIs<TopicDetailState.Loaded>(vm.state.value)
+        assertEquals(2, state.posts.size)
+    }
+
+    @Test
+    fun `sendReply session expiry signals sessionExpired and returns to Idle`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = TopicDetailViewModel(sessionExpiredApiClient(), this)
+        vm.sendReply(42L, "My new reply")
+        awaitChildren(coroutineContext[Job]!!)
+        assertIs<ReplyState.Idle>(vm.replyState.value)
+        assertEquals(Unit, vm.sessionExpired.first())
+    }
+
+    @Test
+    fun `acknowledgeReplySent resets Sent to Idle`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = TopicDetailViewModel(
+            routingApiClient { path ->
+                if (path.contains("/reply.json")) replyResponseJson() else postsJson(1L)
+            },
+            this,
+        )
+        vm.sendReply(42L, "reply")
+        awaitChildren(coroutineContext[Job]!!)
+        assertIs<ReplyState.Sent>(vm.replyState.value)
+        vm.acknowledgeReplySent()
+        assertIs<ReplyState.Idle>(vm.replyState.value)
+    }
+
+    @Test
+    fun `acknowledgeReplySent does not clear an Error`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = TopicDetailViewModel(errorApiClient(), this)
+        vm.sendReply(42L, "reply")
+        awaitChildren(coroutineContext[Job]!!)
+        assertIs<ReplyState.Error>(vm.replyState.value)
+        vm.acknowledgeReplySent()
+        assertIs<ReplyState.Error>(vm.replyState.value)
+    }
 }
