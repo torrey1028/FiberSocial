@@ -101,6 +101,7 @@ tasks.withType<Test>().configureEach {
             "**/TopicDetailScreenBackTest*",
             "**/SettingsScreenTest*",
             "**/GroupDrawerTest*",
+            "**/ReplyComposerTest*",
         )
     }
 }

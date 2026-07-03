@@ -34,6 +34,27 @@ sealed class TopicDetailState {
 }
 
 /**
+ * State of an in-flight reply submission, separate from the thread itself so a
+ * failed send never disturbs the loaded posts.
+ */
+sealed class ReplyState {
+    /** No reply in flight. */
+    object Idle : ReplyState()
+
+    /** Reply is being submitted. */
+    object Sending : ReplyState()
+
+    /** Reply was accepted and appended to the thread; UI should clear its composer. */
+    object Sent : ReplyState()
+
+    /**
+     * Submission failed; the composer should keep its text so nothing is lost.
+     * @property message Human-readable error description.
+     */
+    data class Error(val message: String) : ReplyState()
+}
+
+/**
  * Loads and exposes the reply thread for a single Ravelry forum topic.
  *
  * @param apiClient Used to fetch posts.
@@ -46,8 +67,13 @@ class TopicDetailViewModel(
     private val _state = MutableStateFlow<TopicDetailState>(TopicDetailState.Loading)
     private val _sessionExpired = Channel<Unit>(Channel.BUFFERED)
 
+    private val _replyState = MutableStateFlow<ReplyState>(ReplyState.Idle)
+
     /** Observable reply thread state. */
     val state: StateFlow<TopicDetailState> = _state.asStateFlow()
+
+    /** Observable state of the current reply submission. */
+    val replyState: StateFlow<ReplyState> = _replyState.asStateFlow()
 
     /**
      * Emits [Unit] when a [SessionExpiredException] is caught. Each emission is consumed
@@ -61,6 +87,10 @@ class TopicDetailViewModel(
      * @param topicId Ravelry topic ID to load replies for.
      */
     fun load(topicId: Long) {
+        // The ViewModel is reused across topics: a new topic invalidates any leftover
+        // composer state AND any in-flight send's right to touch state (topicGeneration).
+        topicGeneration++
+        _replyState.value = ReplyState.Idle
         scope.launch {
             println("FiberSocial: TopicDetailViewModel.load(topicId=$topicId)")
             _state.value = TopicDetailState.Loading
@@ -77,6 +107,53 @@ class TopicDetailViewModel(
                 TopicDetailState.Error(e.message ?: "Failed to load replies")
             }
         }
+    }
+
+    /**
+     * Submits [body] as a new reply to [topicId]. On success the created post is appended
+     * to the loaded thread and [replyState] becomes [ReplyState.Sent] (the UI acknowledges
+     * via [acknowledgeReplySent]). Blank bodies and double-submits are ignored. On failure
+     * the thread state is untouched so the composer can retry without losing text.
+     *
+     * @param topicId Topic being replied to.
+     * @param body Plain-text reply content.
+     */
+    fun sendReply(topicId: Long, body: String) {
+        val trimmed = body.trim()
+        if (trimmed.isEmpty() || _replyState.value is ReplyState.Sending) return
+        _replyState.value = ReplyState.Sending
+        // A send that outlives its topic (user navigated away mid-flight) must not
+        // touch state: the reply would append into whichever topic is now loaded, and
+        // a stale Sent/Error could wipe the next topic's half-typed draft.
+        val generation = topicGeneration
+        scope.launch {
+            try {
+                val post = apiClient.postReply(topicId, trimmed)
+                if (generation != topicGeneration) return@launch
+                val current = _state.value
+                if (current is TopicDetailState.Loaded) {
+                    _state.value = TopicDetailState.Loaded(current.posts + post)
+                }
+                _replyState.value = ReplyState.Sent
+            } catch (e: SessionExpiredException) {
+                println("FiberSocial: TopicDetailViewModel.sendReply session expired")
+                if (generation == topicGeneration) _replyState.value = ReplyState.Idle
+                _sessionExpired.trySend(Unit)
+            } catch (e: Exception) {
+                println("FiberSocial: TopicDetailViewModel.sendReply error: ${e.message}")
+                if (generation == topicGeneration) {
+                    _replyState.value = ReplyState.Error(e.message ?: "Failed to post reply")
+                }
+            }
+        }
+    }
+
+    /** Monotonic token: a send from a previous topic may not touch the current one's state. */
+    private var topicGeneration = 0
+
+    /** Resets [replyState] from [ReplyState.Sent] back to [ReplyState.Idle] after the UI has reacted. */
+    fun acknowledgeReplySent() {
+        if (_replyState.value is ReplyState.Sent) _replyState.value = ReplyState.Idle
     }
 
     /**

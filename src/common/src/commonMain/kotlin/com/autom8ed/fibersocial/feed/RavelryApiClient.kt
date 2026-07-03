@@ -444,6 +444,30 @@ class RavelryApiClient(
     }
 
     /**
+     * Posts a plain-text reply to a topic.
+     *
+     * @param topicId Topic being replied to.
+     * @param body Reply content.
+     * @return The newly created post as returned by Ravelry.
+     */
+    suspend fun postReply(topicId: Long, body: String): Post {
+        val raw = authenticatedRequest {
+            httpClient.post("$BASE_URL/topics/$topicId/reply.json") {
+                header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
+                // Form body, not a query parameter: free text can be multi-KB (URLs
+                // have request-line limits, 414s) and would land in server logs.
+                setBody(FormDataContent(Parameters.build { append("body", body) }))
+            }
+        }
+        return try {
+            lenientJson.decodeFromString<ReplyResponse>(raw).forumPost
+        } catch (e: Exception) {
+            println("FiberSocial: postReply($topicId) unexpected response: ${raw.take(200)}")
+            error("Unexpected Ravelry response — check the thread before retrying, the reply may have posted.")
+        }
+    }
+
+    /**
      * Returns the full detail for a single topic, including [Topic.createdByUser] and [Topic.summary].
      *
      * @param topicId Ravelry topic ID.
@@ -462,6 +486,7 @@ class RavelryApiClient(
         @SerialName("vote_totals") val voteTotals: Map<String, Map<String, Int>> = emptyMap(),
         @SerialName("user_votes") val userVotes: Map<String, List<String>> = emptyMap(),
     )
+    @Serializable private data class ReplyResponse(@SerialName("forum_post") val forumPost: Post)
     @Serializable private data class CurrentUserResponse(val user: RavelryUser)
     @Serializable private data class GroupsSearchResponse(val groups: List<Group> = emptyList())
     @Serializable private data class TopicsResponse(
