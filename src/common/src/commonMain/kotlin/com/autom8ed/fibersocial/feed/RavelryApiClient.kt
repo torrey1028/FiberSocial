@@ -8,6 +8,8 @@ import com.autom8ed.fibersocial.events.EventPageParser
 import com.autom8ed.fibersocial.events.EventPeopleParser
 import com.autom8ed.fibersocial.events.EventSummary
 import com.autom8ed.fibersocial.events.GroupEventsParser
+import com.autom8ed.fibersocial.events.SavedEvent
+import com.autom8ed.fibersocial.events.SavedEventsParser
 import com.autom8ed.fibersocial.feed.models.Group
 import com.autom8ed.fibersocial.feed.models.Post
 import com.autom8ed.fibersocial.feed.models.RavelryUser
@@ -211,6 +213,30 @@ class RavelryApiClient(
         val attendees = EventPeopleParser.parse(html)
         println("FiberSocial: getEventAttendees($eventPermalink) -> ${attendees.size} attendees")
         return attendees
+    }
+
+    /**
+     * Returns the events the current user has saved (RSVP'd to), in the order the
+     * "My Saved Events" page lists them.
+     *
+     * Ravelry has no events API, so this scrapes `www.ravelry.com/events/saved` with
+     * the session cookie (see [SavedEventsParser]). The listing carries dates but no
+     * times — call [getEvent] for a saved event's exact start time. It may include
+     * past events and repeats recurring events once per occurrence; filtering is the
+     * consumer's job.
+     *
+     * @throws SessionExpiredException per [scrapeHtml].
+     */
+    suspend fun getSavedEvents(): List<SavedEvent> {
+        // Exact prefix, unlike the permalink scrapers: there is no canonicalization
+        // to tolerate for this fixed page, and a session-limited redirect to another
+        // /events/* page (search, landing) renders similar markup that would
+        // otherwise parse as a bogus RSVP list.
+        val html = scrapeHtml("https://www.ravelry.com/events/saved", "/events/saved",
+            "Saved events page")
+        val saved = SavedEventsParser.parse(html)
+        println("FiberSocial: getSavedEvents -> ${saved.size} saved events")
+        return saved
     }
 
     /**

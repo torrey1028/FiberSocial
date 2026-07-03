@@ -61,4 +61,52 @@ class SettingsScreenTest {
         }
         compose.runOnIdle { assertEquals(1, backs) }
     }
+
+    @Test
+    fun `poll interval row is hidden while loading`() {
+        compose.setContent {
+            SettingsScreen(user = user, onBack = {}, onSignOut = {}, pollIntervalHours = null)
+        }
+        compose.onNodeWithText("Check for new events").assertDoesNotExist()
+    }
+
+    @Test
+    fun `poll interval row shows the current cadence`() {
+        compose.setContent {
+            SettingsScreen(user = user, onBack = {}, onSignOut = {}, pollIntervalHours = 6)
+        }
+        compose.onNodeWithText("Check for new events").assertIsDisplayed()
+        compose.onNodeWithText("Every 6 hours").assertIsDisplayed()
+    }
+
+    @Test
+    fun `choosing a cadence from the dialog invokes the callback and closes it`() {
+        var selected = -1
+        compose.setContent {
+            SettingsScreen(
+                user = user, onBack = {}, onSignOut = {},
+                pollIntervalHours = 6,
+                onPollIntervalSelected = { selected = it },
+            )
+        }
+        compose.onNodeWithText("Check for new events").performClick()
+        compose.onNodeWithText("Every hour").performClick()
+        compose.runOnIdle { assertEquals(1, selected) }
+        compose.onNodeWithText("Cancel").assertDoesNotExist()
+    }
+
+    @Test
+    fun `cancel dismisses the dialog without selecting`() {
+        var selected = -1
+        compose.setContent {
+            SettingsScreen(
+                user = user, onBack = {}, onSignOut = {},
+                pollIntervalHours = 6,
+                onPollIntervalSelected = { selected = it },
+            )
+        }
+        compose.onNodeWithText("Check for new events").performClick()
+        compose.onNodeWithText("Cancel").performClick()
+        compose.runOnIdle { assertEquals(-1, selected) }
+    }
 }

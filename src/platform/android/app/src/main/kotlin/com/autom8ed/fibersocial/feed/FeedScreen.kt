@@ -48,6 +48,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import com.autom8ed.fibersocial.BuildConfig
@@ -55,25 +56,47 @@ import com.autom8ed.fibersocial.debug.DebugPanel
 import com.autom8ed.fibersocial.events.EventDetailScreen
 import com.autom8ed.fibersocial.events.EventsScreen
 import com.autom8ed.fibersocial.events.EventsState
-import com.autom8ed.fibersocial.events.GroupEvent
 import com.autom8ed.fibersocial.feed.models.FeedItem
 import com.autom8ed.fibersocial.feed.models.Group
 import com.autom8ed.fibersocial.feed.models.RavelryUser
+import com.autom8ed.fibersocial.notifications.AndroidNotificationSettingsStore
+import com.autom8ed.fibersocial.notifications.EventSyncWorker
+import com.autom8ed.fibersocial.notifications.NotificationSettings
 import com.autom8ed.fibersocial.settings.SettingsScreen
 import com.autom8ed.fibersocial.ui.UserAvatar
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun FeedScreen(viewModel: FeedAndroidViewModel, onLogout: () -> Unit) {
+fun FeedScreen(
+    viewModel: FeedAndroidViewModel,
+    onLogout: () -> Unit,
+    deepLinkEventPermalink: String? = null,
+    onDeepLinkConsumed: () -> Unit = {},
+) {
     val state by viewModel.feed.state.collectAsState()
     val topicDetailState by viewModel.topicDetail.state.collectAsState()
     val eventsState by viewModel.events.state.collectAsState()
     val eventDetailState by viewModel.eventDetail.state.collectAsState()
     var selectedTopic by remember { mutableStateOf<FeedItem.DiscussionTopic?>(null) }
-    var selectedEvent by remember { mutableStateOf<GroupEvent?>(null) }
+    var selectedEventPermalink by remember { mutableStateOf<String?>(null) }
     var eventsGroup by remember { mutableStateOf<Group?>(null) }
     var showSettings by rememberSaveable { mutableStateOf(false) }
+
+    // A tapped notification lands here: open the event detail directly.
+    LaunchedEffect(deepLinkEventPermalink) {
+        if (deepLinkEventPermalink != null) {
+            // The tap must win over whatever screen is open — the early returns
+            // below (topic, settings, events list) would otherwise swallow it and
+            // the notification tap would visibly do nothing.
+            selectedTopic = null
+            showSettings = false
+            eventsGroup = null
+            viewModel.eventDetail.load(deepLinkEventPermalink)
+            selectedEventPermalink = deepLinkEventPermalink
+            onDeepLinkConsumed()
+        }
+    }
 
     // One unwrap for every stale-capable field: Loaded directly, Refreshing via
     // its stale snapshot, anything else has no data yet.
@@ -99,10 +122,26 @@ fun FeedScreen(viewModel: FeedAndroidViewModel, onLogout: () -> Unit) {
     }
 
     if (showSettings) {
+        val context = LocalContext.current
+        val settingsStore = remember { AndroidNotificationSettingsStore(context) }
+        var pollIntervalHours by remember { mutableStateOf<Int?>(null) }
+        // effective: a stale/corrupt persisted value renders as the clamped default
+        // rather than an off-menu cadence the dialog can't represent.
+        LaunchedEffect(Unit) { pollIntervalHours = settingsStore.load().effectivePollIntervalHours }
+        val settingsScope = rememberCoroutineScope()
         SettingsScreen(
             user = user,
             onBack = { showSettings = false },
             onSignOut = onLogout,
+            pollIntervalHours = pollIntervalHours,
+            onPollIntervalSelected = { hours ->
+                pollIntervalHours = hours
+                settingsScope.launch {
+                    settingsStore.save(NotificationSettings(pollIntervalHours = hours))
+                    // UPDATE policy re-registers the periodic sync at the new cadence.
+                    EventSyncWorker.schedulePeriodic(context, hours)
+                }
+            },
         )
         return
     }
@@ -117,12 +156,12 @@ fun FeedScreen(viewModel: FeedAndroidViewModel, onLogout: () -> Unit) {
         return
     }
 
-    if (selectedEvent != null) {
+    if (selectedEventPermalink != null) {
         val attendees by viewModel.eventDetail.attendees.collectAsState()
         EventDetailScreen(
             state = eventDetailState,
             attendees = attendees,
-            onBack = { selectedEvent = null },
+            onBack = { selectedEventPermalink = null },
             onToggleAttendance = { viewModel.eventDetail.toggleAttendance() },
         )
         return
@@ -135,7 +174,7 @@ fun FeedScreen(viewModel: FeedAndroidViewModel, onLogout: () -> Unit) {
             onBack = { eventsGroup = null },
             onEventClick = { groupEvent ->
                 viewModel.eventDetail.load(groupEvent.event.permalink)
-                selectedEvent = groupEvent
+                selectedEventPermalink = groupEvent.event.permalink
             },
         )
         return
@@ -231,8 +270,10 @@ fun FeedScreen(viewModel: FeedAndroidViewModel, onLogout: () -> Unit) {
     }
 
     if (showDebugPanel) {
+        val context = LocalContext.current
         DebugPanel(
             onForceSessionExpiry = { viewModel.debugForceSessionExpiry() },
+            onRunEventSync = { EventSyncWorker.runOnce(context) },
             onDismiss = { showDebugPanel = false },
         )
     }
