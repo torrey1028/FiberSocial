@@ -1,7 +1,11 @@
 package com.autom8ed.fibersocial
 
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.Box
@@ -22,14 +26,31 @@ import com.autom8ed.fibersocial.feed.FeedScreen
 import com.autom8ed.fibersocial.login.AuthAndroidViewModel
 import com.autom8ed.fibersocial.login.LoginScreen
 import com.autom8ed.fibersocial.login.WebViewLoginScreen
+import com.autom8ed.fibersocial.notifications.EXTRA_EVENT_PERMALINK
+import com.autom8ed.fibersocial.notifications.EventNotifier
+import kotlinx.coroutines.flow.MutableStateFlow
 
 class MainActivity : ComponentActivity() {
 
     private val authVm: AuthAndroidViewModel by viewModels()
     private val feedVm: FeedAndroidViewModel by viewModels()
 
+    /** Event permalink from a tapped notification; consumed by FeedScreen's deep link. */
+    private val deepLinkEvent = MutableStateFlow<String?>(null)
+
+    private val notificationPermissionRequest =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        EventNotifier(this).ensureChannels()
+        requestNotificationPermissionIfNeeded()
+        // Only a genuinely new launch carries a fresh notification tap: on recreation
+        // (rotation, process restore) the retained launch intent would replay a deep
+        // link the user already consumed and dismissed.
+        if (savedInstanceState == null) {
+            deepLinkEvent.value = intent.getStringExtra(EXTRA_EVENT_PERMALINK)
+        }
         setContent {
             MaterialTheme {
                 val authState by authVm.auth.state.collectAsState()
@@ -69,6 +90,7 @@ class MainActivity : ComponentActivity() {
                                 authVm.auth.logout()
                             }
                         }
+                        val deepLink by deepLinkEvent.collectAsState()
                         FeedScreen(
                             viewModel = feedVm,
                             // Reset first: the ViewModel outlives the session, and a
@@ -77,10 +99,29 @@ class MainActivity : ComponentActivity() {
                                 feedVm.reset()
                                 authVm.auth.logout()
                             },
+                            deepLinkEventPermalink = deepLink,
+                            onDeepLinkConsumed = { deepLinkEvent.value = null },
                         )
                     }
                 }
             }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        // Adopt the new intent so a later recreation doesn't resurrect the extras of
+        // whatever intent originally launched the activity.
+        setIntent(intent)
+        deepLinkEvent.value = intent.getStringExtra(EXTRA_EVENT_PERMALINK)
+    }
+
+    private fun requestNotificationPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationPermissionRequest.launch(android.Manifest.permission.POST_NOTIFICATIONS)
         }
     }
 }
