@@ -95,10 +95,41 @@ class NewEventPlanningTest {
     }
 
     @Test
-    fun `first-seen timestamps survive later syncs`() {
+    fun `last-seen timestamps refresh while an event stays visible`() {
         val seeded = plan(state = null, upcoming = listOf(upcoming("a"))).newState
         val later = plan(state = seeded, upcoming = listOf(upcoming("a")), now = NOW + 1.days)
-        assertEquals(seeded.knownEvents["a"], later.newState.knownEvents["a"])
+        assertEquals((NOW + 1.days).toEpochMilliseconds(), later.newState.knownEvents["a"])
+    }
+
+    @Test
+    fun `a continuously visible event is never pruned`() {
+        var state = plan(state = null, upcoming = listOf(upcoming("a"))).newState
+        // Re-sync every 30 days for half a year; the event stays known throughout.
+        for (i in 1..6) {
+            val cycle = plan(state = state, upcoming = listOf(upcoming("a")), now = NOW + (30 * i).days)
+            assertTrue(cycle.newEventNotifications.isEmpty())
+            state = cycle.newState
+        }
+    }
+
+    @Test
+    fun `an empty known set seeds silently instead of announcing everything`() {
+        // A glitchy scrape that persisted an empty list must not turn the next
+        // healthy sync into a notification storm.
+        val glitched = plan(state = null, upcoming = emptyList()).newState
+        val healthy = plan(state = glitched, upcoming = listOf(upcoming("a"), upcoming("b")))
+        assertTrue(healthy.newEventNotifications.isEmpty())
+        assertTrue("a" in healthy.newState.knownEvents)
+    }
+
+    @Test
+    fun `an event cross-listed by two groups notifies once`() {
+        val seeded = plan(state = null, upcoming = listOf(upcoming("x"))).newState
+        val cycle = plan(
+            state = seeded,
+            upcoming = listOf(upcoming("shared", "GroupA"), upcoming("shared", "GroupB"), upcoming("x")),
+        )
+        assertEquals(listOf("shared"), cycle.newEventNotifications.map { it.eventPermalink })
     }
 }
 
@@ -165,6 +196,32 @@ class ReminderPlanningTest {
             newStart - 1.days.inWholeMilliseconds,
             second.remindersToSchedule.first { it.kind == ReminderKind.DAY_BEFORE }.fireAtEpochMs,
         )
+        assertEquals(
+            newStart - 15.minutes.inWholeMilliseconds,
+            second.remindersToSchedule.first { it.kind == ReminderKind.SOON }.fireAtEpochMs,
+        )
+    }
+
+    @Test
+    fun `recurring occurrences under one permalink each keep their reminders`() {
+        // getSavedEvents returns one row per occurrence with the SAME permalink.
+        val occurrences = listOf(saved("weekly", 3.days), saved("weekly", 10.days))
+        val first = plan(state = null, saved = occurrences)
+        assertEquals(4, first.remindersToSchedule.size)
+
+        // An identical re-plan is a no-op: no churn between occurrences.
+        val second = plan(state = first.newState, saved = occurrences)
+        assertTrue(second.remindersToSchedule.isEmpty())
+        assertTrue(second.remindersToCancel.isEmpty())
+    }
+
+    @Test
+    fun `a title-only change touches no alarms`() {
+        val first = plan(state = null, saved = listOf(saved("meetup", 3.days)))
+        val renamed = listOf(saved("meetup", 3.days).copy(title = "meetup (renamed)"))
+        val second = plan(state = first.newState, saved = renamed)
+        assertTrue(second.remindersToSchedule.isEmpty())
+        assertTrue(second.remindersToCancel.isEmpty())
     }
 
     @Test

@@ -1,13 +1,17 @@
 package com.autom8ed.fibersocial.notifications
 
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.days
+import kotlin.time.Duration.Companion.minutes
 import kotlinx.serialization.Serializable
 
 /**
  * Persistent state of the event-notification system, updated by each sync cycle.
  *
  * @property knownEvents Event permalinks already seen in group scrapes, mapped to the
- *   epoch-millis they were first seen (used to prune long-gone events). An event absent
- *   from this map is "new" and triggers a notification.
+ *   epoch-millis they were last seen (refreshed by every sync that sees them; events
+ *   unseen for the retention window are pruned). An event absent from this map is
+ *   "new" and triggers a notification.
  * @property scheduledReminders Reminders currently scheduled with the platform's alarm
  *   system. Kept so a sync can compute which alarms to cancel or reschedule when an
  *   event's time changes or an RSVP is withdrawn.
@@ -34,26 +38,33 @@ data class ScheduledReminder(
     val kind: ReminderKind,
 )
 
-/** The reminder offsets the feature supports. */
+/**
+ * The reminder offsets the feature supports. The [offset] is how long before the
+ * event's start the reminder fires (serialization is by name; the offset is code-only).
+ */
 @Serializable
-enum class ReminderKind {
-    /** Fires 24 hours before the event starts. */
-    DAY_BEFORE,
-
-    /** Fires 15 minutes before the event starts. */
-    SOON,
+enum class ReminderKind(val offset: Duration) {
+    DAY_BEFORE(1.days),
+    SOON(15.minutes),
 }
 
 /**
  * User-configurable notification settings.
  *
  * @property pollIntervalHours How often the background sync scrapes for new events and
- *   RSVP changes. Bounded by [POLL_INTERVAL_CHOICES].
+ *   RSVP changes. The settings UI offers [POLL_INTERVAL_CHOICES]; nothing enforces the
+ *   bound on persisted values (a stale/corrupt store must not brick loading), so
+ *   schedule computations should read [effectivePollIntervalHours].
  */
 @Serializable
 data class NotificationSettings(
     val pollIntervalHours: Int = DEFAULT_POLL_INTERVAL_HOURS,
 ) {
+    /** [pollIntervalHours] clamped to the supported choices; the default when off-menu. */
+    val effectivePollIntervalHours: Int
+        get() = if (pollIntervalHours in POLL_INTERVAL_CHOICES) pollIntervalHours
+        else DEFAULT_POLL_INTERVAL_HOURS
+
     companion object {
         const val DEFAULT_POLL_INTERVAL_HOURS: Int = 6
 
