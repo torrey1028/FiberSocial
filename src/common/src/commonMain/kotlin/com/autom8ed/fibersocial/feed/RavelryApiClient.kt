@@ -161,24 +161,9 @@ class RavelryApiClient(
      * @throws IllegalStateException on any other non-2xx response.
      */
     suspend fun getGroupEvents(groupPermalink: String): List<EventSummary> {
-        val response = httpClient.get("https://www.ravelry.com/groups/$groupPermalink") {
-            header(HttpHeaders.Cookie, sessionCookie())
-            header(HttpHeaders.Accept, "text/html")
-        }
-        when {
-            response.status == HttpStatusCode.Unauthorized || response.status == HttpStatusCode.Forbidden ->
-                throw SessionExpiredException("Group page for $groupPermalink returned ${response.status}")
-            // Ktor follows redirects, so an expired session cookie surfaces here as a 200
-            // login page, not a 302. Landing anywhere outside /groups/ means we were
-            // bounced; a redirect within /groups/ (permalink canonicalization) is fine.
-            !response.request.url.encodedPath.startsWith("/groups/") ->
-                throw SessionExpiredException(
-                    "Group page for $groupPermalink redirected to ${response.request.url.encodedPath}"
-                )
-            !response.status.isSuccess() ->
-                error("Group page for $groupPermalink returned ${response.status}")
-        }
-        val events = GroupEventsParser.parse(response.bodyAsText())
+        val html = scrapeHtml("https://www.ravelry.com/groups/$groupPermalink", "/groups/",
+            "Group page for $groupPermalink")
+        val events = GroupEventsParser.parse(html)
         println("FiberSocial: getGroupEvents($groupPermalink) -> ${events.size} events")
         return events
     }
@@ -192,15 +177,45 @@ class RavelryApiClient(
      *
      * @param eventPermalink The event's slug, e.g. `wednesday-hh-at-chainline-39`
      *   (from [EventSummary.permalink]).
+     * @throws SessionExpiredException if the session cookie is rejected (401/403, or a
+     *   redirect off the event page — Ravelry sends expired sessions to the login page).
+     * @throws IllegalStateException on any other non-2xx response.
      */
     suspend fun getEvent(eventPermalink: String): EventDetail? {
-        val html = httpClient.get("https://www.ravelry.com/events/$eventPermalink") {
-            header(HttpHeaders.Cookie, sessionCookie())
-            header(HttpHeaders.Accept, "text/html")
-        }.bodyAsText()
+        val html = scrapeHtml("https://www.ravelry.com/events/$eventPermalink", "/events/",
+            "Event page for $eventPermalink")
         val detail = EventPageParser.parse(html)
         println("FiberSocial: getEvent($eventPermalink) -> ${detail?.title ?: "NOT AN EVENT PAGE"}")
         return detail
+    }
+
+    /**
+     * Fetches a `www.ravelry.com` page with the session cookie, failing loudly when the
+     * response is not an authenticated 200 — otherwise auth failures would be
+     * indistinguishable from a page that merely lacks the scraped markup.
+     *
+     * @throws SessionExpiredException on 401/403, or when the (Ktor-followed) redirect
+     *   chain lands outside [expectedPathPrefix] — an expired session cookie surfaces as
+     *   a 302 to the login page, not an error status. Redirects within the prefix
+     *   (permalink canonicalization) are fine.
+     * @throws IllegalStateException on any other non-2xx response.
+     */
+    private suspend fun scrapeHtml(url: String, expectedPathPrefix: String, what: String): String {
+        val response = httpClient.get(url) {
+            header(HttpHeaders.Cookie, sessionCookie())
+            header(HttpHeaders.Accept, "text/html")
+        }
+        when {
+            response.status == HttpStatusCode.Unauthorized || response.status == HttpStatusCode.Forbidden ->
+                throw SessionExpiredException("$what returned ${response.status}")
+            !response.request.url.encodedPath.startsWith(expectedPathPrefix) ->
+                throw SessionExpiredException(
+                    "$what redirected to ${response.request.url.encodedPath}"
+                )
+            !response.status.isSuccess() ->
+                error("$what returned ${response.status}")
+        }
+        return response.bodyAsText()
     }
 
     /**

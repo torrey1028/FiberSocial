@@ -45,18 +45,23 @@ object EventPageParser {
      */
     private fun pageTitle(doc: Element): String {
         val pageTitle = doc.selectFirst("div.page_title") ?: return ""
-        return pageTitle.ownText()
+        return pageTitle.ownText().trim()
     }
 
+    /** Null when `#venue_summary` is absent or has no non-empty rows we recognize. */
     private fun parseVenue(detail: Element): EventVenue? {
         val summary = detail.selectFirst("#venue_summary") ?: return null
-        fun row(cls: String): String? = summary.selectFirst("li.$cls")?.text()
-        return EventVenue(
+        fun row(cls: String): String? =
+            summary.selectFirst("li.$cls")?.text()?.trim()?.takeIf { it.isNotEmpty() }
+        val venue = EventVenue(
             name = row("venue_name"),
             address = row("address"),
             cityState = row("city_state"),
             country = row("country"),
         )
+        return venue.takeIf {
+            it.name != null || it.address != null || it.cityState != null || it.country != null
+        }
     }
 
     private fun parseDiscussions(detail: Element): List<EventDiscussion> =
@@ -75,7 +80,7 @@ object EventPageParser {
         return EventDiscussion(
             topicId = topicId,
             groupPermalink = groupPermalink,
-            title = link.text(),
+            title = link.text().trim(),
             postsCount = postsCount,
         )
     }

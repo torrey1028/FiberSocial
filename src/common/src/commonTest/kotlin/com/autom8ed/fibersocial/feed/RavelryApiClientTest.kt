@@ -524,6 +524,31 @@ class RavelryApiClientTest {
         val client = routingApiClient { "<html><body>not an event</body></html>" }
         assertEquals(null, client.getEvent("deleted-event"))
     }
+
+    @Test
+    fun `getEvent throws SessionExpiredException on 401`() = runTest {
+        val client = htmlApiClient(MockEngine { _ ->
+            respond("", HttpStatusCode.Unauthorized)
+        })
+        assertFailsWith<SessionExpiredException> { client.getEvent("some-event") }
+    }
+
+    @Test
+    fun `getEvent throws SessionExpiredException when redirected to the login page`() = runTest {
+        // Same trap as getGroupEvents: an expired cookie 302s to the login page, which
+        // Ktor follows to a 200 whose HTML simply has no .event__detail — without the
+        // redirect check that would masquerade as "not an event" (null).
+        val client = htmlApiClient(MockEngine { request ->
+            if (request.url.encodedPath.startsWith("/events/")) {
+                respond("", HttpStatusCode.Found,
+                    headersOf(HttpHeaders.Location, "https://www.ravelry.com/account/login"))
+            } else {
+                respond("<html><body>please log in</body></html>", HttpStatusCode.OK,
+                    headersOf("Content-Type", ContentType.Text.Html.toString()))
+            }
+        })
+        assertFailsWith<SessionExpiredException> { client.getEvent("deleted-event") }
+    }
 }
 
 private fun htmlApiClient(engine: MockEngine): RavelryApiClient {
