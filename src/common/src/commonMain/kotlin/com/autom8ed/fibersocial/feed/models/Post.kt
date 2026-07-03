@@ -24,3 +24,9 @@ data class Post(
     @SerialName("vote_totals") val voteTotals: Map<String, Int> = emptyMap(),
     @SerialName("user_votes") val userVotes: List<String> = emptyList(),
 )
+
+/** Whether the current user has cast [type] on this post. */
+fun Post.hasVoted(type: VoteType): Boolean = userVotes.contains(type.wireValue)
+
+/** Total number of [type] votes on this post. */
+fun Post.voteCount(type: VoteType): Int = voteTotals[type.wireValue] ?: 0
