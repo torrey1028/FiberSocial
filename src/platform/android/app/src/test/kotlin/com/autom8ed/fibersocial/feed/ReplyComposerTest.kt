@@ -1,5 +1,7 @@
 package com.autom8ed.fibersocial.feed
 
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.Composable
 import androidx.activity.ComponentActivity
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -28,7 +30,7 @@ class ReplyComposerTest {
 
     @Test
     fun `send button is disabled until text is entered`() {
-        compose.setContent { ReplyComposer(replyState = ReplyState.Idle, onSend = {}, onSent = {}) }
+        compose.setContent { StatefulReplyComposer(replyState = ReplyState.Idle, onSend = {}, onSent = {}) }
         compose.onNodeWithContentDescription("Send reply").assertIsNotEnabled()
         compose.onNodeWithText("Write a reply…").performTextInput("Hello!")
         compose.onNodeWithContentDescription("Send reply").assertIsEnabled()
@@ -37,7 +39,7 @@ class ReplyComposerTest {
     @Test
     fun `send button invokes onSend with the typed text`() {
         var sent: String? = null
-        compose.setContent { ReplyComposer(replyState = ReplyState.Idle, onSend = { sent = it }, onSent = {}) }
+        compose.setContent { StatefulReplyComposer(replyState = ReplyState.Idle, onSend = { sent = it }, onSent = {}) }
         compose.onNodeWithText("Write a reply…").performTextInput("Hello!")
         compose.onNodeWithContentDescription("Send reply").performClick()
         compose.runOnIdle { assertEquals("Hello!", sent) }
@@ -47,7 +49,7 @@ class ReplyComposerTest {
     fun `Sent state clears the text and acknowledges`() {
         var acknowledged = 0
         var state by mutableStateOf<ReplyState>(ReplyState.Idle)
-        compose.setContent { ReplyComposer(replyState = state, onSend = {}, onSent = { acknowledged++ }) }
+        compose.setContent { StatefulReplyComposer(replyState = state, onSend = {}, onSent = { acknowledged++ }) }
         compose.onNodeWithText("Write a reply…").performTextInput("Hello!")
         compose.runOnIdle { state = ReplyState.Sent }
         compose.waitForIdle()
@@ -60,7 +62,7 @@ class ReplyComposerTest {
     fun `Error state shows the failure message and keeps the text`() {
         var replyState by mutableStateOf<ReplyState>(ReplyState.Idle)
         compose.setContent {
-            ReplyComposer(replyState = replyState, onSend = {}, onSent = {})
+            StatefulReplyComposer(replyState = replyState, onSend = {}, onSent = {})
         }
         compose.onNodeWithText("Write a reply…").performTextInput("my precious draft")
         replyState = ReplyState.Error("boom")
@@ -69,4 +71,21 @@ class ReplyComposerTest {
         compose.onNodeWithText("boom").assertIsDisplayed()
         compose.onNodeWithText("my precious draft").assertIsDisplayed()
     }
+}
+
+/** Test wrapper providing the hoisted draft state the screen normally owns. */
+@Composable
+private fun StatefulReplyComposer(
+    replyState: ReplyState,
+    onSend: (String) -> Unit,
+    onSent: () -> Unit,
+) {
+    var text by remember { mutableStateOf("") }
+    ReplyComposer(
+        replyState = replyState,
+        onSend = onSend,
+        onSent = onSent,
+        text = text,
+        onTextChange = { text = it },
+    )
 }
