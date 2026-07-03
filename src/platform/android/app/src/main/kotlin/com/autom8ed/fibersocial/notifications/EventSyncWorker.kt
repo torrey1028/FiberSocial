@@ -10,6 +10,7 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.Constraints
 import com.autom8ed.fibersocial.BuildConfig
+import kotlinx.coroutines.CancellationException
 import com.autom8ed.fibersocial.auth.AndroidTokenStorage
 import com.autom8ed.fibersocial.auth.AuthRepository
 import com.autom8ed.fibersocial.auth.RavelryOAuthClient
@@ -68,6 +69,10 @@ class EventSyncWorker(
             val plan = runner.sync(Clock.System.now(), TimeZone.currentSystemDefault())
             apply(plan)
             Result.success()
+        } catch (e: CancellationException) {
+            // WorkManager stopped us (constraint lost, timeout); cancellation must
+            // propagate, not be converted into a retry result.
+            throw e
         } catch (e: SessionExpiredException) {
             // Re-login needs the WebView; polls resume after the user next signs in.
             println("FiberSocial: EventSyncWorker skipping — session expired")
@@ -85,7 +90,15 @@ class EventSyncWorker(
         plan.newEventNotifications.forEach { notifier.showNewEvent(it) }
         val scheduler = ReminderScheduler(applicationContext)
         plan.remindersToCancel.forEach { scheduler.cancel(it) }
-        plan.remindersToSchedule.forEach { scheduler.schedule(it) }
+        // Re-arm everything still in the future, not just the plan's diff: state is
+        // persisted before these effects run (so a crash can't duplicate a "new event"
+        // announcement), which means a crash right here would otherwise lose the
+        // diffed alarms forever — the next sync's diff already considers them
+        // scheduled. Scheduling is idempotent (same identity -> same PendingIntent).
+        val now = System.currentTimeMillis()
+        plan.newState.scheduledReminders
+            .filter { it.fireAtEpochMs > now }
+            .forEach { scheduler.schedule(it) }
     }
 
     companion object {
@@ -96,8 +109,12 @@ class EventSyncWorker(
          * sync. UPDATE keeps the existing schedule's timing when nothing changed.
          */
         fun schedulePeriodic(context: Context, pollIntervalHours: Int) {
+            // Clamp through the settings model: an off-menu persisted value (corrupt
+            // JSON, future migration) would make PeriodicWorkRequestBuilder throw and
+            // crash the authenticated startup path that calls this.
+            val safeHours = NotificationSettings(pollIntervalHours).effectivePollIntervalHours
             val request = PeriodicWorkRequestBuilder<EventSyncWorker>(
-                pollIntervalHours.toLong(), TimeUnit.HOURS,
+                safeHours.toLong(), TimeUnit.HOURS,
             )
                 .setConstraints(
                     Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build(),
@@ -108,13 +125,21 @@ class EventSyncWorker(
                 ExistingPeriodicWorkPolicy.UPDATE,
                 request,
             )
-            println("FiberSocial: EventSyncWorker scheduled every ${pollIntervalHours}h")
+            println("FiberSocial: EventSyncWorker scheduled every ${safeHours}h")
         }
 
         /** Runs one sync immediately; used by the debug panel. */
         fun runOnce(context: Context) {
-            WorkManager.getInstance(context)
-                .enqueue(OneTimeWorkRequestBuilder<EventSyncWorker>().build())
+            // Same network constraint as the periodic work: offline, an unconstrained
+            // request would enter the retry path and keep rescheduling in the
+            // background — surprising for a manual debug tap.
+            WorkManager.getInstance(context).enqueue(
+                OneTimeWorkRequestBuilder<EventSyncWorker>()
+                    .setConstraints(
+                        Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build(),
+                    )
+                    .build(),
+            )
         }
     }
 }

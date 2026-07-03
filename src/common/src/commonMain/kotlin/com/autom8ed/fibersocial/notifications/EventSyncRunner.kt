@@ -5,6 +5,8 @@ import com.autom8ed.fibersocial.feed.RavelryApiClient
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.datetime.Instant
 import kotlinx.datetime.TimeZone
 
@@ -21,6 +23,11 @@ class EventSyncRunner(
     private val stateStore: NotificationStateStore,
 ) {
 
+    // Background sync fans out one request per group plus one per saved event; a user
+    // in many groups would otherwise fire dozens of simultaneous scrapes (rate-limit
+    // bait, and N concurrent 401s can race the token refresh).
+    private val scrapeConcurrency = Semaphore(4)
+
     /**
      * Runs one sync cycle.
      *
@@ -33,7 +40,13 @@ class EventSyncRunner(
         val user = apiClient.getCurrentUser()
         val groups = apiClient.getUserGroups(user.username)
         val upcoming: List<GroupEvent> = groups
-            .map { group -> async { apiClient.getGroupEvents(group.permalink).map { GroupEvent(group, it) } } }
+            .map { group ->
+                async {
+                    scrapeConcurrency.withPermit {
+                        apiClient.getGroupEvents(group.permalink).map { GroupEvent(group, it) }
+                    }
+                }
+            }
             .awaitAll()
             .flatten()
             .distinctBy { it.event.permalink }
@@ -60,14 +73,18 @@ class EventSyncRunner(
      * typically 1–5 events).
      */
     private suspend fun savedEventsWithTimes(): List<SavedEventWithTime> = coroutineScope {
-        apiClient.getSavedEvents().map { saved ->
+        // Recurring events repeat their permalink once per occurrence in the saved
+        // list, and the event page carries a single start time — fetch each page once.
+        apiClient.getSavedEvents().distinctBy { it.permalink }.map { saved ->
             async {
-                val detail = apiClient.getEvent(saved.permalink)
-                SavedEventWithTime(
-                    permalink = saved.permalink,
-                    title = saved.title,
-                    startsAt = detail?.startsAt,
-                )
+                scrapeConcurrency.withPermit {
+                    val detail = apiClient.getEvent(saved.permalink)
+                    SavedEventWithTime(
+                        permalink = saved.permalink,
+                        title = saved.title,
+                        startsAt = detail?.startsAt,
+                    )
+                }
             }
         }.awaitAll()
     }

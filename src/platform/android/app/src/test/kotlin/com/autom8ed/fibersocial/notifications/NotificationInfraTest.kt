@@ -93,10 +93,26 @@ class ReminderSchedulerTest {
     }
 
     @Test
-    fun `rescheduling the same identity replaces rather than duplicates`() {
+    fun `rescheduling the identical reminder is idempotent`() {
         scheduler.schedule(reminder)
-        scheduler.schedule(reminder.copy(fireAtEpochMs = reminder.fireAtEpochMs + 60_000))
-        val scheduled = shadowOf(alarmManager).scheduledAlarms.single()
-        assertEquals(reminder.fireAtEpochMs + 60_000, scheduled.triggerAtMs)
+        scheduler.schedule(reminder)
+        assertEquals(1, shadowOf(alarmManager).scheduledAlarms.size)
+    }
+
+    @Test
+    fun `occurrences of one event keep distinct alarms and a move cancels only its own`() {
+        // A recurring event lists one reminder pair per occurrence under one
+        // permalink: identity is (event, kind, fireAt), so occurrences must not
+        // collapse into a single alarm...
+        scheduler.schedule(reminder)
+        val secondOccurrence = reminder.copy(fireAtEpochMs = reminder.fireAtEpochMs + 60_000)
+        scheduler.schedule(secondOccurrence)
+        assertEquals(2, shadowOf(alarmManager).scheduledAlarms.size)
+
+        // ...and a move (the planner emits cancel-old + schedule-new) removes exactly
+        // the moved occurrence's alarm, not its siblings'.
+        scheduler.cancel(reminder)
+        val remaining = shadowOf(alarmManager).scheduledAlarms.single()
+        assertEquals(secondOccurrence.fireAtEpochMs, remaining.triggerAtMs)
     }
 }

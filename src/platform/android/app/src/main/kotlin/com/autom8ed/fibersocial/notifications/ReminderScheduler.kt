@@ -4,6 +4,7 @@ import android.app.AlarmManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 
 /**
  * Schedules event reminders as exact alarms.
@@ -18,12 +19,25 @@ class ReminderScheduler(private val context: Context) {
     private val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
 
     fun schedule(reminder: ScheduledReminder) {
-        alarmManager.setExactAndAllowWhileIdle(
-            AlarmManager.RTC_WAKEUP,
-            reminder.fireAtEpochMs,
-            pendingIntent(reminder),
-        )
-        println("FiberSocial: ReminderScheduler scheduled ${reminder.kind} for ${reminder.eventPermalink}")
+        // USE_EXACT_ALARM exists only on API 33+; Android 12/12L uses the revocable
+        // SCHEDULE_EXACT_ALARM (declared with maxSdkVersion=32). If it was revoked,
+        // degrade to an inexact alarm instead of throwing SecurityException — a
+        // drifting reminder beats a crashing sync (and a boot-time crash loop).
+        val exactAllowed = Build.VERSION.SDK_INT < 31 || alarmManager.canScheduleExactAlarms()
+        if (exactAllowed) {
+            alarmManager.setExactAndAllowWhileIdle(
+                AlarmManager.RTC_WAKEUP,
+                reminder.fireAtEpochMs,
+                pendingIntent(reminder),
+            )
+        } else {
+            alarmManager.setAndAllowWhileIdle(
+                AlarmManager.RTC_WAKEUP,
+                reminder.fireAtEpochMs,
+                pendingIntent(reminder),
+            )
+        }
+        println("FiberSocial: ReminderScheduler scheduled ${reminder.kind} for ${reminder.eventPermalink} (exact=$exactAllowed)")
     }
 
     fun cancel(reminder: ScheduledReminder) {
@@ -32,9 +46,11 @@ class ReminderScheduler(private val context: Context) {
     }
 
     /**
-     * One PendingIntent per (event, kind): the request code encodes the identity, so a
-     * reschedule with FLAG_UPDATE_CURRENT replaces the previous alarm's payload and a
-     * cancel matches it.
+     * One PendingIntent per (event, kind, fireAt) — the same occurrence-aware identity
+     * the planner diffs by: a recurring event lists one reminder pair per occurrence
+     * under one permalink, and a (event, kind) code would collapse those to a single
+     * alarm (and cancelling one occurrence would kill its siblings). Re-scheduling the
+     * same reminder is idempotent; a move is a cancel+schedule pair from the planner.
      */
     private fun pendingIntent(reminder: ScheduledReminder): PendingIntent {
         val intent = Intent(context, ReminderReceiver::class.java).apply {
@@ -44,7 +60,7 @@ class ReminderScheduler(private val context: Context) {
         }
         return PendingIntent.getBroadcast(
             context,
-            (reminder.eventPermalink + reminder.kind.name).hashCode(),
+            (reminder.eventPermalink + reminder.kind.name + reminder.fireAtEpochMs).hashCode(),
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )

@@ -24,6 +24,10 @@ class BootReceiver : BroadcastReceiver() {
                 val future = state.scheduledReminders.filter { it.fireAtEpochMs > now }
                 future.forEach { scheduler.schedule(it) }
                 println("FiberSocial: BootReceiver rescheduled ${future.size} reminders")
+            } catch (e: Exception) {
+                // A scheduling failure must degrade to a missed reminder, not an
+                // app crash on every boot while the state still holds the entry.
+                println("FiberSocial: BootReceiver failed to reschedule: ${e.message}")
             } finally {
                 pending.finish()
             }

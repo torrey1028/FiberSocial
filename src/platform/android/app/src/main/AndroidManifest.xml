@@ -4,6 +4,11 @@
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <uses-permission android:name="android.permission.USE_EXACT_ALARM"/>
+    <!-- USE_EXACT_ALARM exists only on API 33+; Android 12/12L needs the revocable
+         SCHEDULE_EXACT_ALARM or setExactAndAllowWhileIdle throws SecurityException. -->
+    <uses-permission
+        android:name="android.permission.SCHEDULE_EXACT_ALARM"
+        android:maxSdkVersion="32"/>
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
 
     <!-- Required on API 30+ to query for browser apps that handle HTTPS URLs -->
