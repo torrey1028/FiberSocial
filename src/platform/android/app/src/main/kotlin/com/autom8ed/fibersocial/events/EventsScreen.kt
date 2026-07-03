@@ -32,6 +32,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
+import com.autom8ed.fibersocial.feed.models.Group
 import kotlinx.datetime.LocalDateTime
 
 /** Three-letter month labels for the event date chip, indexed by month number - 1. */
@@ -41,20 +42,21 @@ private val MONTH_ABBREVIATIONS = listOf(
 )
 
 /**
- * Dedicated screen listing upcoming events across all of the user's groups,
- * soonest first.
+ * Screen listing one group's upcoming events, soonest first. Opened from the calendar
+ * badge on the group's drawer row (only shown when the group has events).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EventsScreen(
     state: EventsState,
+    group: Group,
     onBack: () -> Unit,
     onEventClick: (GroupEvent) -> Unit,
 ) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Upcoming events") },
+                title = { Text("${group.name} events") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
@@ -79,24 +81,27 @@ fun EventsScreen(
                 )
             }
 
-            is EventsState.Loaded -> if (state.events.isEmpty()) {
-                Box(
-                    modifier = Modifier.fillMaxSize().padding(padding),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        "No upcoming events in your groups.",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            } else {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize().padding(padding),
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    items(state.events, key = { it.event.permalink }) { groupEvent ->
-                        EventCard(groupEvent, onClick = { onEventClick(groupEvent) })
+            is EventsState.Loaded -> {
+                val events = state.events.filter { it.group.id == group.id }
+                if (events.isEmpty()) {
+                    Box(
+                        modifier = Modifier.fillMaxSize().padding(padding),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            "No upcoming events in this group.",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize().padding(padding),
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        items(events, key = { it.event.permalink }) { groupEvent ->
+                            EventCard(groupEvent, onClick = { onEventClick(groupEvent) })
+                        }
                     }
                 }
             }
@@ -126,17 +131,15 @@ private fun EventCard(groupEvent: GroupEvent, onClick: () -> Unit) {
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Spacer(Modifier.height(2.dp))
-            Text(
-                text = buildString {
-                    append(groupEvent.group.name)
-                    if (event.attendeeCount > 0) {
-                        append(" · ${event.attendeeCount} going")
-                    }
-                },
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.primary,
-            )
+            // The group is implicit now that the screen is per-group; only show turnout.
+            if (event.attendeeCount > 0) {
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = "${event.attendeeCount} going",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
         }
     }
 }
