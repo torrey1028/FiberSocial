@@ -8,6 +8,8 @@ import kotlinx.datetime.LocalDate
  * An event the current user has saved (RSVP'd to), from the "My Saved Events" page.
  *
  * @property permalink Event slug; the event page is `www.ravelry.com/events/{permalink}`.
+ *   Recurring events list one row per occurrence, so the same permalink can appear
+ *   several times with different dates.
  * @property title Event name as listed.
  * @property date Calendar date of the event, from the list's month header plus the
  *   entry's day-of-month. The listing carries no time of day — fetch the event page
@@ -39,16 +41,19 @@ data class SavedEvent(
  * ```
  * Month headers apply to the entries that follow them. Lenient like the other scrapers:
  * entries without a title link are skipped; an unparseable month/day yields a null date.
+ *
+ * The list is returned as Ravelry renders it: recurring events appear once per
+ * occurrence, and the page may include past events the user never un-saved —
+ * filtering (and de-duplicating, if keying by permalink) is the consumer's job.
  */
 object SavedEventsParser {
 
     private val MONTH_HEADER = Regex("""([A-Za-z]+)\s+(\d{4})""")
-    private val DAY_NUMBER = Regex("""(\d{1,2})""")
 
-    private val MONTHS = listOf(
-        "january", "february", "march", "april", "may", "june",
-        "july", "august", "september", "october", "november", "december",
-    )
+    // Anchored to the ordinal suffix so stray numbers in the cell (a year, a
+    // range's second month) can't be mistaken for the day. A range like
+    // "31st – 2nd" yields its first day — the event's start.
+    private val DAY_NUMBER = Regex("""(\d{1,2})(?:st|nd|rd|th)""", RegexOption.IGNORE_CASE)
 
     /** Parses the full HTML of the saved-events page; entries in page order. */
     fun parse(savedEventsPageHtml: String): List<SavedEvent> {
@@ -66,23 +71,19 @@ object SavedEventsParser {
                     if (match == null) {
                         month = 0
                     } else {
-                        month = MONTHS.indexOf(match.groupValues[1].lowercase()) + 1
+                        month = monthNumber(match.groupValues[1])
                         year = match.groupValues[2].toInt()
                     }
                 }
                 child.hasClass("event") -> {
                     val link = child.selectFirst("div.details a.title") ?: continue
-                    val permalink = link.attr("href")
-                        .substringAfter("/events/", missingDelimiterValue = "")
-                        .substringBefore('/')
-                    if (permalink.isEmpty()) continue
-                    val typeElement = child.selectFirst(".event__search_result__type")
-                    val typeText = if (typeElement == null) "" else typeElement.text()
+                    val permalink = eventPermalinkFromHref(link.attr("href")) ?: continue
                     events += SavedEvent(
                         permalink = permalink,
                         title = link.text(),
                         date = eventDate(year, month, child.selectFirst("div.date div.day")),
-                        eventType = typeText.ifEmpty { null },
+                        eventType = child.selectFirst(".event__search_result__type")
+                            ?.text()?.ifEmpty { null },
                     )
                 }
             }
@@ -94,6 +95,6 @@ object SavedEventsParser {
     private fun eventDate(year: Int, month: Int, dayElement: Element?): LocalDate? {
         if (month == 0 || dayElement == null) return null
         val dayMatch = DAY_NUMBER.find(dayElement.text()) ?: return null
-        return runCatching { LocalDate(year, month, dayMatch.value.toInt()) }.getOrNull()
+        return runCatching { LocalDate(year, month, dayMatch.groupValues[1].toInt()) }.getOrNull()
     }
 }

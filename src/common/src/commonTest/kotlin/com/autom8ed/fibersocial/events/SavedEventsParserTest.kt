@@ -59,6 +59,48 @@ class SavedEventsParserStructureTest {
     }
 
     @Test
+    fun `multi-day range takes the start day`() {
+        val html = page("""<div class="month">July 2026</div>""" + entry("fest", "Festival", "10th – 12th"))
+        assertEquals(LocalDate(2026, 7, 10), SavedEventsParser.parse(html).single().date)
+    }
+
+    @Test
+    fun `stray numbers without an ordinal suffix are not a day`() {
+        // "2026" must not parse as day 20.
+        val html = page("""<div class="month">July 2026</div>""" + entry("x", "X", "2026"))
+        assertNull(SavedEventsParser.parse(html).single().date)
+    }
+
+    @Test
+    fun `recurring events keep one entry per occurrence`() {
+        val html = page(
+            """<div class="month">July 2026</div>""" +
+                entry("weekly-circle", "Weekly Circle", "5th") +
+                entry("weekly-circle", "Weekly Circle", "12th"),
+        )
+        val dates = SavedEventsParser.parse(html).map { it.permalink to it.date }
+        assertEquals(
+            listOf(
+                "weekly-circle" to LocalDate(2026, 7, 5),
+                "weekly-circle" to LocalDate(2026, 7, 12),
+            ),
+            dates,
+        )
+    }
+
+    @Test
+    fun `permalink strips query strings and fragments`() {
+        val html = page(
+            """<div class="month">July 2026</div>""" +
+                """<div class="event event__search_result">
+                <div class="date"><div class="day">5th</div></div>
+                <div class="details"><a href="https://www.ravelry.com/events/slug?ref=saved#details" class="title">T</a></div>
+                </div>""",
+        )
+        assertEquals("slug", SavedEventsParser.parse(html).single().permalink)
+    }
+
+    @Test
     fun `entry before any month header has a null date`() {
         val html = page(entry("orphan", "Orphan", "5th"))
         val event = SavedEventsParser.parse(html).single()

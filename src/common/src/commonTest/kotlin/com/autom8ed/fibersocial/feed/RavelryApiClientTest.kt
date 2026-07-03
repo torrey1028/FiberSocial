@@ -639,6 +639,31 @@ class RavelryApiClientTest {
     }
 
     @Test
+    fun `getSavedEvents throws SessionExpiredException on 401`() = runTest {
+        val client = htmlApiClient(MockEngine { _ ->
+            respond("", HttpStatusCode.Unauthorized)
+        })
+        assertFailsWith<SessionExpiredException> { client.getSavedEvents() }
+    }
+
+    @Test
+    fun `getSavedEvents rejects a redirect to another events page`() = runTest {
+        // A session-limited redirect to /events/search renders similar markup that
+        // would otherwise parse as a bogus RSVP list — the exact /events/saved
+        // prefix must treat it as session expiry, not data.
+        val client = htmlApiClient(MockEngine { request ->
+            if (request.url.encodedPath == "/events/saved") {
+                respond("", HttpStatusCode.Found,
+                    headersOf(HttpHeaders.Location, "https://www.ravelry.com/events/search"))
+            } else {
+                respond("<div class=\"event_list\"></div>", HttpStatusCode.OK,
+                    headersOf("Content-Type", ContentType.Text.Html.toString()))
+            }
+        })
+        assertFailsWith<SessionExpiredException> { client.getSavedEvents() }
+    }
+
+    @Test
     fun `setEventAttendance false posts to unattend and reports rejection`() = runTest {
         var requestedUrl = ""
         val engine = MockEngine { request ->
