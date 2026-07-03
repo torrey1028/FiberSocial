@@ -8,6 +8,8 @@ import com.autom8ed.fibersocial.events.EventPageParser
 import com.autom8ed.fibersocial.events.EventPeopleParser
 import com.autom8ed.fibersocial.events.EventSummary
 import com.autom8ed.fibersocial.events.GroupEventsParser
+import com.autom8ed.fibersocial.events.SavedEvent
+import com.autom8ed.fibersocial.events.SavedEventsParser
 import com.autom8ed.fibersocial.feed.models.Group
 import com.autom8ed.fibersocial.feed.models.Post
 import com.autom8ed.fibersocial.feed.models.RavelryUser
@@ -240,6 +242,23 @@ class RavelryApiClient(
                 error("$what returned ${response.status}")
         }
         return response.bodyAsText()
+    }
+
+    /**
+     * Returns the events the current user has saved (RSVP'd to), in the order the
+     * "My Saved Events" page lists them.
+     *
+     * Ravelry has no events API, so this scrapes `www.ravelry.com/events/saved` with
+     * the session cookie (see [SavedEventsParser]). The listing carries dates but no
+     * times — call [getEvent] for a saved event's exact start time.
+     *
+     * @throws SessionExpiredException per [scrapeHtml].
+     */
+    suspend fun getSavedEvents(): List<SavedEvent> {
+        val html = scrapeHtml("https://www.ravelry.com/events/saved", "/events/", "getSavedEvents")
+        val saved = SavedEventsParser.parse(html)
+        println("FiberSocial: getSavedEvents -> ${saved.size} saved events")
+        return saved
     }
 
     /**

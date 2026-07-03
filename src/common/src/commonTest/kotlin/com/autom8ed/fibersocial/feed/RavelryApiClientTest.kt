@@ -610,6 +610,35 @@ class RavelryApiClientTest {
     }
 
     @Test
+    fun `getSavedEvents scrapes the saved-events page with the session cookie`() = runTest {
+        var requestedUrl = ""
+        var sentCookie: String? = null
+        val engine = MockEngine { request ->
+            requestedUrl = request.url.toString()
+            sentCookie = request.headers[HttpHeaders.Cookie]
+            respond(
+                """<div class="event_list" id="event_list">
+                   <div class="month">July 2026</div>
+                   <div class="event"><div class="date"><div class="day">5th</div></div>
+                   <div class="details"><a href="https://www.ravelry.com/events/cozy-meetup" class="title">Cozy Meetup</a></div>
+                   </div></div>""",
+                HttpStatusCode.OK,
+                headersOf("Content-Type", ContentType.Text.Html.toString()),
+            )
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val client = RavelryApiClient(httpClient, FakeFeedTokenStorage())
+
+        val saved = client.getSavedEvents()
+
+        assertEquals("https://www.ravelry.com/events/saved", requestedUrl)
+        assertEquals("sess=test", sentCookie)
+        assertEquals(listOf("cozy-meetup"), saved.map { it.permalink })
+    }
+
+    @Test
     fun `setEventAttendance false posts to unattend and reports rejection`() = runTest {
         var requestedUrl = ""
         val engine = MockEngine { request ->
