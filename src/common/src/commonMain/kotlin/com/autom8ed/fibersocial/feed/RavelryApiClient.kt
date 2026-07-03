@@ -2,6 +2,7 @@ package com.autom8ed.fibersocial.feed
 
 import com.autom8ed.fibersocial.auth.ForbiddenException
 import com.autom8ed.fibersocial.auth.SessionExpiredException
+import com.fleeksoft.ksoup.Ksoup
 import com.autom8ed.fibersocial.auth.TokenStorage
 import com.autom8ed.fibersocial.events.EventAttendee
 import com.autom8ed.fibersocial.events.EventDetail
@@ -42,8 +43,6 @@ import kotlinx.serialization.json.Json
 
 private const val BASE_URL = "https://api.ravelry.com"
 private const val WWW_URL = "https://www.ravelry.com"
-private val AUTHENTICITY_TOKEN_REGEX = Regex("""<meta[^>]*\bname="(?:authenticity-token|csrf-token)"[^>]*>""")
-private val META_CONTENT_REGEX = Regex("""content="([^"]+)"""")
 private val lenientJson = Json { ignoreUnknownKeys = true }
 
 // Ravelry has no API endpoint for "groups this user is a member of".
@@ -548,24 +547,48 @@ class RavelryApiClient(
         ) {
             header(HttpHeaders.Cookie, cookie)
         }
-        check(response.status.isSuccess() || response.status.value in 300..399) {
-            "Delete rejected: HTTP ${response.status.value}"
+        // Ktor doesn't follow redirects for POST, so the 3xx surfaces here directly.
+        // A redirect is how BOTH outcomes look: success bounces back to the topic,
+        // an expired session bounces to the login page — the Location header is the
+        // only thing that tells them apart. Treating a login redirect as success
+        // would remove the post locally while it lives on at Ravelry.
+        val location = response.headers[HttpHeaders.Location].orEmpty()
+        when {
+            location.contains("/login") || location.contains("/account") -> {
+                cachedAuthenticityToken = null
+                throw SessionExpiredException("Delete of post $postId redirected to login")
+            }
+            response.status.isSuccess() || response.status.value in 300..399 -> Unit
+            else -> {
+                // The stale-token case rejects with 4xx; drop the cache so a retry
+                // re-scrapes a fresh one.
+                cachedAuthenticityToken = null
+                error("Delete rejected: HTTP ${response.status.value}")
+            }
         }
     }
 
+    /** Session-stable CSRF token, cached after the first scrape (see [fetchAuthenticityToken]). */
+    private var cachedAuthenticityToken: String? = null
+
     /**
      * Reads the session-stable CSRF token Ravelry embeds on every page as
-     * `<meta name="authenticity-token" content="...">` (attribute order varies).
+     * `<meta name="authenticity-token" content="...">`, cached per client so repeated
+     * deletes don't re-download the homepage. Extraction uses the same Ksoup selector
+     * as [EventPageParser]'s RSVP token scrape so the two can't drift.
      */
     private suspend fun fetchAuthenticityToken(): String {
+        cachedAuthenticityToken?.let { return it }
         val html = httpClient.get(WWW_URL) {
             header(HttpHeaders.Cookie, sessionCookie())
             header(HttpHeaders.Accept, "text/html")
         }.bodyAsText()
-        val metaTag = AUTHENTICITY_TOKEN_REGEX.find(html)?.value
-            ?: error("No authenticity token found — re-login required")
-        return META_CONTENT_REGEX.find(metaTag)?.groupValues?.get(1)
-            ?: error("Authenticity token meta tag had no content — re-login required")
+        val token = Ksoup.parse(html)
+            .selectFirst("meta#authenticity-token, meta[name=authenticity-token], meta[name=csrf-token]")
+            ?.attr("content")
+        if (token.isNullOrEmpty()) error("No authenticity token found — re-login required")
+        cachedAuthenticityToken = token
+        return token
     }
 
     /**

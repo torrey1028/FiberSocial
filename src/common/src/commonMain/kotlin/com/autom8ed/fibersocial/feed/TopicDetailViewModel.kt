@@ -133,6 +133,8 @@ class TopicDetailViewModel(
         // composer state AND any in-flight send's right to touch state (topicGeneration).
         topicGeneration++
         _replyState.value = ReplyState.Idle
+        _editState.value = EditState.Idle
+        _deleteState.value = DeleteState.Idle
         scope.launch {
             println("FiberSocial: TopicDetailViewModel.load(topicId=$topicId)")
             _state.value = TopicDetailState.Loading
@@ -210,9 +212,13 @@ class TopicDetailViewModel(
     fun deletePost(post: Post) {
         if (_deleteState.value is DeleteState.Deleting) return
         _deleteState.value = DeleteState.Deleting(post.id)
+        // Same in-flight-outlives-its-topic contract as sendReply: after navigating
+        // away, this coroutine may not touch the new topic's thread or dialogs.
+        val generation = topicGeneration
         scope.launch {
             try {
                 apiClient.deletePost(post.id)
+                if (generation != topicGeneration) return@launch
                 val current = _state.value
                 if (current is TopicDetailState.Loaded) {
                     _state.value = TopicDetailState.Loaded(current.posts.filterNot { it.id == post.id })
@@ -220,11 +226,13 @@ class TopicDetailViewModel(
                 _deleteState.value = DeleteState.Idle
             } catch (e: SessionExpiredException) {
                 println("FiberSocial: TopicDetailViewModel.deletePost session expired")
-                _deleteState.value = DeleteState.Idle
+                if (generation == topicGeneration) _deleteState.value = DeleteState.Idle
                 _sessionExpired.trySend(Unit)
             } catch (e: Exception) {
                 println("FiberSocial: TopicDetailViewModel.deletePost error: ${e.message}")
-                _deleteState.value = DeleteState.Error(e.message ?: "Failed to delete post")
+                if (generation == topicGeneration) {
+                    _deleteState.value = DeleteState.Error(e.message ?: "Failed to delete post")
+                }
             }
         }
     }
@@ -247,18 +255,22 @@ class TopicDetailViewModel(
         val trimmed = newBody.trim()
         if (trimmed.isEmpty() || _editState.value is EditState.Saving) return
         _editState.value = EditState.Saving(post.id)
+        val generation = topicGeneration
         scope.launch {
             try {
                 val updated = apiClient.editPost(post.id, trimmed)
+                if (generation != topicGeneration) return@launch
                 updatePost(post.id) { it.copy(body = updated.body, bodyHtml = updated.bodyHtml) }
                 _editState.value = EditState.Idle
             } catch (e: SessionExpiredException) {
                 println("FiberSocial: TopicDetailViewModel.editPost session expired")
-                _editState.value = EditState.Idle
+                if (generation == topicGeneration) _editState.value = EditState.Idle
                 _sessionExpired.trySend(Unit)
             } catch (e: Exception) {
                 println("FiberSocial: TopicDetailViewModel.editPost error: ${e.message}")
-                _editState.value = EditState.Error(e.message ?: "Failed to save edit")
+                if (generation == topicGeneration) {
+                    _editState.value = EditState.Error(e.message ?: "Failed to save edit")
+                }
             }
         }
     }

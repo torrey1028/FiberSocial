@@ -868,6 +868,74 @@ class RavelryApiClientTest {
     }
 
     @Test
+    fun `deletePost throws SessionExpiredException when the delete redirects to login`() = runTest {
+        // Ktor doesn't follow redirects for POST: a 302 is how BOTH outcomes look.
+        // A Location pointing at the login page means the session expired — treating
+        // it as success would remove the post locally while it lives on at Ravelry.
+        val engine = MockEngine { request ->
+            if (request.method.value == "POST") {
+                respond("", HttpStatusCode.Found,
+                    headersOf(HttpHeaders.Location, "https://www.ravelry.com/account/login"))
+            } else {
+                respond(TOKEN_PAGE_HTML, HttpStatusCode.OK,
+                    headersOf("Content-Type", "text/html"))
+            }
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        assertFailsWith<SessionExpiredException> {
+            RavelryApiClient(httpClient, FakeFeedTokenStorage()).deletePost(555L)
+        }
+    }
+
+    @Test
+    fun `deletePost reuses the cached csrf token across deletes`() = runTest {
+        var tokenPageFetches = 0
+        val engine = MockEngine { request ->
+            if (request.method.value == "POST") {
+                respond("ok", HttpStatusCode.OK, headersOf("Content-Type", "text/html"))
+            } else {
+                tokenPageFetches++
+                respond(TOKEN_PAGE_HTML, HttpStatusCode.OK,
+                    headersOf("Content-Type", "text/html"))
+            }
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val client = RavelryApiClient(httpClient, FakeFeedTokenStorage())
+        client.deletePost(1L)
+        client.deletePost(2L)
+        // The token is session-stable; the homepage must not be re-downloaded per delete.
+        assertEquals(1, tokenPageFetches)
+    }
+
+    @Test
+    fun `csrf token extraction tolerates attribute order and the id-only form`() = runTest {
+        // Real Ravelry pages put content before id/name; extraction must not depend
+        // on attribute order (the old regex did).
+        val html = """<html><head>
+            <meta content="tok-xyz" id="authenticity-token" name="authenticity-token">
+            </head><body></body></html>"""
+        var sentToken: String? = null
+        val engine = MockEngine { request ->
+            if (request.method.value == "POST") {
+                sentToken = (request.body as io.ktor.client.request.forms.FormDataContent)
+                    .formData["authenticity_token"]
+                respond("ok", HttpStatusCode.OK, headersOf("Content-Type", "text/html"))
+            } else {
+                respond(html, HttpStatusCode.OK, headersOf("Content-Type", "text/html"))
+            }
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        RavelryApiClient(httpClient, FakeFeedTokenStorage()).deletePost(555L)
+        assertEquals("tok-xyz", sentToken)
+    }
+
+    @Test
     fun `editPost posts body to forum_posts endpoint and returns updated post`() = runTest {
         var capturedPath: String? = null
         var capturedMethod: String? = null
@@ -875,7 +943,8 @@ class RavelryApiClientTest {
         val engine = MockEngine { request ->
             capturedPath = request.url.encodedPath
             capturedMethod = request.method.value
-            capturedBody = request.url.parameters["body"]
+            capturedBody = (request.body as io.ktor.client.request.forms.FormDataContent)
+                .formData["body"]
             respond(
                 content = forumPostJson(id = 7L, body = "edited body", bodyHtml = "<p>edited body</p>"),
                 status = HttpStatusCode.OK,

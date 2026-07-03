@@ -750,6 +750,61 @@ class TopicDetailViewModelTest {
         }
 
     @Test
+    fun `a failed delete that outlives its topic shows no stale error dialog`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val releaseDelete = CompletableDeferred<Unit>()
+            val engine = MockEngine { request ->
+                when {
+                    request.method == HttpMethod.Post && request.url.encodedPath.startsWith("/forum_posts/") -> {
+                        releaseDelete.await()
+                        respond("nope", HttpStatusCode.Forbidden)
+                    }
+                    request.url.encodedPath == "/" ->
+                        respond(TOKEN_PAGE_HTML, HttpStatusCode.OK, headersOf("Content-Type", "text/html"))
+                    else ->
+                        respond(postsJson(7L), HttpStatusCode.OK,
+                            headersOf("Content-Type", ContentType.Application.Json.toString()))
+                }
+            }
+            val httpClient = HttpClient(engine) {
+                install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+            }
+            val vm = TopicDetailViewModel(RavelryApiClient(httpClient, FakeFeedTokenStorage()), this)
+            vm.load(1L)
+            vm.state.first { it is TopicDetailState.Loaded }
+            val victim = (vm.state.value as TopicDetailState.Loaded).posts.first()
+            vm.deletePost(victim)
+
+            vm.load(2L)
+            vm.state.first { it is TopicDetailState.Loaded }
+            releaseDelete.complete(Unit)
+            awaitChildren(coroutineContext[Job]!!)
+
+            // The failure belongs to topic 1; topic 2 must not pop its error dialog.
+            assertIs<DeleteState.Idle>(vm.deleteState.value)
+        }
+
+    @Test
+    fun `load resets leftover edit and delete state`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = TopicDetailViewModel(
+            routingApiClient { path ->
+                if (path.contains("/forum_posts/")) error("boom") else postsJson(1L)
+            },
+            this,
+        )
+        vm.load(1L)
+        awaitChildren(coroutineContext[Job]!!)
+        val post = (vm.state.value as TopicDetailState.Loaded).posts.first()
+        vm.editPost(post, "new body")
+        awaitChildren(coroutineContext[Job]!!)
+        assertIs<EditState.Error>(vm.editState.value)
+
+        vm.load(2L)
+        assertIs<EditState.Idle>(vm.editState.value)
+        assertIs<DeleteState.Idle>(vm.deleteState.value)
+    }
+
+    @Test
     fun `acknowledgeReplySent does not clear an Error`() = runTest(UnconfinedTestDispatcher()) {
         val vm = TopicDetailViewModel(errorApiClient(), this)
         vm.sendReply(42L, "reply")

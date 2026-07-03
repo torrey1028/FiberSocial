@@ -18,7 +18,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -49,12 +48,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
-import coil.compose.AsyncImage
 import com.autom8ed.fibersocial.feed.html.HtmlPostParser
 import com.autom8ed.fibersocial.feed.models.FeedItem
 import com.autom8ed.fibersocial.feed.models.Post
+import com.autom8ed.fibersocial.ui.Avatar
 import com.autom8ed.fibersocial.feed.models.RavelryUser
 import com.autom8ed.fibersocial.feed.models.VoteType
 import com.autom8ed.fibersocial.feed.models.hasVoted
@@ -97,19 +95,17 @@ fun TopicDetailScreen(
         )
     }
     if (deleteState is DeleteState.Error) {
-        AlertDialog(
-            onDismissRequest = onDeleteErrorShown,
-            title = { Text("Couldn't delete the post") },
-            text = { Text("Check your connection and try again.") },
-            confirmButton = { TextButton(onClick = onDeleteErrorShown) { Text("OK") } },
+        PostActionErrorDialog(
+            title = "Couldn't delete the post",
+            message = deleteState.message,
+            onDismiss = onDeleteErrorShown,
         )
     }
     if (editState is EditState.Error) {
-        AlertDialog(
-            onDismissRequest = onEditErrorShown,
-            title = { Text("Couldn't save your edit") },
-            text = { Text("Check your connection and try again.") },
-            confirmButton = { TextButton(onClick = onEditErrorShown) { Text("OK") } },
+        PostActionErrorDialog(
+            title = "Couldn't save your edit",
+            message = editState.message,
+            onDismiss = onEditErrorShown,
         )
     }
     // The system back button must mirror the top-bar back arrow instead of
@@ -212,6 +208,12 @@ fun TopicDetailScreen(
                             onDelete = { pendingDelete = post },
                             canEdit = mine && post.editable,
                             saving = (editState as? EditState.Saving)?.postId == post.id,
+                            saveFailed = editState is EditState.Error,
+                            // One edit/delete at a time (the ViewModel enforces it): while
+                            // any post's operation is in flight, other posts' actions are
+                            // disabled instead of silently dropping taps.
+                            actionsEnabled = deleteState !is DeleteState.Deleting &&
+                                editState !is EditState.Saving,
                             onEdit = { newBody -> onEditPost(post, newBody) },
                         )
                         HorizontalDivider()
@@ -231,12 +233,18 @@ internal fun ReplyItem(
     onDelete: () -> Unit = {},
     canEdit: Boolean = false,
     saving: Boolean = false,
+    saveFailed: Boolean = false,
+    actionsEnabled: Boolean = true,
     onEdit: (String) -> Unit = {},
 ) {
-    var editing by remember { mutableStateOf(false) }
-    // Leave edit mode once a save completes (saving goes true then false).
+    // Saveable: scrolling the item out of a LazyColumn (or rotating) disposes plain
+    // remember state, which would silently discard an in-progress edit.
+    var editing by rememberSaveable(post.id) { mutableStateOf(false) }
+    // Leave edit mode only when a save SUCCEEDS (saving -> Idle). A failed save
+    // (saving -> Error) keeps the editor open so the edited text isn't lost —
+    // same contract as the reply composer.
     val wasSaving = remember { mutableStateOf(false) }
-    if (wasSaving.value && !saving) editing = false
+    if (wasSaving.value && !saving && !saveFailed) editing = false
     wasSaving.value = saving
 
     Column(modifier = Modifier.padding(vertical = 12.dp)) {
@@ -248,7 +256,7 @@ internal fun ReplyItem(
                 CircularProgressIndicator(modifier = Modifier.size(24.dp))
             } else {
                 if (canEdit) {
-                    IconButton(onClick = { editing = !editing }) {
+                    IconButton(onClick = { editing = !editing }, enabled = actionsEnabled) {
                         Icon(
                             Icons.Default.Edit,
                             contentDescription = "Edit post",
@@ -257,7 +265,7 @@ internal fun ReplyItem(
                     }
                 }
                 if (canDelete) {
-                    IconButton(onClick = onDelete) {
+                    IconButton(onClick = onDelete, enabled = actionsEnabled) {
                         Icon(
                             Icons.Default.Delete,
                             contentDescription = "Delete post",
@@ -286,7 +294,9 @@ internal fun ReplyItem(
 
 @Composable
 private fun PostEditor(initial: String, onCancel: () -> Unit, onSave: (String) -> Unit) {
-    var text by remember(initial) { mutableStateOf(initial) }
+    // Saveable for the same reason as `editing`: the draft must survive the item
+    // scrolling out of composition and configuration changes.
+    var text by rememberSaveable(initial) { mutableStateOf(initial) }
     Column {
         Spacer(Modifier.height(8.dp))
         OutlinedTextField(
@@ -303,6 +313,17 @@ private fun PostEditor(initial: String, onCancel: () -> Unit, onSave: (String) -
             ) { Text("Save") }
         }
     }
+}
+
+/** One-shot modal for a failed post operation; shows the real failure reason. */
+@Composable
+private fun PostActionErrorDialog(title: String, message: String, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = { Text(message.ifBlank { "Check your connection and try again." }) },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("OK") } },
+    )
 }
 
 private val VOTE_TYPE_EMOJI: Map<VoteType, String> = mapOf(
@@ -351,15 +372,7 @@ private fun VoteButton(emoji: String, count: Int, voted: Boolean, onClick: () ->
 @Composable
 private fun AuthorRow(user: RavelryUser?, timestamp: String?) {
     Row(verticalAlignment = Alignment.CenterVertically) {
-        AsyncImage(
-            model = user?.avatarUrl,
-            contentDescription = null,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier
-                .size(32.dp)
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.surfaceVariant),
-        )
+        Avatar(url = user?.avatarUrl, size = 32.dp)
         Spacer(Modifier.width(8.dp))
         Column {
             Text(
