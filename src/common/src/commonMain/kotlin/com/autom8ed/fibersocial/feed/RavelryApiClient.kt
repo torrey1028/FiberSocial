@@ -229,7 +229,17 @@ class RavelryApiClient(
                 url.parameters.append("include", "vote_totals user_votes")
             }
         }
-        return lenientJson.decodeFromString<PostsResponse>(raw).posts
+        val response = lenientJson.decodeFromString<PostsResponse>(raw)
+        // Unlike forum_posts/vote, this endpoint doesn't nest vote_totals/user_votes inside
+        // each post — it returns them as separate maps keyed by post ID (as a string),
+        // alongside the posts array. Merge them onto their matching post here.
+        return response.posts.map { post ->
+            val postKey = post.id.toString()
+            post.copy(
+                voteTotals = response.voteTotals[postKey] ?: emptyMap(),
+                userVotes = response.userVotes[postKey] ?: emptyList(),
+            )
+        }
     }
 
     /**
@@ -268,7 +278,11 @@ class RavelryApiClient(
         return lenientJson.decodeFromString<TopicDetailResponse>(raw).topic
     }
 
-    @Serializable private data class PostsResponse(val posts: List<Post> = emptyList())
+    @Serializable private data class PostsResponse(
+        val posts: List<Post> = emptyList(),
+        @SerialName("vote_totals") val voteTotals: Map<String, Map<String, Int>> = emptyMap(),
+        @SerialName("user_votes") val userVotes: Map<String, List<String>> = emptyMap(),
+    )
     @Serializable private data class CurrentUserResponse(val user: RavelryUser)
     @Serializable private data class GroupsSearchResponse(val groups: List<Group> = emptyList())
     @Serializable private data class TopicsResponse(

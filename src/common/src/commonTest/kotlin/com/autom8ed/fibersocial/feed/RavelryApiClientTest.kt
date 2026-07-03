@@ -207,13 +207,34 @@ class RavelryApiClientTest {
     }
 
     @Test
-    fun `getTopicPosts decodes vote_totals and user_votes when present`() = runTest {
+    fun `getTopicPosts merges top-level vote_totals and user_votes onto matching post by id`() = runTest {
+        // Ravelry doesn't nest vote_totals/user_votes inside each post in this endpoint's
+        // response — it returns them as separate maps keyed by post id (as a string),
+        // alongside the posts array.
         val client = routingApiClient {
-            """{"posts":[{"id":1,"body_html":"<p>Reply</p>","user":{"username":"user1"},"vote_totals":{"love":3},"user_votes":["love"]}]}"""
+            """{"posts":[{"id":1,"body_html":"<p>Reply</p>","user":{"username":"user1"}}],
+                "vote_totals":{"1":{"love":3}},"user_votes":{"1":["love"]}}"""
         }
         val posts = client.getTopicPosts(42L)
         assertEquals(mapOf("love" to 3), posts[0].voteTotals)
         assertEquals(listOf("love"), posts[0].userVotes)
+    }
+
+    @Test
+    fun `getTopicPosts matches each post's own vote data by id, not another post's`() = runTest {
+        val client = routingApiClient {
+            """{"posts":[
+                {"id":1,"body_html":"<p>A</p>","user":{"username":"user1"}},
+                {"id":2,"body_html":"<p>B</p>","user":{"username":"user2"}}
+               ],
+               "vote_totals":{"1":{"interesting":1,"agree":2},"2":{"funny":1}},
+               "user_votes":{"1":["agree"],"2":[]}}"""
+        }
+        val posts = client.getTopicPosts(42L)
+        assertEquals(mapOf("interesting" to 1, "agree" to 2), posts[0].voteTotals)
+        assertEquals(listOf("agree"), posts[0].userVotes)
+        assertEquals(mapOf("funny" to 1), posts[1].voteTotals)
+        assertEquals(emptyList(), posts[1].userVotes)
     }
 
     @Test
