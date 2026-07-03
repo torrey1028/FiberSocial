@@ -18,6 +18,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -170,6 +171,42 @@ class EventDetailViewModelToggleAttendanceTest {
         vm.toggleAttendance()
         awaitChildren(coroutineContext[Job]!!)
         assertEquals(false, assertIs<EventDetailState.Loaded>(vm.state.value).detail.attending)
+    }
+
+    @Test
+    fun `a rejected toggle does not clobber a newer load`() = runTest(UnconfinedTestDispatcher()) {
+        // Park the attend POST until released, so its rejection arrives only after the
+        // user has navigated to a different event.
+        val releasePost = CompletableDeferred<Unit>()
+        var pageTitle = "Cozy Meetup"
+        val engine = MockEngine { request ->
+            if (request.method == HttpMethod.Post) {
+                releasePost.await()
+                respond("nope", HttpStatusCode.Forbidden, headersOf("Content-Type", "text/html"))
+            } else {
+                respond(EVENT_PAGE_WITH_TOKEN.replace("Cozy Meetup", pageTitle),
+                    HttpStatusCode.OK,
+                    headersOf("Content-Type", ContentType.Text.Html.toString()))
+            }
+        }
+        val client = RavelryApiClient(
+            HttpClient(engine) {
+                install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+            },
+            FakeFeedTokenStorage(),
+        )
+        val vm = EventDetailViewModel(client, this)
+        vm.load("cozy-meetup")
+        awaitChildren(coroutineContext[Job]!!)
+
+        vm.toggleAttendance()
+
+        pageTitle = "Other Event"
+        vm.load("other-event")
+        releasePost.complete(Unit)
+        awaitChildren(coroutineContext[Job]!!)
+
+        assertEquals("Other Event", assertIs<EventDetailState.Loaded>(vm.state.value).detail.title)
     }
 
     @Test

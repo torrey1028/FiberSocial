@@ -54,9 +54,11 @@ class EventDetailViewModel(
     /** Scrapes the event page for [eventPermalink], replacing any previous state. */
     fun load(eventPermalink: String) {
         loadedPermalink = eventPermalink
+        // Synchronously, not inside the coroutine: navigating to another event must not
+        // flash the previous event's detail while the launch waits its turn.
+        _state.value = EventDetailState.Loading
         scope.launch {
             println("FiberSocial: EventDetailViewModel.load($eventPermalink)")
-            _state.value = EventDetailState.Loading
             _state.value = try {
                 val detail = apiClient.getEvent(eventPermalink)
                 if (detail == null) {
@@ -90,7 +92,8 @@ class EventDetailViewModel(
         }
         val original = current.detail
         val target = !original.attending
-        _state.value = EventDetailState.Loaded(original.copy(attending = target))
+        val optimistic = EventDetailState.Loaded(original.copy(attending = target))
+        _state.value = optimistic
 
         scope.launch {
             val accepted = try {
@@ -104,9 +107,10 @@ class EventDetailViewModel(
                 false
             }
             if (!accepted) {
-                // Restore the pre-toggle snapshot. A load() racing this revert would be
-                // briefly clobbered, but the next load replaces the state anyway.
-                _state.value = EventDetailState.Loaded(original)
+                // Restore the pre-toggle snapshot — but only if this toggle's optimistic
+                // state is still showing. If a newer load() or toggle has replaced it,
+                // reverting would clobber that newer state with a stale event.
+                _state.compareAndSet(optimistic, EventDetailState.Loaded(original))
             }
         }
     }
