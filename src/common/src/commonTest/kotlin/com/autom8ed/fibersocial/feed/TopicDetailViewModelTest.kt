@@ -1,5 +1,7 @@
 package com.autom8ed.fibersocial.feed
 
+import io.ktor.http.HttpMethod
+import kotlinx.coroutines.CompletableDeferred
 import com.autom8ed.fibersocial.auth.AuthToken
 import com.autom8ed.fibersocial.auth.SessionExpiredException
 import com.autom8ed.fibersocial.feed.models.Post
@@ -385,5 +387,247 @@ class TopicDetailViewModelTest {
         assertNotEquals(err1, TopicDetailState.Error("other"))
         assertEquals("oops", err1.copy().message)
         assertTrue(err1.toString().contains("oops"))
+    }
+
+    @Test
+    fun `sendReply appends created post and transitions to Sent`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = TopicDetailViewModel(
+            routingApiClient { path ->
+                if (path.contains("/reply.json")) replyResponseJson(id = 99L) else postsJson(1L)
+            },
+            this,
+        )
+        vm.load(42L)
+        awaitChildren(coroutineContext[Job]!!)
+        vm.sendReply(42L, "My new reply")
+        awaitChildren(coroutineContext[Job]!!)
+        assertIs<ReplyState.Sent>(vm.replyState.value)
+        val state = assertIs<TopicDetailState.Loaded>(vm.state.value)
+        assertEquals(listOf(1L, 99L), state.posts.map { it.id })
+    }
+
+    @Test
+    fun `sendReply ignores blank bodies`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = TopicDetailViewModel(errorApiClient(), this)
+        vm.sendReply(42L, "   ")
+        awaitChildren(coroutineContext[Job]!!)
+        assertIs<ReplyState.Idle>(vm.replyState.value)
+    }
+
+    @Test
+    fun `sendReply trims whitespace before submitting`() = runTest(UnconfinedTestDispatcher()) {
+        var sentBody: String? = null
+        val engine = MockEngine { request ->
+            if (request.method == HttpMethod.Post) {
+                sentBody = (request.body as io.ktor.client.request.forms.FormDataContent)
+                    .formData["body"]
+                respond(replyResponseJson(), HttpStatusCode.OK,
+                    headersOf("Content-Type", ContentType.Application.Json.toString()))
+            } else {
+                respond(postsJson(1L), HttpStatusCode.OK,
+                    headersOf("Content-Type", ContentType.Application.Json.toString()))
+            }
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val vm = TopicDetailViewModel(RavelryApiClient(httpClient, FakeFeedTokenStorage()), this)
+        vm.sendReply(42L, "  hello  ")
+        awaitChildren(coroutineContext[Job]!!)
+        assertEquals("hello", sentBody)
+    }
+
+    @Test
+    fun `sendReply failure keeps thread state and reports Error`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = TopicDetailViewModel(
+            routingApiClient { path ->
+                if (path.contains("/reply.json")) error("Simulated network error") else postsJson(1L, 2L)
+            },
+            this,
+        )
+        vm.load(42L)
+        awaitChildren(coroutineContext[Job]!!)
+        vm.sendReply(42L, "My new reply")
+        awaitChildren(coroutineContext[Job]!!)
+        assertIs<ReplyState.Error>(vm.replyState.value)
+        val state = assertIs<TopicDetailState.Loaded>(vm.state.value)
+        assertEquals(2, state.posts.size)
+    }
+
+    @Test
+    fun `sendReply session expiry signals sessionExpired and returns to Idle`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = TopicDetailViewModel(sessionExpiredApiClient(), this)
+        vm.sendReply(42L, "My new reply")
+        awaitChildren(coroutineContext[Job]!!)
+        assertIs<ReplyState.Idle>(vm.replyState.value)
+        assertEquals(Unit, vm.sessionExpired.first())
+    }
+
+    /**
+     * Client whose reply POSTs suspend until [gate] completes (to interleave navigation
+     * with an in-flight send); GETs serve a one-post thread whose post ID is the topic ID.
+     */
+    private fun gatedReplyApiClient(
+        gate: CompletableDeferred<Unit>,
+        postOutcome: suspend () -> String,
+    ): RavelryApiClient {
+        val engine = MockEngine { request ->
+            if (request.method == HttpMethod.Post) {
+                gate.await()
+                respond(postOutcome(), HttpStatusCode.OK,
+                    headersOf("Content-Type", ContentType.Application.Json.toString()))
+            } else {
+                val topicId = Regex("""/topics/(\d+)/""").find(request.url.encodedPath)!!.groupValues[1].toLong()
+                respond(postsJson(topicId), HttpStatusCode.OK,
+                    headersOf("Content-Type", ContentType.Application.Json.toString()))
+            }
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        return RavelryApiClient(httpClient, FakeFeedTokenStorage())
+    }
+
+    @Test
+    fun `a stale send failure does not surface an error on the new topic`() = runTest(UnconfinedTestDispatcher()) {
+        val gate = CompletableDeferred<Unit>()
+        val vm = TopicDetailViewModel(gatedReplyApiClient(gate, { error("late failure") }), this)
+        vm.load(42L)
+        vm.sendReply(42L, "typed before navigating")
+
+        vm.load(43L)
+        gate.complete(Unit)
+        awaitChildren(coroutineContext[Job]!!)
+
+        assertIs<ReplyState.Idle>(vm.replyState.value)
+    }
+
+    @Test
+    fun `a stale send session expiry still signals but leaves composer state alone`() = runTest(UnconfinedTestDispatcher()) {
+        val gate = CompletableDeferred<Unit>()
+        val vm = TopicDetailViewModel(
+            gatedReplyApiClient(gate, { throw com.autom8ed.fibersocial.auth.SessionExpiredException("expired") }),
+            this,
+        )
+        vm.load(42L)
+        vm.sendReply(42L, "typed before navigating")
+
+        vm.load(43L)
+        gate.complete(Unit)
+        awaitChildren(coroutineContext[Job]!!)
+
+        assertIs<ReplyState.Idle>(vm.replyState.value)
+        assertEquals(Unit, vm.sessionExpired.first())
+    }
+
+    @Test
+    fun `a reply that succeeds while the thread is not loaded still reports Sent`() = runTest(UnconfinedTestDispatcher()) {
+        // Topic failed to load (state = Error, composer visible is a UI concern); the
+        // send itself succeeded on the server, so the composer must acknowledge it.
+        val vm = TopicDetailViewModel(
+            routingApiClient { path ->
+                if (path.contains("/reply.json")) replyResponseJson(id = 99L) else error("load failed")
+            },
+            this,
+        )
+        vm.load(42L)
+        awaitChildren(coroutineContext[Job]!!)
+        assertIs<TopicDetailState.Error>(vm.state.value)
+
+        vm.sendReply(42L, "still works")
+        awaitChildren(coroutineContext[Job]!!)
+        assertIs<ReplyState.Sent>(vm.replyState.value)
+        assertIs<TopicDetailState.Error>(vm.state.value)
+    }
+
+    @Test
+    fun `acknowledgeReplySent resets Sent to Idle`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = TopicDetailViewModel(
+            routingApiClient { path ->
+                if (path.contains("/reply.json")) replyResponseJson() else postsJson(1L)
+            },
+            this,
+        )
+        vm.sendReply(42L, "reply")
+        awaitChildren(coroutineContext[Job]!!)
+        assertIs<ReplyState.Sent>(vm.replyState.value)
+        vm.acknowledgeReplySent()
+        assertIs<ReplyState.Idle>(vm.replyState.value)
+    }
+
+    @Test
+    fun `a second send while one is in flight issues exactly one request`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val releaseFirst = CompletableDeferred<Unit>()
+            var postCount = 0
+            val engine = MockEngine { request ->
+                if (request.method == HttpMethod.Post) {
+                    postCount++
+                    releaseFirst.await()
+                    respond(replyResponseJson(id = 99L), HttpStatusCode.OK,
+                        headersOf("Content-Type", ContentType.Application.Json.toString()))
+                } else {
+                    respond(postsJson(1L), HttpStatusCode.OK,
+                        headersOf("Content-Type", ContentType.Application.Json.toString()))
+                }
+            }
+            val httpClient = HttpClient(engine) {
+                install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+            }
+            val vm = TopicDetailViewModel(RavelryApiClient(httpClient, FakeFeedTokenStorage()), this)
+            vm.load(1L)
+            vm.state.first { it is TopicDetailState.Loaded }
+
+            vm.sendReply(1L, "first")
+            vm.sendReply(1L, "second")
+            releaseFirst.complete(Unit)
+            awaitChildren(coroutineContext[Job]!!)
+
+            assertEquals(1, postCount)
+        }
+
+    @Test
+    fun `a send that outlives its topic touches neither the new thread nor the composer`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val releasePost = CompletableDeferred<Unit>()
+            val engine = MockEngine { request ->
+                if (request.method == HttpMethod.Post) {
+                    releasePost.await()
+                    respond(replyResponseJson(id = 99L), HttpStatusCode.OK,
+                        headersOf("Content-Type", ContentType.Application.Json.toString()))
+                } else {
+                    respond(postsJson(7L), HttpStatusCode.OK,
+                        headersOf("Content-Type", ContentType.Application.Json.toString()))
+                }
+            }
+            val httpClient = HttpClient(engine) {
+                install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+            }
+            val vm = TopicDetailViewModel(RavelryApiClient(httpClient, FakeFeedTokenStorage()), this)
+            vm.load(1L)
+            vm.state.first { it is TopicDetailState.Loaded }
+            vm.sendReply(1L, "late reply")
+
+            // Navigate to another topic while the send is parked mid-flight.
+            vm.load(2L)
+            vm.state.first { it is TopicDetailState.Loaded }
+            releasePost.complete(Unit)
+            awaitChildren(coroutineContext[Job]!!)
+
+            // Topic 2's thread must not gain topic 1's reply, and the composer must
+            // stay Idle rather than flashing a stale Sent (which would wipe a draft).
+            val posts = (vm.state.value as TopicDetailState.Loaded).posts
+            assertTrue(posts.none { it.id == 99L })
+            assertIs<ReplyState.Idle>(vm.replyState.value)
+        }
+
+    @Test
+    fun `acknowledgeReplySent does not clear an Error`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = TopicDetailViewModel(errorApiClient(), this)
+        vm.sendReply(42L, "reply")
+        awaitChildren(coroutineContext[Job]!!)
+        assertIs<ReplyState.Error>(vm.replyState.value)
+        vm.acknowledgeReplySent()
+        assertIs<ReplyState.Error>(vm.replyState.value)
     }
 }

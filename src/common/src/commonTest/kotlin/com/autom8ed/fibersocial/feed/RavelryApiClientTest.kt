@@ -732,6 +732,45 @@ class RavelryApiClientTest {
         val client = routingApiClient { """{"posts":[]}""" }
         assertEquals(null, client.getLatestPost(100L))
     }
+
+    @Test
+    fun `postReply raises a cautious error when the response is not the created post`() = runTest {
+        // A 200 with a non-JSON body (maintenance page, HTML error) must not be treated
+        // as success, and the message must warn the reply may still have posted.
+        val client = routingApiClient { path ->
+            if (path.contains("/reply.json")) "<html>down for maintenance</html>" else postsJson(1L)
+        }
+        val failure = runCatching { client.postReply(42L, "hello") }.exceptionOrNull()
+        assertTrue(failure!!.message!!.contains("the reply may have posted"))
+    }
+
+    @Test
+    fun `postReply posts body to reply endpoint and returns created post`() = runTest {
+        var capturedPath: String? = null
+        var capturedMethod: String? = null
+        var capturedBody: String? = null
+        val engine = MockEngine { request ->
+            capturedPath = request.url.encodedPath
+            capturedMethod = request.method.value
+            capturedBody = (request.body as io.ktor.client.request.forms.FormDataContent)
+                .formData["body"]
+            respond(
+                content = replyResponseJson(id = 99L, username = "yarnie"),
+                status = HttpStatusCode.OK,
+                headers = headersOf("Content-Type", ContentType.Application.Json.toString()),
+            )
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val post = RavelryApiClient(httpClient, FakeFeedTokenStorage()).postReply(42L, "My new reply")
+        assertEquals("/topics/42/reply.json", capturedPath)
+        assertEquals("POST", capturedMethod)
+        assertEquals("My new reply", capturedBody)
+        assertEquals(99L, post.id)
+        assertEquals("yarnie", post.user?.username)
+        assertEquals("<p>My new reply</p>", post.bodyHtml)
+    }
 }
 
 private fun htmlApiClient(engine: MockEngine): RavelryApiClient {
