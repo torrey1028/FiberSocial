@@ -890,6 +890,18 @@ class RavelryApiClientTest {
         assertEquals("edited body", post.body)
         assertEquals("<p>edited body</p>", post.bodyHtml)
     }
+
+    @Test
+    fun `postReply tolerates a null editable field in the response`() = runTest {
+        // Ravelry returns "editable": null on a freshly created reply; the non-null
+        // Post.editable must coerce to its default instead of failing to parse.
+        val client = routingApiClient {
+            """{"forum_post":{"id":5,"body_html":"<p>hi</p>","body":"hi","editable":null,"user":{"username":"me"}}}"""
+        }
+        val post = client.postReply(42L, "hi")
+        assertEquals(5L, post.id)
+        assertEquals(false, post.editable)
+    }
 }
 
 private fun htmlApiClient(engine: MockEngine): RavelryApiClient {
