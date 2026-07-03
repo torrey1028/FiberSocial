@@ -12,6 +12,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 
+/** A successfully applied RSVP change: [attending] is the new state for [permalink]. */
+data class AttendanceChange(val permalink: String, val attending: Boolean)
+
 /** Represents the event detail screen state emitted by [EventDetailViewModel]. */
 sealed class EventDetailState {
     /** The event page is being scraped. */
@@ -57,6 +60,15 @@ class EventDetailViewModel(
      * exactly once — no replay on re-subscription. Collect to navigate to login.
      */
     val sessionExpired: Flow<Unit> = _sessionExpired.receiveAsFlow()
+
+    private val _attendanceChanged = Channel<AttendanceChange>(Channel.BUFFERED)
+
+    /**
+     * Emits after the site accepts an RSVP change, so other screens (the events list's
+     * "N going" chips) can update their counts without a re-scrape. Each emission is
+     * consumed exactly once.
+     */
+    val attendanceChanged: Flow<AttendanceChange> = _attendanceChanged.receiveAsFlow()
 
     /** Permalink of the currently loaded (or loading) event; used by [toggleAttendance]. */
     private var loadedPermalink: String? = null
@@ -124,6 +136,7 @@ class EventDetailViewModel(
                 // reverting would clobber that newer state with a stale event.
                 _state.compareAndSet(optimistic, EventDetailState.Loaded(original))
             } else {
+                _attendanceChanged.trySend(AttendanceChange(permalink, attending = target))
                 // The user just joined or left; the people page is the source of truth.
                 refreshAttendees(permalink)
             }

@@ -172,6 +172,35 @@ class EventDetailViewModelToggleAttendanceTest {
     }
 
     @Test
+    fun `an accepted toggle emits an attendance change with the new state`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = EventDetailViewModel(rsvpApiClient(mutableListOf()), this)
+        vm.load("cozy-meetup")
+        awaitChildren(coroutineContext[Job]!!)
+
+        vm.toggleAttendance()
+        awaitChildren(coroutineContext[Job]!!)
+        assertEquals(AttendanceChange("cozy-meetup", attending = true), vm.attendanceChanged.first())
+
+        vm.toggleAttendance()
+        awaitChildren(coroutineContext[Job]!!)
+        assertEquals(AttendanceChange("cozy-meetup", attending = false), vm.attendanceChanged.first())
+    }
+
+    @Test
+    fun `a rejected toggle emits no attendance change`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = EventDetailViewModel(
+            rsvpApiClient(mutableListOf(), postStatus = { HttpStatusCode.Forbidden }),
+            this,
+        )
+        vm.load("cozy-meetup")
+        awaitChildren(coroutineContext[Job]!!)
+
+        vm.toggleAttendance()
+        awaitChildren(coroutineContext[Job]!!)
+        assertEquals(null, withTimeoutOrNull(1_000) { vm.attendanceChanged.first() })
+    }
+
+    @Test
     fun `a rejected toggle reverts the optimistic flip`() = runTest(UnconfinedTestDispatcher()) {
         val vm = EventDetailViewModel(
             rsvpApiClient(mutableListOf(), postStatus = { HttpStatusCode.Forbidden }),

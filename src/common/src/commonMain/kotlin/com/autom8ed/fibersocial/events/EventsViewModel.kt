@@ -65,6 +65,28 @@ class EventsViewModel(
      * Scrapes upcoming events for every group in [groups], replacing any previous state.
      * The caller supplies the groups (the feed has already resolved them).
      */
+    /**
+     * Locally adjusts the "N going" count for [permalink] after an RSVP change made
+     * elsewhere in the app: +1 when the user now attends, -1 when they backed out.
+     * The count came from a one-time scrape of the group pages, so without this the
+     * list keeps showing the pre-RSVP number until a full reload. No-op while the
+     * list isn't loaded or doesn't contain the event.
+     */
+    fun applyAttendanceChange(permalink: String, attending: Boolean) {
+        val loaded = _state.value as? EventsState.Loaded ?: return
+        val delta = if (attending) 1 else -1
+        _state.value = EventsState.Loaded(
+            loaded.events.map { groupEvent ->
+                if (groupEvent.event.permalink != permalink) groupEvent
+                else groupEvent.copy(
+                    event = groupEvent.event.copy(
+                        attendeeCount = (groupEvent.event.attendeeCount + delta).coerceAtLeast(0),
+                    ),
+                )
+            },
+        )
+    }
+
     fun load(groups: List<Group>) {
         scope.launch {
             println("FiberSocial: EventsViewModel.load(${groups.size} groups)")

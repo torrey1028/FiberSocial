@@ -128,4 +128,58 @@ class EventsViewModelTest {
         assertIs<EventsState.Loading>(vm.state.value)
         assertEquals(Unit, vm.sessionExpired.first())
     }
+
+    private suspend fun kotlinx.coroutines.CoroutineScope.loadedVm(): EventsViewModel {
+        val client = routingApiClient {
+            eventBox(
+                Triple("meetup", "Meetup", "July 3, 2026 @ 9:00 AM"),
+                Triple("festival", "Festival", "August 1, 2026 @ 1:00 PM"),
+            )
+        }
+        val vm = EventsViewModel(client, this)
+        vm.load(listOf(group("g")))
+        awaitChildren(coroutineContext[Job]!!)
+        return vm
+    }
+
+    private fun countOf(vm: EventsViewModel, permalink: String): Int =
+        assertIs<EventsState.Loaded>(vm.state.value)
+            .events.first { it.event.permalink == permalink }.event.attendeeCount
+
+    @Test
+    fun `applyAttendanceChange adjusts only the matching event's count`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = loadedVm()
+        assertEquals(1, countOf(vm, "meetup"))
+
+        vm.applyAttendanceChange("meetup", attending = true)
+        assertEquals(2, countOf(vm, "meetup"))
+        assertEquals(1, countOf(vm, "festival"))
+
+        vm.applyAttendanceChange("meetup", attending = false)
+        assertEquals(1, countOf(vm, "meetup"))
+    }
+
+    @Test
+    fun `applyAttendanceChange never drops a count below zero`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = loadedVm()
+        vm.applyAttendanceChange("meetup", attending = false)
+        assertEquals(0, countOf(vm, "meetup"))
+        vm.applyAttendanceChange("meetup", attending = false)
+        assertEquals(0, countOf(vm, "meetup"))
+    }
+
+    @Test
+    fun `applyAttendanceChange before the list is loaded is a no-op`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = EventsViewModel(routingApiClient { eventBox() }, this)
+        vm.applyAttendanceChange("meetup", attending = true)
+        assertIs<EventsState.Loading>(vm.state.value)
+    }
+
+    @Test
+    fun `applyAttendanceChange for an unknown event leaves the list unchanged`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = loadedVm()
+        vm.applyAttendanceChange("not-in-list", attending = true)
+        assertEquals(1, countOf(vm, "meetup"))
+        assertEquals(1, countOf(vm, "festival"))
+    }
 }
