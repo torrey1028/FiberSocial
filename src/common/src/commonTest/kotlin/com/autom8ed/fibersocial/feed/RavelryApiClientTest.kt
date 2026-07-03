@@ -963,15 +963,16 @@ class RavelryApiClientTest {
     }
 
     @Test
-    fun `postReply tolerates a null editable field in the response`() = runTest {
-        // Ravelry returns "editable": null on a freshly created reply; the non-null
-        // Post.editable must coerce to its default instead of failing to parse.
+    fun `postReply parses a null editable field as null (unknown), not a failure`() = runTest {
+        // Ravelry returns "editable": null on a freshly created reply. Post.editable is
+        // nullable so this parses to null ("unknown"), which the edit UI treats optimistically
+        // as editable — see Post.editable / issue #82.
         val client = routingApiClient {
             """{"forum_post":{"id":5,"body_html":"<p>hi</p>","body":"hi","editable":null,"user":{"username":"me"}}}"""
         }
         val post = client.postReply(42L, "hi")
         assertEquals(5L, post.id)
-        assertEquals(false, post.editable)
+        assertEquals(null, post.editable)
     }
 }
 
