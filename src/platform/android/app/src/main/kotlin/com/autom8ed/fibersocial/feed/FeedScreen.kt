@@ -11,6 +11,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -38,8 +39,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.autom8ed.fibersocial.BuildConfig
 import com.autom8ed.fibersocial.debug.DebugPanel
+import com.autom8ed.fibersocial.events.EventDetailScreen
+import com.autom8ed.fibersocial.events.EventDiscussion
+import com.autom8ed.fibersocial.events.EventsScreen
+import com.autom8ed.fibersocial.events.GroupEvent
 import com.autom8ed.fibersocial.feed.models.FeedItem
 import com.autom8ed.fibersocial.feed.models.Group
+import com.autom8ed.fibersocial.feed.models.RavelryUser
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -47,7 +53,17 @@ import kotlinx.coroutines.launch
 fun FeedScreen(viewModel: FeedAndroidViewModel) {
     val state by viewModel.feed.state.collectAsState()
     val topicDetailState by viewModel.topicDetail.state.collectAsState()
+    val eventsState by viewModel.events.state.collectAsState()
+    val eventDetailState by viewModel.eventDetail.state.collectAsState()
     var selectedTopic by remember { mutableStateOf<FeedItem.DiscussionTopic?>(null) }
+    var selectedEvent by remember { mutableStateOf<GroupEvent?>(null) }
+    var showEvents by remember { mutableStateOf(false) }
+
+    val groups = when (val s = state) {
+        is FeedState.Loaded -> s.groups
+        is FeedState.Refreshing -> s.stale.groups
+        else -> emptyList()
+    }
 
     if (selectedTopic != null) {
         TopicDetailScreen(
@@ -55,6 +71,30 @@ fun FeedScreen(viewModel: FeedAndroidViewModel) {
             postsState = topicDetailState,
             onBack = { selectedTopic = null },
             onVote = { post, type -> viewModel.topicDetail.toggleVote(post, type) },
+        )
+        return
+    }
+
+    if (selectedEvent != null) {
+        EventDetailScreen(
+            state = eventDetailState,
+            onBack = { selectedEvent = null },
+            onDiscussionClick = { discussion ->
+                viewModel.topicDetail.load(discussion.topicId)
+                selectedTopic = discussionTopicFor(discussion, groups)
+            },
+        )
+        return
+    }
+
+    if (showEvents) {
+        EventsScreen(
+            state = eventsState,
+            onBack = { showEvents = false },
+            onEventClick = { groupEvent ->
+                viewModel.eventDetail.load(groupEvent.event.permalink)
+                selectedEvent = groupEvent
+            },
         )
         return
     }
@@ -67,12 +107,6 @@ fun FeedScreen(viewModel: FeedAndroidViewModel) {
         is FeedState.Loaded -> s.selectedGroup?.name ?: "All Groups"
         is FeedState.Refreshing -> s.stale.selectedGroup?.name ?: "All Groups"
         else -> "FiberSocial"
-    }
-
-    val groups = when (val s = state) {
-        is FeedState.Loaded -> s.groups
-        is FeedState.Refreshing -> s.stale.groups
-        else -> emptyList()
     }
 
     val selectedGroup = when (val s = state) {
@@ -104,6 +138,14 @@ fun FeedScreen(viewModel: FeedAndroidViewModel) {
                         }
                     },
                     actions = {
+                        if (groups.isNotEmpty()) {
+                            IconButton(onClick = {
+                                viewModel.events.load(groups)
+                                showEvents = true
+                            }) {
+                                Icon(Icons.Default.DateRange, contentDescription = "Upcoming events")
+                            }
+                        }
                         if (BuildConfig.DEBUG) {
                             IconButton(onClick = { showDebugPanel = true }) {
                                 Icon(Icons.Default.Build, contentDescription = "Debug panel")
@@ -196,6 +238,30 @@ private fun GroupDrawer(
             item { Spacer(Modifier.height(16.dp)) }
         }
     }
+}
+
+/**
+ * Bridges an event's linked discussion into the topic detail screen. Only the topic ID
+ * and title come from the event page; the group is matched by permalink from the loaded
+ * groups (name falls back to the permalink) and the author is unknown until the posts
+ * load.
+ */
+private fun discussionTopicFor(
+    discussion: EventDiscussion,
+    groups: List<Group>,
+): FeedItem.DiscussionTopic {
+    val group = groups.firstOrNull { it.permalink == discussion.groupPermalink }
+    return FeedItem.DiscussionTopic(
+        id = discussion.topicId,
+        groupId = group?.id ?: 0L,
+        groupName = group?.name ?: discussion.groupPermalink,
+        lastPostAt = null,
+        author = RavelryUser(username = ""),
+        title = discussion.title,
+        bodyPreview = "",
+        bodySummary = "",
+        replyCount = discussion.postsCount,
+    )
 }
 
 @Composable

@@ -191,7 +191,7 @@ private fun AuthorRow(user: RavelryUser?, timestamp: String?) {
         Spacer(Modifier.width(8.dp))
         Column {
             Text(
-                text = "@${user?.username ?: "unknown"}",
+                text = "@${user?.username?.takeIf { it.isNotBlank() } ?: "unknown"}",
                 style = MaterialTheme.typography.labelMedium,
             )
             if (timestamp != null) {
