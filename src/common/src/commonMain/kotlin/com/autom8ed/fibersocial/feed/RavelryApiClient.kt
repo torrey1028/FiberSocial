@@ -2,6 +2,8 @@ package com.autom8ed.fibersocial.feed
 
 import com.autom8ed.fibersocial.auth.SessionExpiredException
 import com.autom8ed.fibersocial.auth.TokenStorage
+import com.autom8ed.fibersocial.events.EventDetail
+import com.autom8ed.fibersocial.events.EventPageParser
 import com.autom8ed.fibersocial.events.EventSummary
 import com.autom8ed.fibersocial.events.GroupEventsParser
 import com.autom8ed.fibersocial.feed.models.Group
@@ -179,6 +181,26 @@ class RavelryApiClient(
         val events = GroupEventsParser.parse(response.bodyAsText())
         println("FiberSocial: getGroupEvents($groupPermalink) -> ${events.size} events")
         return events
+    }
+
+    /**
+     * Returns the full details of an event, or null when [eventPermalink] doesn't
+     * resolve to an event page.
+     *
+     * Ravelry has no events API, so this scrapes `www.ravelry.com/events/{permalink}`
+     * with the session cookie (see [EventPageParser]).
+     *
+     * @param eventPermalink The event's slug, e.g. `wednesday-hh-at-chainline-39`
+     *   (from [EventSummary.permalink]).
+     */
+    suspend fun getEvent(eventPermalink: String): EventDetail? {
+        val html = httpClient.get("https://www.ravelry.com/events/$eventPermalink") {
+            header(HttpHeaders.Cookie, sessionCookie())
+            header(HttpHeaders.Accept, "text/html")
+        }.bodyAsText()
+        val detail = EventPageParser.parse(html)
+        println("FiberSocial: getEvent($eventPermalink) -> ${detail?.title ?: "NOT AN EVENT PAGE"}")
+        return detail
     }
 
     /**
