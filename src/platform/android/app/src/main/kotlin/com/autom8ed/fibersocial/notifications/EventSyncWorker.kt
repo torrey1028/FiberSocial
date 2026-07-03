@@ -3,6 +3,7 @@ package com.autom8ed.fibersocial.notifications
 import android.content.Context
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
@@ -103,6 +104,7 @@ class EventSyncWorker(
 
     companion object {
         private const val UNIQUE_WORK_NAME = "event_sync"
+        private const val UNIQUE_ONCE_WORK_NAME = "event_sync_once"
 
         /**
          * Registers (or re-registers, when [pollIntervalHours] changed) the periodic
@@ -133,7 +135,13 @@ class EventSyncWorker(
             // Same network constraint as the periodic work: offline, an unconstrained
             // request would enter the retry path and keep rescheduling in the
             // background — surprising for a manual debug tap.
-            WorkManager.getInstance(context).enqueue(
+            // Unique + REPLACE: rapid triggers (e.g. RSVP toggled on then off) must not
+            // race two concurrent syncs — the stale one could save last and resurrect
+            // reminders for a withdrawn RSVP until the next poll. REPLACE cancels the
+            // in-flight sync so the last trigger's view of the world wins.
+            WorkManager.getInstance(context).enqueueUniqueWork(
+                UNIQUE_ONCE_WORK_NAME,
+                ExistingWorkPolicy.REPLACE,
                 OneTimeWorkRequestBuilder<EventSyncWorker>()
                     .setConstraints(
                         Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build(),

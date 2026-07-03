@@ -168,6 +168,17 @@ class EventPageParserLenienceTest {
     }
 
     @Test
+    fun `blank venue rows are treated as absent`() {
+        val html = """
+            <div class="event__detail">
+            <ul id="venue_summary"><li class="venue_name">Cozy Yarns</li><li class="address">   </li></ul>
+            </div>
+        """
+        val venue = assertNotNull(EventPageParser.parse(html)).venue
+        assertEquals(EventVenue(name = "Cozy Yarns"), venue)
+    }
+
+    @Test
     fun `multi-day date ranges keep raw text with null startsAt`() {
         val html = """
             <div class="event__detail">

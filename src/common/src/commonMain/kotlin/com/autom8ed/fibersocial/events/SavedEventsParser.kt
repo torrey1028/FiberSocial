@@ -81,7 +81,7 @@ object SavedEventsParser {
                         title = link.text(),
                         date = eventDate(year, month, child.selectFirst("div.date div.day")),
                         eventType = child.selectFirst(".event__search_result__type")
-                            ?.text()?.ifEmpty { null },
+                            .let { if (it == null) null else it.text().ifEmpty { null } },
                     )
                 }
             }

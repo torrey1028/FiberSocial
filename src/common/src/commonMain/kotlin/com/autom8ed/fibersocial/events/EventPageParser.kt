@@ -54,8 +54,10 @@ object EventPageParser {
     /** Null when `#venue_summary` is absent or has no non-empty rows we recognize. */
     private fun parseVenue(detail: Element): EventVenue? {
         val summary = detail.selectFirst("#venue_summary") ?: return null
-        fun row(cls: String): String? =
-            summary.selectFirst("li.$cls")?.text()?.trim()?.takeIf { it.isNotEmpty() }
+        fun row(cls: String): String? {
+            val element = summary.selectFirst("li.$cls") ?: return null
+            return element.text().trim().takeIf { it.isNotEmpty() }
+        }
         val venue = EventVenue(
             name = row("venue_name"),
             address = row("address"),

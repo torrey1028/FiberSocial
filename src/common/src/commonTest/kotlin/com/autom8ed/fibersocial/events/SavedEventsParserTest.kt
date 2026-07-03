@@ -149,6 +149,24 @@ class SavedEventsParserStructureTest {
     }
 
     @Test
+    fun `month header without a year yields null dates for entries under it`() {
+        val html = page("""<div class="month">Coming up</div>""" + entry("x", "X", "5th"))
+        assertNull(SavedEventsParser.parse(html).single().date)
+    }
+
+    @Test
+    fun `empty type element yields a null event type`() {
+        val html = page(
+            """<div class="month">July 2026</div>
+               <div class="event"><div class="date"><div class="day">5th</div></div>
+               <div class="details"><a href="https://www.ravelry.com/events/x" class="title">X</a>
+               <div class="event__search_result__type"> </div></div>
+               </div>""",
+        )
+        assertNull(SavedEventsParser.parse(html).single().eventType)
+    }
+
+    @Test
     fun `entry without a title link is skipped`() {
         val html = page(
             """<div class="month">July 2026</div>

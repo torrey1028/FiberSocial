@@ -88,6 +88,41 @@ class EventSyncRunnerTest {
     }
 
     @Test
+    fun `a saved event whose page no longer resolves gets no reminders`() = runTest {
+        // Same routing as syncApiClient, but the event page is a 404-style page.
+        val engine = MockEngine { request ->
+            val path = request.url.encodedPath
+            val (body, type) = when {
+                path.contains("current_user") ->
+                    """{"user":{"username":"yarnie"}}""" to ContentType.Application.Json
+                path.contains("memberships") ->
+                    """<a href="https://www.ravelry.com/groups/kirkland-fiber-arts-circle-2">K</a>""" to ContentType.Text.Html
+                path.contains("groups/search") ->
+                    """{"groups":[{"id":1,"name":"Kirkland","permalink":"kirkland-fiber-arts-circle-2","forum_id":9}]}""" to ContentType.Application.Json
+                path.endsWith("/events/saved") ->
+                    """<div class="event_list"><div class="month">July 2026</div>
+                       <div class="event"><div class="date"><div class="day">5th</div></div>
+                       <div class="details"><a href="https://www.ravelry.com/events/gone" class="title">Gone</a></div>
+                       </div></div>""" to ContentType.Text.Html
+                path.contains("/events/gone") ->
+                    "<html><body>this event was deleted</body></html>" to ContentType.Text.Html
+                path.contains("/groups/") ->
+                    """<div id="upcoming_events"></div>""" to ContentType.Text.Html
+                else -> error("Unexpected path: ${'$'}path")
+            }
+            respond(body, HttpStatusCode.OK, headersOf("Content-Type", type.toString()))
+        }
+        val client = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val runner = EventSyncRunner(RavelryApiClient(client, FakeFeedTokenStorage()), InMemoryStateStore())
+
+        val plan = runner.sync(NOW, ZONE)
+
+        assertTrue(plan.remindersToSchedule.isEmpty())
+    }
+
+    @Test
     fun `second sync over unchanged data is a no-op plan`() = runTest {
         val store = InMemoryStateStore()
         val runner = EventSyncRunner(syncApiClient(), store)
