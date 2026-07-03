@@ -26,8 +26,8 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.DrawerState
-import androidx.compose.material3.rememberDrawerState
 import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -228,11 +228,17 @@ private fun FeedList(
  * Closes an open navigation drawer on system back instead of letting the
  * press fall through and exit the app (issue #38). No-op while the drawer
  * is closed so normal back behavior is unaffected.
+ *
+ * Also enabled while the drawer is animating: isOpen tracks the *settled*
+ * value, which is still Closed for the first half of the opening animation
+ * and already Closed for the second half of the closing one — a back press
+ * in either window would otherwise fall through and exit the app while the
+ * drawer is visibly on screen (e.g. a habitual double-press of back).
  */
 @Composable
 internal fun CloseDrawerOnBack(drawerState: DrawerState) {
     val scope = rememberCoroutineScope()
-    BackHandler(enabled = drawerState.isOpen) {
+    BackHandler(enabled = drawerState.isOpen || drawerState.isAnimationRunning) {
         scope.launch { drawerState.close() }
     }
 }

@@ -88,3 +88,12 @@ dependencies {
     // Registers the test ComponentActivity that createAndroidComposeRule launches.
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 }
+
+// createAndroidComposeRule resolves the test ComponentActivity from the merged
+// manifest, and ui-test-manifest only contributes it to the debug variant —
+// on testReleaseUnitTest these tests die with "Unable to resolve activity".
+tasks.withType<Test>().configureEach {
+    if (name == "testReleaseUnitTest") {
+        exclude("**/CloseDrawerOnBackTest*", "**/TopicDetailScreenBackTest*")
+    }
+}
