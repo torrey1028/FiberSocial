@@ -94,6 +94,10 @@ dependencies {
 // on testReleaseUnitTest these tests die with "Unable to resolve activity".
 tasks.withType<Test>().configureEach {
     if (name == "testReleaseUnitTest") {
-        exclude("**/CloseDrawerOnBackTest*", "**/TopicDetailScreenBackTest*")
+        exclude(
+            "**/CloseDrawerOnBackTest*",
+            "**/TopicDetailScreenBackTest*",
+            "**/ReplyComposerTest*",
+        )
     }
 }

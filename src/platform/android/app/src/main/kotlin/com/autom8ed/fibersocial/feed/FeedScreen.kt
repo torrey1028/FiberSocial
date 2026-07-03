@@ -52,11 +52,15 @@ fun FeedScreen(viewModel: FeedAndroidViewModel) {
     var selectedTopic by remember { mutableStateOf<FeedItem.DiscussionTopic?>(null) }
 
     if (selectedTopic != null) {
+        val replyState by viewModel.topicDetail.replyState.collectAsState()
         TopicDetailScreen(
             topic = selectedTopic!!,
             postsState = topicDetailState,
             onBack = { selectedTopic = null },
             onVote = { post, type -> viewModel.topicDetail.toggleVote(post, type) },
+            replyState = replyState,
+            onSendReply = { body -> viewModel.topicDetail.sendReply(selectedTopic!!.id, body) },
+            onReplySent = { viewModel.topicDetail.acknowledgeReplySent() },
         )
         return
     }

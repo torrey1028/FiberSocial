@@ -21,17 +21,25 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -52,6 +60,9 @@ fun TopicDetailScreen(
     postsState: TopicDetailState,
     onBack: () -> Unit,
     onVote: (Post, VoteType) -> Unit,
+    replyState: ReplyState = ReplyState.Idle,
+    onSendReply: (String) -> Unit = {},
+    onReplySent: () -> Unit = {},
 ) {
     // The system back button must mirror the top-bar back arrow instead of
     // finishing the activity (issue #38).
@@ -65,6 +76,13 @@ fun TopicDetailScreen(
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
+            )
+        },
+        bottomBar = {
+            ReplyComposer(
+                replyState = replyState,
+                onSend = onSendReply,
+                onSent = onReplySent,
             )
         },
     ) { padding ->
@@ -204,6 +222,61 @@ private fun AuthorRow(user: RavelryUser?, timestamp: String?) {
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+            }
+        }
+    }
+}
+
+/**
+ * Text field + send button pinned below the reply thread. Keeps its text on failure
+ * so nothing is lost; clears it only once the reply is confirmed [ReplyState.Sent].
+ */
+@Composable
+internal fun ReplyComposer(
+    replyState: ReplyState,
+    onSend: (String) -> Unit,
+    onSent: () -> Unit,
+) {
+    var text by rememberSaveable { mutableStateOf("") }
+    val sending = replyState is ReplyState.Sending
+
+    LaunchedEffect(replyState) {
+        if (replyState is ReplyState.Sent) {
+            text = ""
+            onSent()
+        }
+    }
+
+    Surface(tonalElevation = 3.dp) {
+        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
+            if (replyState is ReplyState.Error) {
+                Text(
+                    text = "Couldn't post your reply. Try again.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(bottom = 4.dp),
+                )
+            }
+            Row(verticalAlignment = Alignment.Bottom) {
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    placeholder = { Text("Write a reply…") },
+                    enabled = !sending,
+                    modifier = Modifier.weight(1f),
+                    maxLines = 4,
+                )
+                Spacer(Modifier.width(8.dp))
+                if (sending) {
+                    CircularProgressIndicator(modifier = Modifier.size(32.dp).padding(4.dp))
+                } else {
+                    IconButton(
+                        onClick = { onSend(text) },
+                        enabled = text.isNotBlank(),
+                    ) {
+                        Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send reply")
+                    }
+                }
             }
         }
     }

@@ -39,6 +39,25 @@ fun routingApiClient(
     return RavelryApiClient(client, storage)
 }
 
+fun routingApiClientCapturing(
+    storage: TokenStorage = FakeFeedTokenStorage(),
+    onRequest: (io.ktor.http.Url) -> Unit,
+    route: (path: String) -> String,
+): RavelryApiClient {
+    val engine = MockEngine { request ->
+        onRequest(request.url)
+        respond(
+            content = route(request.url.encodedPath),
+            status = HttpStatusCode.OK,
+            headers = headersOf("Content-Type", ContentType.Application.Json.toString()),
+        )
+    }
+    val client = HttpClient(engine) {
+        install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+    }
+    return RavelryApiClient(client, storage)
+}
+
 fun errorApiClient(storage: TokenStorage = FakeFeedTokenStorage()): RavelryApiClient {
     val engine = MockEngine { error("Simulated network error") }
     val client = HttpClient(engine) {
@@ -100,3 +119,9 @@ fun topicDetailJson(
     "summary":${if (summary != null) "\"$summary\"" else "null"}
   }
 }"""
+
+fun replyResponseJson(
+    id: Long = 99L,
+    username: String = "yarnie",
+    bodyHtml: String = "<p>My new reply</p>",
+) = """{"forum_post":{"id":$id,"body_html":"$bodyHtml","created_at":"2024-01-17T10:00:00Z","user":{"username":"$username"}}}"""
