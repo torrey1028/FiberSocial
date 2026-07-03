@@ -6,6 +6,8 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextClearance
+import androidx.compose.ui.test.performTextInput
 import com.autom8ed.fibersocial.feed.models.FeedItem
 import com.autom8ed.fibersocial.feed.models.Post
 import com.autom8ed.fibersocial.feed.models.RavelryUser
@@ -71,6 +73,49 @@ class DeletePostUiTest {
     fun `edit icon hidden on someone else's post even if editable`() {
         renderThread(otherPost.copy(editable = true))
         compose.runOnIdle { assertEquals(0, editIconCount()) }
+    }
+
+    @Test
+    fun `tapping edit opens the docked edit bar prefilled with the post body`() {
+        renderThread(ownPost.copy(editable = true, body = "original text"))
+        // Before: the reply composer is shown, not the edit bar.
+        compose.onNodeWithText("Write a reply…").assertIsDisplayed()
+
+        compose.onNodeWithContentDescription("Edit post").performClick()
+
+        // After: the bottom bar becomes the edit bar with save/cancel controls and the body.
+        compose.onNodeWithContentDescription("Save edit").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Cancel edit").assertIsDisplayed()
+        compose.onNodeWithText("original text").assertIsDisplayed()
+    }
+
+    @Test
+    fun `cancel closes the edit bar back to the reply composer`() {
+        renderThread(ownPost.copy(editable = true, body = "original text"))
+        compose.onNodeWithContentDescription("Edit post").performClick()
+        compose.onNodeWithContentDescription("Cancel edit").performClick()
+        compose.onNodeWithText("Write a reply…").assertIsDisplayed()
+    }
+
+    @Test
+    fun `save edit invokes onEditPost with the edited text`() {
+        var edited: Pair<Long, String>? = null
+        compose.setContent {
+            TopicDetailScreen(
+                topic = topic,
+                postsState = TopicDetailState.Loaded(listOf(ownPost.copy(editable = true, body = "original text"))),
+                onBack = {},
+                onVote = { _, _ -> },
+                currentUsername = "me",
+                onEditPost = { post, body -> edited = post.id to body },
+            )
+        }
+        compose.onNodeWithContentDescription("Edit post").performClick()
+        // The edit bar replaces the reply composer, so it holds the only text field.
+        compose.onNode(androidx.compose.ui.test.hasSetTextAction()).performTextClearance()
+        compose.onNode(androidx.compose.ui.test.hasSetTextAction()).performTextInput("edited text")
+        compose.onNodeWithContentDescription("Save edit").performClick()
+        compose.runOnIdle { assertEquals(1L to "edited text", edited) }
     }
 
     @Test
