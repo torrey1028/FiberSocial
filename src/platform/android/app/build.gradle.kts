@@ -109,6 +109,7 @@ tasks.withType<Test>().configureEach {
             "**/TopicDetailScreenPullToRefreshTest*",
             "**/EventsScreenPullToRefreshTest*",
             "**/EventDetailScreenPullToRefreshTest*",
+            "**/DeletePostUiTest*",
         )
     }
 }

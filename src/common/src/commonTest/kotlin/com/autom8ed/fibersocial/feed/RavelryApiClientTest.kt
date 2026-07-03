@@ -812,6 +812,86 @@ class RavelryApiClientTest {
         val failure = runCatching { client.createTopic(123L, "title", "body") }.exceptionOrNull()
         assertTrue(failure!!.message!!.contains("the topic may have been created"))
     }
+
+    @Test
+    fun `deletePost fetches csrf token then posts _method=delete override`() = runTest {
+        data class Captured(val method: String, val path: String, val form: io.ktor.http.Parameters?)
+        val requests = mutableListOf<Captured>()
+        val engine = MockEngine { request ->
+            val form = (request.body as? io.ktor.client.request.forms.FormDataContent)?.formData
+            requests += Captured(request.method.value, request.url.encodedPath, form)
+            // The token page is the GET; the second request is the delete POST.
+            val content = if (request.method.value == "POST") "ok" else TOKEN_PAGE_HTML
+            respond(
+                content = content,
+                status = HttpStatusCode.OK,
+                headers = headersOf("Content-Type", "text/html"),
+            )
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        RavelryApiClient(httpClient, FakeFeedTokenStorage()).deletePost(555L)
+        assertEquals(2, requests.size)
+        assertEquals("GET", requests[0].method)
+        assertEquals("POST", requests[1].method)
+        assertEquals("/forum_posts/555", requests[1].path)
+        assertEquals("delete", requests[1].form?.get("_method"))
+        assertEquals("tok-abc123", requests[1].form?.get("authenticity_token"))
+    }
+
+    @Test
+    fun `deletePost fails when no csrf token on page`() = runTest {
+        val client = routingApiClient { "<html><body>no token here</body></html>" }
+        val result = runCatching { client.deletePost(555L) }
+        assertTrue(result.isFailure)
+    }
+
+    @Test
+    fun `deletePost fails on rejected delete`() = runTest {
+        val engine = MockEngine { request ->
+            if (request.method.value == "POST") {
+                respond(content = "nope", status = HttpStatusCode.Forbidden)
+            } else {
+                respond(
+                    content = TOKEN_PAGE_HTML,
+                    status = HttpStatusCode.OK,
+                    headers = headersOf("Content-Type", "text/html"),
+                )
+            }
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val result = runCatching { RavelryApiClient(httpClient, FakeFeedTokenStorage()).deletePost(555L) }
+        assertTrue(result.isFailure)
+    }
+
+    @Test
+    fun `editPost posts body to forum_posts endpoint and returns updated post`() = runTest {
+        var capturedPath: String? = null
+        var capturedMethod: String? = null
+        var capturedBody: String? = null
+        val engine = MockEngine { request ->
+            capturedPath = request.url.encodedPath
+            capturedMethod = request.method.value
+            capturedBody = request.url.parameters["body"]
+            respond(
+                content = forumPostJson(id = 7L, body = "edited body", bodyHtml = "<p>edited body</p>"),
+                status = HttpStatusCode.OK,
+                headers = headersOf("Content-Type", ContentType.Application.Json.toString()),
+            )
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val post = RavelryApiClient(httpClient, FakeFeedTokenStorage()).editPost(7L, "edited body")
+        assertEquals("/forum_posts/7.json", capturedPath)
+        assertEquals("POST", capturedMethod)
+        assertEquals("edited body", capturedBody)
+        assertEquals("edited body", post.body)
+        assertEquals("<p>edited body</p>", post.bodyHtml)
+    }
 }
 
 private fun htmlApiClient(engine: MockEngine): RavelryApiClient {

@@ -18,6 +18,7 @@ import com.autom8ed.fibersocial.feed.models.Topic
 import com.autom8ed.fibersocial.feed.models.VoteType
 import io.ktor.client.HttpClient
 import io.ktor.client.request.forms.FormDataContent
+import io.ktor.client.request.forms.submitForm
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
@@ -29,6 +30,7 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.Parameters
 import io.ktor.http.isSuccess
+import io.ktor.http.parameters
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -39,6 +41,9 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
 private const val BASE_URL = "https://api.ravelry.com"
+private const val WWW_URL = "https://www.ravelry.com"
+private val AUTHENTICITY_TOKEN_REGEX = Regex("""<meta[^>]*\bname="(?:authenticity-token|csrf-token)"[^>]*>""")
+private val META_CONTENT_REGEX = Regex("""content="([^"]+)"""")
 private val lenientJson = Json { ignoreUnknownKeys = true }
 
 // Ravelry has no API endpoint for "groups this user is a member of".
@@ -478,7 +483,7 @@ class RavelryApiClient(
             }
         }
         return try {
-            lenientJson.decodeFromString<ReplyResponse>(raw).forumPost
+            lenientJson.decodeFromString<ForumPostResponse>(raw).forumPost
         } catch (e: Exception) {
             println("FiberSocial: postReply($topicId) unexpected response: ${raw.take(200)}")
             error("Unexpected Ravelry response — check the thread before retrying, the reply may have posted.")
@@ -520,6 +525,74 @@ class RavelryApiClient(
     }
 
     /**
+     * Deletes the current user's own forum post.
+     *
+     * The API exposes no delete endpoint for forum posts (only `forum_posts/update`), so
+     * this uses the website protocol: fetch the session-stable `authenticity_token` from
+     * `meta#authenticity-token`, then replay Ravelry's own delete request — Prototype.js
+     * `Ajax.Request('/forum_posts/ID', {method:'delete'})`, i.e. a POST with a Rails
+     * `_method=delete` override plus the CSRF token.
+     *
+     * @param postId Ravelry forum post ID; must belong to the signed-in user.
+     * @throws IllegalStateException if Ravelry rejects the deletion (non-2xx/3xx response).
+     */
+    suspend fun deletePost(postId: Long) {
+        val token = fetchAuthenticityToken()
+        val cookie = sessionCookie()
+        val response = httpClient.submitForm(
+            url = "$WWW_URL/forum_posts/$postId",
+            formParameters = parameters {
+                append("_method", "delete")
+                append("authenticity_token", token)
+            },
+        ) {
+            header(HttpHeaders.Cookie, cookie)
+        }
+        check(response.status.isSuccess() || response.status.value in 300..399) {
+            "Delete rejected: HTTP ${response.status.value}"
+        }
+    }
+
+    /**
+     * Reads the session-stable CSRF token Ravelry embeds on every page as
+     * `<meta name="authenticity-token" content="...">` (attribute order varies).
+     */
+    private suspend fun fetchAuthenticityToken(): String {
+        val html = httpClient.get(WWW_URL) {
+            header(HttpHeaders.Cookie, sessionCookie())
+            header(HttpHeaders.Accept, "text/html")
+        }.bodyAsText()
+        val metaTag = AUTHENTICITY_TOKEN_REGEX.find(html)?.value
+            ?: error("No authenticity token found — re-login required")
+        return META_CONTENT_REGEX.find(metaTag)?.groupValues?.get(1)
+            ?: error("Authenticity token meta tag had no content — re-login required")
+    }
+
+    /**
+     * Edits the current user's own forum post via the documented `forum_posts/update` endpoint.
+     *
+     * @param postId Ravelry forum post ID; must be editable by the signed-in user.
+     * @param body New plain-text/markdown post body.
+     * @return The updated post as returned by Ravelry.
+     */
+    suspend fun editPost(postId: Long, body: String): Post {
+        val raw = authenticatedRequest {
+            httpClient.post("$BASE_URL/forum_posts/$postId.json") {
+                header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
+                // Form body for the same reasons as postReply: multi-KB free text
+                // breaks URL length limits and leaks into server logs.
+                setBody(FormDataContent(Parameters.build { append("body", body) }))
+            }
+        }
+        return try {
+            lenientJson.decodeFromString<ForumPostResponse>(raw).forumPost
+        } catch (e: Exception) {
+            println("FiberSocial: editPost($postId) unexpected response: ${raw.take(200)}")
+            error("Unexpected Ravelry response — check the thread before retrying, the edit may have applied.")
+        }
+    }
+
+    /**
      * Returns the full detail for a single topic, including [Topic.createdByUser] and [Topic.summary].
      *
      * @param topicId Ravelry topic ID.
@@ -538,7 +611,7 @@ class RavelryApiClient(
         @SerialName("vote_totals") val voteTotals: Map<String, Map<String, Int>> = emptyMap(),
         @SerialName("user_votes") val userVotes: Map<String, List<String>> = emptyMap(),
     )
-    @Serializable private data class ReplyResponse(@SerialName("forum_post") val forumPost: Post)
+    @Serializable private data class ForumPostResponse(@SerialName("forum_post") val forumPost: Post)
     @Serializable private data class TopicCreateResponse(val topic: Topic)
     @Serializable private data class CurrentUserResponse(val user: RavelryUser)
     @Serializable private data class GroupsSearchResponse(val groups: List<Group> = emptyList())

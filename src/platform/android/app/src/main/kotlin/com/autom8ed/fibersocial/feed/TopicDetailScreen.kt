@@ -23,7 +23,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -46,7 +51,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
-import com.autom8ed.fibersocial.ui.Avatar
+import coil.compose.AsyncImage
 import com.autom8ed.fibersocial.feed.html.HtmlPostParser
 import com.autom8ed.fibersocial.feed.models.FeedItem
 import com.autom8ed.fibersocial.feed.models.Post
@@ -62,11 +67,51 @@ fun TopicDetailScreen(
     postsState: TopicDetailState,
     onBack: () -> Unit,
     onVote: (Post, VoteType) -> Unit,
+    currentUsername: String? = null,
+    deleteState: DeleteState = DeleteState.Idle,
+    onDeletePost: (Post) -> Unit = {},
+    onDeleteErrorShown: () -> Unit = {},
+    editState: EditState = EditState.Idle,
+    onEditPost: (Post, String) -> Unit = { _, _ -> },
+    onEditErrorShown: () -> Unit = {},
     replyState: ReplyState = ReplyState.Idle,
     onSendReply: (String) -> Unit = {},
     onReplySent: () -> Unit = {},
     onRefresh: () -> Unit = {},
 ) {
+    var pendingDelete by remember { mutableStateOf<Post?>(null) }
+    pendingDelete?.let { post ->
+        AlertDialog(
+            onDismissRequest = { pendingDelete = null },
+            title = { Text("Delete this post?") },
+            text = { Text("This removes your post from the topic for everyone. This can't be undone.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    onDeletePost(post)
+                    pendingDelete = null
+                }) { Text("Delete") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDelete = null }) { Text("Cancel") }
+            },
+        )
+    }
+    if (deleteState is DeleteState.Error) {
+        AlertDialog(
+            onDismissRequest = onDeleteErrorShown,
+            title = { Text("Couldn't delete the post") },
+            text = { Text("Check your connection and try again.") },
+            confirmButton = { TextButton(onClick = onDeleteErrorShown) { Text("OK") } },
+        )
+    }
+    if (editState is EditState.Error) {
+        AlertDialog(
+            onDismissRequest = onEditErrorShown,
+            title = { Text("Couldn't save your edit") },
+            text = { Text("Check your connection and try again.") },
+            confirmButton = { TextButton(onClick = onEditErrorShown) { Text("OK") } },
+        )
+    }
     // The system back button must mirror the top-bar back arrow instead of
     // finishing the activity (issue #38).
     BackHandler(onBack = onBack)
@@ -158,7 +203,17 @@ fun TopicDetailScreen(
                         displayState.posts,
                         key = { it.id },
                     ) { post ->
-                        ReplyItem(post = post, onVote = { type -> onVote(post, type) })
+                        val mine = currentUsername != null && post.user?.username == currentUsername
+                        ReplyItem(
+                            post = post,
+                            onVote = { type -> onVote(post, type) },
+                            canDelete = mine,
+                            deleting = (deleteState as? DeleteState.Deleting)?.postId == post.id,
+                            onDelete = { pendingDelete = post },
+                            canEdit = mine && post.editable,
+                            saving = (editState as? EditState.Saving)?.postId == post.id,
+                            onEdit = { newBody -> onEditPost(post, newBody) },
+                        )
                         HorizontalDivider()
                     }
                 }
@@ -168,15 +223,85 @@ fun TopicDetailScreen(
 }
 
 @Composable
-private fun ReplyItem(post: Post, onVote: (VoteType) -> Unit) {
+internal fun ReplyItem(
+    post: Post,
+    onVote: (VoteType) -> Unit,
+    canDelete: Boolean = false,
+    deleting: Boolean = false,
+    onDelete: () -> Unit = {},
+    canEdit: Boolean = false,
+    saving: Boolean = false,
+    onEdit: (String) -> Unit = {},
+) {
+    var editing by remember { mutableStateOf(false) }
+    // Leave edit mode once a save completes (saving goes true then false).
+    val wasSaving = remember { mutableStateOf(false) }
+    if (wasSaving.value && !saving) editing = false
+    wasSaving.value = saving
+
     Column(modifier = Modifier.padding(vertical = 12.dp)) {
-        AuthorRow(user = post.user, timestamp = post.createdAt)
-        if (post.bodyHtml.isNotBlank()) {
-            Spacer(Modifier.height(8.dp))
-            PostBody(document = remember(post.bodyHtml) { HtmlPostParser.parse(post.bodyHtml) })
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(modifier = Modifier.weight(1f)) {
+                AuthorRow(user = post.user, timestamp = post.createdAt)
+            }
+            if (deleting || saving) {
+                CircularProgressIndicator(modifier = Modifier.size(24.dp))
+            } else {
+                if (canEdit) {
+                    IconButton(onClick = { editing = !editing }) {
+                        Icon(
+                            Icons.Default.Edit,
+                            contentDescription = "Edit post",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                if (canDelete) {
+                    IconButton(onClick = onDelete) {
+                        Icon(
+                            Icons.Default.Delete,
+                            contentDescription = "Delete post",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
         }
+        if (editing) {
+            PostEditor(
+                initial = post.body,
+                onCancel = { editing = false },
+                onSave = onEdit,
+            )
+        } else {
+            if (post.bodyHtml.isNotBlank()) {
+                Spacer(Modifier.height(8.dp))
+                PostBody(document = remember(post.bodyHtml) { HtmlPostParser.parse(post.bodyHtml) })
+            }
+            Spacer(Modifier.height(8.dp))
+            VoteRow(post = post, onVote = onVote)
+        }
+    }
+}
+
+@Composable
+private fun PostEditor(initial: String, onCancel: () -> Unit, onSave: (String) -> Unit) {
+    var text by remember(initial) { mutableStateOf(initial) }
+    Column {
         Spacer(Modifier.height(8.dp))
-        VoteRow(post = post, onVote = onVote)
+        OutlinedTextField(
+            value = text,
+            onValueChange = { text = it },
+            modifier = Modifier.fillMaxWidth(),
+            maxLines = 8,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            TextButton(onClick = onCancel) { Text("Cancel") }
+            TextButton(
+                onClick = { onSave(text) },
+                enabled = text.isNotBlank() && text.trim() != initial.trim(),
+            ) { Text("Save") }
+        }
     }
 }
 
@@ -226,7 +351,15 @@ private fun VoteButton(emoji: String, count: Int, voted: Boolean, onClick: () ->
 @Composable
 private fun AuthorRow(user: RavelryUser?, timestamp: String?) {
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Avatar(url = user?.avatarUrl, size = 32.dp)
+        AsyncImage(
+            model = user?.avatarUrl,
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
+                .size(32.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.surfaceVariant),
+        )
         Spacer(Modifier.width(8.dp))
         Column {
             Text(
