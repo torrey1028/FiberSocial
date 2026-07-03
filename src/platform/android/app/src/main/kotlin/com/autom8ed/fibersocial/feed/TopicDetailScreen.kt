@@ -184,7 +184,10 @@ fun TopicDetailScreen(
                         canDelete = mine,
                         deleting = (deleteState as? DeleteState.Deleting)?.postId == post.id,
                         onDelete = { pendingDelete = post },
-                        canEdit = mine && post.editable,
+                        // Optimistic: show edit when Ravelry says editable OR hasn't decided
+                        // yet (null on a just-created post). Only an explicit false hides it.
+                        // See Post.editable and issue #82 for the non-editable-null 403 gap.
+                        canEdit = mine && post.editable != false,
                         saving = (editState as? EditState.Saving)?.postId == post.id,
                         saveFailed = editState is EditState.Error,
                         // One edit/delete at a time (the ViewModel enforces it): while

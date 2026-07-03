@@ -32,6 +32,47 @@ class DeletePostUiTest {
         bodyPreview = "", bodySummary = "", replyCount = 2,
     )
 
+    private fun editIconCount(): Int =
+        compose.onAllNodes(androidx.compose.ui.test.hasContentDescription("Edit post"))
+            .fetchSemanticsNodes().size
+
+    private fun renderThread(post: Post) {
+        compose.setContent {
+            TopicDetailScreen(
+                topic = topic,
+                postsState = TopicDetailState.Loaded(listOf(post)),
+                onBack = {},
+                onVote = { _, _ -> },
+                currentUsername = "me",
+            )
+        }
+    }
+
+    @Test
+    fun `edit icon shows on own post Ravelry marks editable`() {
+        renderThread(ownPost.copy(editable = true))
+        compose.onNodeWithContentDescription("Edit post").assertIsDisplayed()
+    }
+
+    @Test
+    fun `edit icon shows on own post with unknown (null) editable`() {
+        // A just-created reply comes back editable=null; treat it optimistically as editable.
+        renderThread(ownPost.copy(editable = null))
+        compose.onNodeWithContentDescription("Edit post").assertIsDisplayed()
+    }
+
+    @Test
+    fun `edit icon hidden when Ravelry explicitly says not editable`() {
+        renderThread(ownPost.copy(editable = false))
+        compose.runOnIdle { assertEquals(0, editIconCount()) }
+    }
+
+    @Test
+    fun `edit icon hidden on someone else's post even if editable`() {
+        renderThread(otherPost.copy(editable = true))
+        compose.runOnIdle { assertEquals(0, editIconCount()) }
+    }
+
     @Test
     fun `delete icon shows only on own posts`() {
         compose.setContent {
