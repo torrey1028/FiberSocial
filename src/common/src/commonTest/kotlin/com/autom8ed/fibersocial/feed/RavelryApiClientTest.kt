@@ -495,6 +495,60 @@ class RavelryApiClientTest {
         })
         assertFailsWith<IllegalStateException> { client.getGroupEvents("quiet-group") }
     }
+
+    @Test
+    fun `getEvent scrapes the event page with the session cookie`() = runTest {
+        var requestedUrl = ""
+        var sentCookie: String? = null
+        val engine = MockEngine { request ->
+            requestedUrl = request.url.toString()
+            sentCookie = request.headers[HttpHeaders.Cookie]
+            respond(EVENT_PAGE_HTML_SNIPPET, HttpStatusCode.OK,
+                headersOf("Content-Type", ContentType.Text.Html.toString()))
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val client = RavelryApiClient(httpClient, FakeFeedTokenStorage())
+
+        val detail = client.getEvent("wednesday-hh-at-chainline-39")
+
+        assertEquals("https://www.ravelry.com/events/wednesday-hh-at-chainline-39", requestedUrl)
+        assertEquals("sess=test", sentCookie)
+        assertEquals("Wednesday HH at Chainline", detail?.title)
+        assertEquals("Knitting/crochet group", detail?.eventType)
+    }
+
+    @Test
+    fun `getEvent returns null for a non-event page`() = runTest {
+        val client = routingApiClient { "<html><body>not an event</body></html>" }
+        assertEquals(null, client.getEvent("deleted-event"))
+    }
+
+    @Test
+    fun `getEvent throws SessionExpiredException on 401`() = runTest {
+        val client = htmlApiClient(MockEngine { _ ->
+            respond("", HttpStatusCode.Unauthorized)
+        })
+        assertFailsWith<SessionExpiredException> { client.getEvent("some-event") }
+    }
+
+    @Test
+    fun `getEvent throws SessionExpiredException when redirected to the login page`() = runTest {
+        // Same trap as getGroupEvents: an expired cookie 302s to the login page, which
+        // Ktor follows to a 200 whose HTML simply has no .event__detail — without the
+        // redirect check that would masquerade as "not an event" (null).
+        val client = htmlApiClient(MockEngine { request ->
+            if (request.url.encodedPath.startsWith("/events/")) {
+                respond("", HttpStatusCode.Found,
+                    headersOf(HttpHeaders.Location, "https://www.ravelry.com/account/login"))
+            } else {
+                respond("<html><body>please log in</body></html>", HttpStatusCode.OK,
+                    headersOf("Content-Type", ContentType.Text.Html.toString()))
+            }
+        })
+        assertFailsWith<SessionExpiredException> { client.getEvent("deleted-event") }
+    }
 }
 
 private fun htmlApiClient(engine: MockEngine): RavelryApiClient {
@@ -503,6 +557,16 @@ private fun htmlApiClient(engine: MockEngine): RavelryApiClient {
     }
     return RavelryApiClient(httpClient, FakeFeedTokenStorage())
 }
+
+private val EVENT_PAGE_HTML_SNIPPET = """
+<div class="page_title"><div class="page_title__supertitle"><a href="https://www.ravelry.com/events">events</a></div>
+Wednesday HH at Chainline
+</div>
+<div class="event__detail">
+<div class="event__type">Knitting/crochet group</div>
+<div class="event__dates">July  1, 2026 @  5:30 PM</div>
+</div>
+"""
 
 private val GROUP_PAGE_EVENTS_HTML = """
 <div class="box" id="upcoming_events"><div id="events">
