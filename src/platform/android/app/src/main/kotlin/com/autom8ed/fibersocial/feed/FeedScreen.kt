@@ -1,5 +1,6 @@
 package com.autom8ed.fibersocial.feed
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
@@ -24,6 +25,7 @@ import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.DrawerState
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.material3.DrawerValue
 import androidx.compose.runtime.Composable
@@ -62,6 +64,8 @@ fun FeedScreen(viewModel: FeedAndroidViewModel) {
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     var showDebugPanel by remember { mutableStateOf(false) }
+
+    CloseDrawerOnBack(drawerState)
 
     val title = when (val s = state) {
         is FeedState.Loaded -> s.selectedGroup?.name ?: "All Groups"
@@ -217,5 +221,18 @@ private fun FeedList(
                 modifier = Modifier.padding(horizontal = 16.dp),
             )
         }
+    }
+}
+
+/**
+ * Closes an open navigation drawer on system back instead of letting the
+ * press fall through and exit the app (issue #38). No-op while the drawer
+ * is closed so normal back behavior is unaffected.
+ */
+@Composable
+internal fun CloseDrawerOnBack(drawerState: DrawerState) {
+    val scope = rememberCoroutineScope()
+    BackHandler(enabled = drawerState.isOpen) {
+        scope.launch { drawerState.close() }
     }
 }
