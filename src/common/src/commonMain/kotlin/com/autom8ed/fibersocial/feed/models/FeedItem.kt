@@ -3,119 +3,53 @@ package com.autom8ed.fibersocial.feed.models
 /**
  * A single card in the group feed, derived from a Ravelry forum [Topic].
  *
- * All group content comes through Ravelry's forum topics endpoint. Topics are classified
- * into three card types based on fields the API provides:
- *
- * - [DiscussionTopic] — general conversation or questions (the common case).
- * - [AnnouncementTopic] — sticky topics: KAL sign-ups, mod notices, pinned info.
- * - [ProjectTopic] — topics with attached images: WIP/FO shares.
- *
- * Image URLs are not available in the topic list or detail response — only a count.
- * Actual image loading requires fetching individual posts and is deferred to a future phase.
- *
- * Note: Ravelry group events exist at `ravelry.com/events/` but are not exposed by the API.
- * An `EventTopic` type is deferred until Ravelry provides an events endpoint.
+ * Every topic renders as the same card; there is deliberately no per-kind type hierarchy.
+ * Whether posts in the thread carry images does not affect how the topic is listed
+ * (issue #77 — a photo in a thread doesn't make it any less of a discussion; the images
+ * themselves render in the topic detail view). The one distinction the feed makes is
+ * [sticky], which pins the card to the top with a pinned label.
  *
  * @property id Ravelry topic ID.
  * @property groupId ID of the [Group] this item belongs to.
  * @property groupName Display name of the group, shown on the card.
  * @property lastPostAt ISO-8601 timestamp of the most recent reply, used for feed sorting.
+ * @property author User who created the opening post.
+ * @property title Topic title.
+ * @property bodyPreview Truncated plain-text excerpt of the opening post (max 200 chars).
+ * @property bodySummary Full plain-text content of the opening post.
+ * @property replyCount Total number of posts in the thread.
+ * @property sticky Whether a moderator pinned this topic to the top of the forum. Sticky
+ *   cards always attribute to the opening post ([latestReplyAuthor]/[latestReplyPreview]
+ *   stay null — an announcement is its opening post, not its latest comment). The old
+ *   sealed hierarchy made the combination unrepresentable; `init` enforces it now.
+ * @property latestReplyAuthor User who wrote the most recent reply, or `null` when the
+ *   topic has no replies (or the latest reply couldn't be fetched).
+ * @property latestReplyPreview Truncated plain-text excerpt of the most recent reply
+ *   (max 200 chars), or `null` under the same conditions as [latestReplyAuthor].
  */
-sealed class FeedItem {
-    abstract val id: Long
-    abstract val groupId: Long
-    abstract val groupName: String
-    abstract val lastPostAt: String?
-
-    /**
-     * A topic where at least one post contains an image.
-     *
-     * @property author User who created the opening post.
-     * @property title Topic title.
-     * @property imageCount Total number of images across all posts.
-     * @property imageUrls Direct image URLs. Empty until post-level fetching is implemented.
-     * @property replyCount Total number of posts in the thread.
-     */
-    data class ProjectTopic(
-        override val id: Long,
-        override val groupId: Long,
-        override val groupName: String,
-        override val lastPostAt: String?,
-        val author: RavelryUser,
-        val title: String,
-        val imageCount: Int,
-        val imageUrls: List<String>,
-        val replyCount: Int,
-    ) : FeedItem()
-
-    /**
-     * A sticky/pinned topic such as a KAL announcement or moderator notice.
-     *
-     * @property author User who created the opening post.
-     * @property title Topic title.
-     * @property bodyPreview Truncated plain-text excerpt of the opening post (max 200 chars).
-     * @property bodySummary Full plain-text content of the opening post.
-     * @property replyCount Total number of posts in the thread.
-     */
-    data class AnnouncementTopic(
-        override val id: Long,
-        override val groupId: Long,
-        override val groupName: String,
-        override val lastPostAt: String?,
-        val author: RavelryUser,
-        val title: String,
-        val bodyPreview: String,
-        val bodySummary: String,
-        val replyCount: Int,
-    ) : FeedItem() {
-        /**
-         * Bridges this announcement to the discussion shape for screens that only speak
-         * [DiscussionTopic] (the topic detail screen and its card): same topic, no
-         * latest-reply attribution — an announcement card always shows the opening post.
-         */
-        fun asDiscussionTopic(): DiscussionTopic = DiscussionTopic(
-            id = id,
-            groupId = groupId,
-            groupName = groupName,
-            lastPostAt = lastPostAt,
-            author = author,
-            title = title,
-            bodyPreview = bodyPreview,
-            bodySummary = bodySummary,
-            replyCount = replyCount,
-        )
+data class FeedItem(
+    val id: Long,
+    val groupId: Long,
+    val groupName: String,
+    val lastPostAt: String?,
+    val author: RavelryUser,
+    val title: String,
+    val bodyPreview: String,
+    val bodySummary: String,
+    val replyCount: Int,
+    val sticky: Boolean = false,
+    val latestReplyAuthor: RavelryUser? = null,
+    val latestReplyPreview: String? = null,
+) {
+    init {
+        require(!sticky || (latestReplyAuthor == null && latestReplyPreview == null)) {
+            "Sticky topics attribute to the opening post; latest-reply fields must stay null"
+        }
     }
 
-    /**
-     * A general discussion topic — questions, conversation, sharing without images.
-     *
-     * @property author User who created the opening post.
-     * @property title Topic title.
-     * @property bodyPreview Truncated plain-text excerpt of the opening post (max 200 chars).
-     * @property bodySummary Full plain-text content of the opening post.
-     * @property replyCount Total number of posts in the thread.
-     * @property latestReplyAuthor User who wrote the most recent reply, or `null` when the
-     *   topic has no replies (or the latest reply couldn't be fetched).
-     * @property latestReplyPreview Truncated plain-text excerpt of the most recent reply
-     *   (max 200 chars), or `null` under the same conditions as [latestReplyAuthor].
-     */
-    data class DiscussionTopic(
-        override val id: Long,
-        override val groupId: Long,
-        override val groupName: String,
-        override val lastPostAt: String?,
-        val author: RavelryUser,
-        val title: String,
-        val bodyPreview: String,
-        val bodySummary: String,
-        val replyCount: Int,
-        val latestReplyAuthor: RavelryUser? = null,
-        val latestReplyPreview: String? = null,
-    ) : FeedItem() {
-        /** Author the feed card should attribute the topic to: latest replier, else opener. */
-        val displayAuthor: RavelryUser get() = latestReplyAuthor ?: author
+    /** Author the feed card should attribute the topic to: latest replier, else opener. */
+    val displayAuthor: RavelryUser get() = latestReplyAuthor ?: author
 
-        /** Preview text the feed card should show: latest reply, else the opening post. */
-        val displayPreview: String get() = latestReplyPreview ?: bodyPreview
-    }
+    /** Preview text the feed card should show: latest reply, else the opening post. */
+    val displayPreview: String get() = latestReplyPreview ?: bodyPreview
 }

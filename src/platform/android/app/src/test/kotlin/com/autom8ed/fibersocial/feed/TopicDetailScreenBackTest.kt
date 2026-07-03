@@ -17,7 +17,7 @@ class TopicDetailScreenBackTest {
     @get:Rule
     val compose = createAndroidComposeRule<ComponentActivity>()
 
-    private val topic = FeedItem.DiscussionTopic(
+    private val topic = FeedItem(
         id = 1L,
         groupId = 2L,
         groupName = "Test Group",

@@ -3,7 +3,8 @@ package com.autom8ed.fibersocial.feed
 import com.autom8ed.fibersocial.feed.models.FeedItem
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertIs
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 import kotlinx.coroutines.test.runTest
 
 class FeedRepositoryTest {
@@ -29,30 +30,30 @@ class FeedRepositoryTest {
     }
 
     @Test
-    fun `getFeedItems classifies topic with images as a plain DiscussionTopic`() = runTest {
+    fun `getFeedItems lists a topic with images like any other topic`() = runTest {
         // Issue #77: images in a thread must not change how the topic is listed.
         val items = singleTopicRepo(imagesCount = 3).getFeedItems(listOf(group))
-        assertIs<FeedItem.DiscussionTopic>(items.single())
+        assertFalse(items.single().sticky)
     }
 
     @Test
-    fun `getFeedItems classifies sticky topic as AnnouncementTopic`() = runTest {
+    fun `getFeedItems marks a sticky topic sticky`() = runTest {
         val items = singleTopicRepo(sticky = true).getFeedItems(listOf(group))
-        assertIs<FeedItem.AnnouncementTopic>(items.single())
+        assertTrue(items.single().sticky)
     }
 
     @Test
-    fun `getFeedItems classifies plain topic as DiscussionTopic`() = runTest {
+    fun `getFeedItems marks a plain topic not sticky`() = runTest {
         val items = singleTopicRepo().getFeedItems(listOf(group))
-        assertIs<FeedItem.DiscussionTopic>(items.single())
+        assertFalse(items.single().sticky)
     }
 
     @Test
-    fun `getFeedItems sticky topic with images is still an AnnouncementTopic`() = runTest {
+    fun `getFeedItems sticky topic with images is still sticky`() = runTest {
         // A pinned topic must pin regardless of photos in the thread (issue #77: the old
         // image-first classification hid three of a real group's four stickies).
         val items = singleTopicRepo(imagesCount = 1, sticky = true).getFeedItems(listOf(group))
-        assertIs<FeedItem.AnnouncementTopic>(items.single())
+        assertTrue(items.single().sticky)
     }
 
     @Test
@@ -71,7 +72,7 @@ class FeedRepositoryTest {
                 else -> error("Unexpected: $path")
             }
         }
-        val item = repo.getFeedItems(listOf(group)).single() as FeedItem.DiscussionTopic
+        val item = repo.getFeedItems(listOf(group)).single()
         assertEquals("unknown", item.author.username)
     }
 
@@ -79,7 +80,7 @@ class FeedRepositoryTest {
     fun `getFeedItems truncates bodyPreview to 200 chars but keeps full bodySummary`() = runTest {
         val long = "x".repeat(300)
         val items = singleTopicRepo(summary = long).getFeedItems(listOf(group))
-        val item = items.single() as FeedItem.DiscussionTopic
+        val item = items.single()
         assertEquals(200, item.bodyPreview.length)
         assertEquals(300, item.bodySummary.length)
     }
@@ -87,15 +88,15 @@ class FeedRepositoryTest {
     @Test
     fun `getFeedItems uses empty string for both preview and summary when summary is null`() = runTest {
         val items = singleTopicRepo(summary = null).getFeedItems(listOf(group))
-        val item = items.single() as FeedItem.DiscussionTopic
+        val item = items.single()
         assertEquals("", item.bodyPreview)
         assertEquals("", item.bodySummary)
     }
 
     @Test
-    fun `getFeedItems populates bodySummary on AnnouncementTopic`() = runTest {
+    fun `getFeedItems populates bodySummary on sticky topics`() = runTest {
         val items = singleTopicRepo(sticky = true, summary = "Pinned info").getFeedItems(listOf(group))
-        val item = items.single() as FeedItem.AnnouncementTopic
+        val item = items.single()
         assertEquals("Pinned info", item.bodySummary)
         assertEquals("Pinned info", item.bodyPreview)
     }
@@ -132,7 +133,7 @@ class FeedRepositoryTest {
         }
         val items = repo.getFeedItems(listOf(group, group2))
         assertEquals(listOf(100L, 101L), items.map { it.id })
-        assertIs<FeedItem.AnnouncementTopic>(items.first())
+        assertTrue(items.first().sticky)
     }
 
     @Test
@@ -193,7 +194,7 @@ class FeedRepositoryTest {
                 else -> error("Unexpected: $path")
             }
         }
-        val item = repo.getFeedItems(listOf(group)).single() as FeedItem.DiscussionTopic
+        val item = repo.getFeedItems(listOf(group)).single()
         assertEquals("replier", item.latestReplyAuthor?.username)
         assertEquals("Latest reply text", item.latestReplyPreview)
         assertEquals("replier", item.displayAuthor.username)
@@ -211,7 +212,7 @@ class FeedRepositoryTest {
                 else -> error("Unexpected: $path")
             }
         }
-        val item = repo.getFeedItems(listOf(group)).single() as FeedItem.DiscussionTopic
+        val item = repo.getFeedItems(listOf(group)).single()
         assertEquals(null, item.latestReplyAuthor)
         assertEquals(emptyList(), requestedPaths.filter { it.contains("/posts.json") })
     }
@@ -228,8 +229,15 @@ class FeedRepositoryTest {
                 else -> error("Unexpected: $path")
             }
         }
-        assertIs<FeedItem.AnnouncementTopic>(repo.getFeedItems(listOf(group)).single())
+        assertTrue(repo.getFeedItems(listOf(group)).single().sticky)
         assertEquals(emptyList(), requestedPaths.filter { it.contains("/posts.json") })
+
+        // The field-level contract the old AnnouncementTopic type used to guarantee
+        // structurally: pinned cards attribute to the opening post.
+        val item = repo.getFeedItems(listOf(group)).single()
+        assertEquals(null, item.latestReplyAuthor)
+        assertEquals(null, item.latestReplyPreview)
+        assertEquals(item.author, item.displayAuthor)
     }
 
     @Test
@@ -242,7 +250,7 @@ class FeedRepositoryTest {
                 else -> error("Unexpected: $path")
             }
         }
-        val item = repo.getFeedItems(listOf(group)).single() as FeedItem.DiscussionTopic
+        val item = repo.getFeedItems(listOf(group)).single()
         assertEquals("replier", item.latestReplyAuthor?.username)
     }
 
@@ -256,7 +264,7 @@ class FeedRepositoryTest {
                 else -> error("Unexpected: $path")
             }
         }
-        val item = repo.getFeedItems(listOf(group)).single() as FeedItem.DiscussionTopic
+        val item = repo.getFeedItems(listOf(group)).single()
         assertEquals(null, item.latestReplyAuthor)
         assertEquals(null, item.latestReplyPreview)
         assertEquals("yarnie", item.displayAuthor.username)
@@ -275,7 +283,7 @@ class FeedRepositoryTest {
                 else -> error("Unexpected: $path")
             }
         }
-        val item = repo.getFeedItems(listOf(group)).single() as FeedItem.DiscussionTopic
+        val item = repo.getFeedItems(listOf(group)).single()
         assertEquals(null, item.latestReplyAuthor)
         assertEquals(null, item.latestReplyPreview)
         assertEquals("yarnie", item.displayAuthor.username)
@@ -292,7 +300,7 @@ class FeedRepositoryTest {
                 else -> error("Unexpected: $path")
             }
         }
-        val item = repo.getFeedItems(listOf(group)).single() as FeedItem.DiscussionTopic
+        val item = repo.getFeedItems(listOf(group)).single()
         assertEquals(200, item.latestReplyPreview?.length)
         assertEquals("y".repeat(200), item.latestReplyPreview)
     }
