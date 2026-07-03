@@ -58,11 +58,13 @@ class EventDetailViewModelTest {
     }
 
     @Test
-    fun `session expiry emits the signal and surfaces an error`() = runTest(UnconfinedTestDispatcher()) {
+    fun `session expiry emits the signal and stays in Loading`() = runTest(UnconfinedTestDispatcher()) {
         val vm = EventDetailViewModel(sessionExpiredApiClient(), this)
         vm.load("cozy-meetup")
         awaitChildren(coroutineContext[Job]!!)
-        assertIs<EventDetailState.Error>(vm.state.value)
+        // Loading, not Error: the app is about to navigate to login, so an error
+        // flash would be misleading (matches FeedViewModel/TopicDetailViewModel).
+        assertIs<EventDetailState.Loading>(vm.state.value)
         assertEquals(Unit, vm.sessionExpired.first())
     }
 

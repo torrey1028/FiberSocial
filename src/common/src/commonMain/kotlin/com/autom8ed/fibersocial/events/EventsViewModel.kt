@@ -82,8 +82,9 @@ class EventsViewModel(
                 println("FiberSocial: EventsViewModel loaded ${events.size} events")
                 EventsState.Loaded(events)
             } catch (e: SessionExpiredException) {
+                println("FiberSocial: EventsViewModel.load session expired")
                 _sessionExpired.trySend(Unit)
-                EventsState.Error("Session expired")
+                EventsState.Loading
             } catch (e: Exception) {
                 println("FiberSocial: EventsViewModel.load failed: ${e.message}")
                 EventsState.Error(e.message ?: "Couldn't load events")
