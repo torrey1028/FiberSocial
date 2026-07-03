@@ -12,14 +12,17 @@ import com.autom8ed.fibersocial.feed.models.RavelryUser
 import com.autom8ed.fibersocial.feed.models.Topic
 import com.autom8ed.fibersocial.feed.models.VoteType
 import io.ktor.client.HttpClient
+import io.ktor.client.request.forms.FormDataContent
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
+import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
 import io.ktor.client.statement.request
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.Parameters
 import io.ktor.http.isSuccess
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -216,6 +219,37 @@ class RavelryApiClient(
                 error("$what returned ${response.status}")
         }
         return response.bodyAsText()
+    }
+
+    /**
+     * Saves or un-saves an event on the current user's calendar (Ravelry's RSVP).
+     *
+     * There is no events API: this posts to the website's own endpoints
+     * (`/events/{permalink}/attend?attending=1` or `/events/{permalink}/unattend`),
+     * authenticated by the session cookie plus the page's Rails authenticity token
+     * (see [EventDetail.csrfToken]).
+     *
+     * @param eventPermalink The event's slug.
+     * @param attending `true` to save the event, `false` to remove it.
+     * @param csrfToken Authenticity token scraped from the event page.
+     * @return `true` when the site accepted the change.
+     */
+    suspend fun setEventAttendance(
+        eventPermalink: String,
+        attending: Boolean,
+        csrfToken: String,
+    ): Boolean {
+        val url = if (attending) {
+            "https://www.ravelry.com/events/$eventPermalink/attend?attending=1"
+        } else {
+            "https://www.ravelry.com/events/$eventPermalink/unattend"
+        }
+        val response = httpClient.post(url) {
+            header(HttpHeaders.Cookie, sessionCookie())
+            setBody(FormDataContent(Parameters.build { append("authenticity_token", csrfToken) }))
+        }
+        println("FiberSocial: setEventAttendance($eventPermalink, attending=$attending) -> ${response.status}")
+        return response.status == HttpStatusCode.OK
     }
 
     /**

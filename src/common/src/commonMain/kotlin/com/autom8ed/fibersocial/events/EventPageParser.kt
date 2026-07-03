@@ -36,6 +36,9 @@ object EventPageParser {
             venue = parseVenue(detail),
             descriptionHtml = if (markdown == null) "" else markdown.html().trim(),
             discussions = parseDiscussions(detail),
+            // The attend button label toggles between "save event" and "event saved".
+            attending = doc.selectFirst("#attend_button")?.text().orEmpty().contains("saved"),
+            csrfToken = doc.selectFirst("meta#authenticity-token")?.attr("content"),
         )
     }
 

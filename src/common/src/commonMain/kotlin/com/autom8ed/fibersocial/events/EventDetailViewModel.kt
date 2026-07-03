@@ -48,8 +48,12 @@ class EventDetailViewModel(
      */
     val sessionExpired: Flow<Unit> = _sessionExpired.receiveAsFlow()
 
+    /** Permalink of the currently loaded (or loading) event; used by [toggleAttendance]. */
+    private var loadedPermalink: String? = null
+
     /** Scrapes the event page for [eventPermalink], replacing any previous state. */
     fun load(eventPermalink: String) {
+        loadedPermalink = eventPermalink
         scope.launch {
             println("FiberSocial: EventDetailViewModel.load($eventPermalink)")
             _state.value = EventDetailState.Loading
@@ -67,6 +71,42 @@ class EventDetailViewModel(
             } catch (e: Exception) {
                 println("FiberSocial: EventDetailViewModel.load failed: ${e.message}")
                 EventDetailState.Error(e.message ?: "Couldn't load event")
+            }
+        }
+    }
+
+    /**
+     * Saves or un-saves the loaded event with an optimistic update: the button state
+     * flips immediately and reverts if the site rejects the change. No-ops when no
+     * event is loaded or the page carried no authenticity token.
+     */
+    fun toggleAttendance() {
+        val permalink = loadedPermalink ?: return
+        val current = _state.value as? EventDetailState.Loaded ?: return
+        val token = current.detail.csrfToken
+        if (token == null) {
+            println("FiberSocial: EventDetailViewModel.toggleAttendance no csrf token — skipping")
+            return
+        }
+        val original = current.detail
+        val target = !original.attending
+        _state.value = EventDetailState.Loaded(original.copy(attending = target))
+
+        scope.launch {
+            val accepted = try {
+                apiClient.setEventAttendance(permalink, attending = target, csrfToken = token)
+            } catch (e: SessionExpiredException) {
+                println("FiberSocial: EventDetailViewModel.toggleAttendance session expired")
+                _sessionExpired.trySend(Unit)
+                false
+            } catch (e: Exception) {
+                println("FiberSocial: EventDetailViewModel.toggleAttendance error: ${e.message}")
+                false
+            }
+            if (!accepted) {
+                // Restore the pre-toggle snapshot. A load() racing this revert would be
+                // briefly clobbered, but the next load replaces the state anyway.
+                _state.value = EventDetailState.Loaded(original)
             }
         }
     }

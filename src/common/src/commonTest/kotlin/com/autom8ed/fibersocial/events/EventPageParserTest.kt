@@ -64,6 +64,34 @@ class EventPageParserGoldenTest {
         // The capture has a trailing space inside this link's text.
         assertEquals("Works in Progress", detail.discussions.last().title)
     }
+
+    @Test
+    fun `save event button means not attending`() {
+        assertEquals(false, detail.attending)
+    }
+
+    @Test
+    fun `authenticity token is extracted from the page meta`() {
+        assertEquals("JEN38Bicg515OwvzGE7jaHa9qYjMQgYwmIZsRpzPYzU=", detail.csrfToken)
+    }
+}
+
+class EventPageParserAttendanceTest {
+    @Test
+    fun `event saved button means attending`() {
+        val html = """
+            <a class="button" id="attend_button"><span>event saved</span></a>
+            <div class="event__detail"></div>
+        """
+        assertEquals(true, assertNotNull(EventPageParser.parse(html)).attending)
+    }
+
+    @Test
+    fun `missing attend button means not attending with no token`() {
+        val detail = assertNotNull(EventPageParser.parse("""<div class="event__detail"></div>"""))
+        assertEquals(false, detail.attending)
+        assertNull(detail.csrfToken)
+    }
 }
 
 class EventPageParserLenienceTest {

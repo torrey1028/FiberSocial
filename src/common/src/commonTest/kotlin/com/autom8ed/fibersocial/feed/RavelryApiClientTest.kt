@@ -10,6 +10,7 @@ import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.formUrlEncode
 import io.ktor.http.headersOf
 import io.ktor.serialization.kotlinx.json.json
 import kotlin.test.Test
@@ -548,6 +549,51 @@ class RavelryApiClientTest {
             }
         })
         assertFailsWith<SessionExpiredException> { client.getEvent("deleted-event") }
+    }
+
+    @Test
+    fun `setEventAttendance posts the csrf token as a form with the session cookie`() = runTest {
+        var requestedUrl = ""
+        var sentCookie: String? = null
+        var sentBody = ""
+        val engine = MockEngine { request ->
+            requestedUrl = request.url.toString()
+            sentCookie = request.headers[HttpHeaders.Cookie]
+            sentBody = (request.body as io.ktor.client.request.forms.FormDataContent)
+                .formData.formUrlEncode()
+            respond("R.popover.close();", HttpStatusCode.OK,
+                headersOf("Content-Type", "text/javascript"))
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val client = RavelryApiClient(httpClient, FakeFeedTokenStorage())
+
+        val ok = client.setEventAttendance("cozy-meetup", attending = true, csrfToken = "tok+en=")
+
+        assertTrue(ok)
+        assertEquals("https://www.ravelry.com/events/cozy-meetup/attend?attending=1", requestedUrl)
+        assertEquals("sess=test", sentCookie)
+        assertEquals("authenticity_token=tok%2Ben%3D", sentBody)
+    }
+
+    @Test
+    fun `setEventAttendance false posts to unattend and reports rejection`() = runTest {
+        var requestedUrl = ""
+        val engine = MockEngine { request ->
+            requestedUrl = request.url.toString()
+            respond("nope", HttpStatusCode.Forbidden,
+                headersOf("Content-Type", "text/html"))
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val client = RavelryApiClient(httpClient, FakeFeedTokenStorage())
+
+        val ok = client.setEventAttendance("cozy-meetup", attending = false, csrfToken = "t")
+
+        assertEquals(false, ok)
+        assertEquals("https://www.ravelry.com/events/cozy-meetup/unattend", requestedUrl)
     }
 }
 
