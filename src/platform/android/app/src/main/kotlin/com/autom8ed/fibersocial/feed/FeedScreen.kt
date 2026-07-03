@@ -42,11 +42,13 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import com.autom8ed.fibersocial.BuildConfig
 import com.autom8ed.fibersocial.debug.DebugPanel
@@ -58,12 +60,12 @@ import com.autom8ed.fibersocial.feed.models.FeedItem
 import com.autom8ed.fibersocial.feed.models.Group
 import com.autom8ed.fibersocial.feed.models.RavelryUser
 import com.autom8ed.fibersocial.settings.SettingsScreen
-import com.autom8ed.fibersocial.settings.UserAvatar
+import com.autom8ed.fibersocial.ui.UserAvatar
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun FeedScreen(viewModel: FeedAndroidViewModel, onLogout: () -> Unit = {}) {
+fun FeedScreen(viewModel: FeedAndroidViewModel, onLogout: () -> Unit) {
     val state by viewModel.feed.state.collectAsState()
     val topicDetailState by viewModel.topicDetail.state.collectAsState()
     val eventsState by viewModel.events.state.collectAsState()
@@ -71,19 +73,17 @@ fun FeedScreen(viewModel: FeedAndroidViewModel, onLogout: () -> Unit = {}) {
     var selectedTopic by remember { mutableStateOf<FeedItem.DiscussionTopic?>(null) }
     var selectedEvent by remember { mutableStateOf<GroupEvent?>(null) }
     var eventsGroup by remember { mutableStateOf<Group?>(null) }
-    var showSettings by remember { mutableStateOf(false) }
+    var showSettings by rememberSaveable { mutableStateOf(false) }
 
-    val groups = when (val s = state) {
-        is FeedState.Loaded -> s.groups
-        is FeedState.Refreshing -> s.stale.groups
-        else -> emptyList()
-    }
-
-    val user = when (val s = state) {
-        is FeedState.Loaded -> s.user
-        is FeedState.Refreshing -> s.stale.user
+    // One unwrap for every stale-capable field: Loaded directly, Refreshing via
+    // its stale snapshot, anything else has no data yet.
+    val loaded = when (val s = state) {
+        is FeedState.Loaded -> s
+        is FeedState.Refreshing -> s.stale
         else -> null
     }
+    val user = loaded?.user
+    val groups = loaded?.groups ?: emptyList()
 
     // Scrape events in the background as soon as the groups are known so the drawer's
     // per-group calendar badges are populated by the time it opens.
@@ -147,17 +147,8 @@ fun FeedScreen(viewModel: FeedAndroidViewModel, onLogout: () -> Unit = {}) {
 
     CloseDrawerOnBack(drawerState)
 
-    val title = when (val s = state) {
-        is FeedState.Loaded -> s.selectedGroup?.name ?: "All Groups"
-        is FeedState.Refreshing -> s.stale.selectedGroup?.name ?: "All Groups"
-        else -> "FiberSocial"
-    }
-
-    val selectedGroup = when (val s = state) {
-        is FeedState.Loaded -> s.selectedGroup
-        is FeedState.Refreshing -> s.stale.selectedGroup
-        else -> null
-    }
+    val title = if (loaded == null) "FiberSocial" else loaded.selectedGroup?.name ?: "All Groups"
+    val selectedGroup = loaded?.selectedGroup
 
     ModalNavigationDrawer(
         drawerState = drawerState,
@@ -308,7 +299,7 @@ private fun ProfileFooter(user: RavelryUser?, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .clickable(onClick = onClick, onClickLabel = "Open settings", role = Role.Button)
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

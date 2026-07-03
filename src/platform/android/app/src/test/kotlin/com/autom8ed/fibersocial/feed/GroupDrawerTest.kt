@@ -10,11 +10,9 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
-import org.robolectric.annotation.Config
 import kotlin.test.assertEquals
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [33])
 class GroupDrawerTest {
 
     @get:Rule
@@ -29,8 +27,10 @@ class GroupDrawerTest {
             GroupDrawer(
                 groups = emptyList(),
                 selectedGroup = null,
+                eventCounts = emptyMap(),
                 user = user,
                 onGroupSelected = {},
+                onGroupEventsClick = {},
                 onSettingsClick = { settingsClicks++ },
             )
         }
@@ -45,8 +45,10 @@ class GroupDrawerTest {
             GroupDrawer(
                 groups = emptyList(),
                 selectedGroup = null,
+                eventCounts = emptyMap(),
                 user = null,
                 onGroupSelected = {},
+                onGroupEventsClick = {},
                 onSettingsClick = {},
             )
         }

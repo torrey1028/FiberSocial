@@ -8,13 +8,10 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
-import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -26,11 +23,10 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
-import coil.compose.AsyncImage
 import com.autom8ed.fibersocial.feed.models.RavelryUser
+import com.autom8ed.fibersocial.ui.UserAvatar
 
 /**
  * Settings page reached from the profile row at the bottom of the group
@@ -85,7 +81,7 @@ fun SettingsScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable(onClick = onSignOut)
+                    .clickable(onClick = onSignOut, onClickLabel = "Sign out", role = Role.Button)
                     .padding(horizontal = 16.dp, vertical = 16.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -105,22 +101,3 @@ fun SettingsScreen(
     }
 }
 
-@Composable
-fun UserAvatar(user: RavelryUser?, size: androidx.compose.ui.unit.Dp, modifier: Modifier = Modifier) {
-    val avatarUrl = user?.avatarUrl
-    if (avatarUrl != null) {
-        AsyncImage(
-            model = avatarUrl,
-            contentDescription = "Avatar",
-            contentScale = ContentScale.Crop,
-            modifier = modifier.size(size).clip(CircleShape),
-        )
-    } else {
-        Icon(
-            Icons.Default.AccountCircle,
-            contentDescription = "Avatar",
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = modifier.size(size),
-        )
-    }
-}
