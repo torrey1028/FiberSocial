@@ -48,6 +48,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import com.autom8ed.fibersocial.BuildConfig
@@ -58,6 +59,7 @@ import com.autom8ed.fibersocial.events.EventsState
 import com.autom8ed.fibersocial.feed.models.FeedItem
 import com.autom8ed.fibersocial.feed.models.Group
 import com.autom8ed.fibersocial.feed.models.RavelryUser
+import com.autom8ed.fibersocial.notifications.EventSyncWorker
 import com.autom8ed.fibersocial.settings.SettingsScreen
 import com.autom8ed.fibersocial.ui.UserAvatar
 import kotlinx.coroutines.launch
@@ -250,8 +252,10 @@ fun FeedScreen(
     }
 
     if (showDebugPanel) {
+        val context = LocalContext.current
         DebugPanel(
             onForceSessionExpiry = { viewModel.debugForceSessionExpiry() },
+            onRunEventSync = { EventSyncWorker.runOnce(context) },
             onDismiss = { showDebugPanel = false },
         )
     }
