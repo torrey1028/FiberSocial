@@ -432,4 +432,49 @@ class RavelryApiClientTest {
         client.getCurrentUser()
         assertTrue(refreshCalled)
     }
+
+    @Test
+    fun `getGroupEvents scrapes the group page with the session cookie`() = runTest {
+        var requestedUrl = ""
+        var sentCookie: String? = null
+        val engine = MockEngine { request ->
+            requestedUrl = request.url.toString()
+            sentCookie = request.headers[HttpHeaders.Cookie]
+            respond(GROUP_PAGE_EVENTS_HTML, HttpStatusCode.OK,
+                headersOf("Content-Type", ContentType.Text.Html.toString()))
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val client = RavelryApiClient(httpClient, FakeFeedTokenStorage())
+
+        val events = client.getGroupEvents("kirkland-fiber-arts-circle-2")
+
+        assertEquals("https://www.ravelry.com/groups/kirkland-fiber-arts-circle-2", requestedUrl)
+        assertEquals("sess=test", sentCookie)
+        assertEquals(2, events.size)
+        assertEquals("sunday-circle-at-postdoc-brewing-10", events[0].permalink)
+        assertEquals(1, events[0].attendeeCount)
+    }
+
+    @Test
+    fun `getGroupEvents returns empty list for a group without events`() = runTest {
+        val client = routingApiClient { "<html><body>no box</body></html>" }
+        assertEquals(emptyList(), client.getGroupEvents("quiet-group"))
+    }
 }
+
+private val GROUP_PAGE_EVENTS_HTML = """
+<div class="box" id="upcoming_events"><div id="events">
+<div class="event">
+<div class="what"><a href="https://www.ravelry.com/events/sunday-circle-at-postdoc-brewing-10">Sunday Circle at Postdoc Brewing</a></div>
+<div class="when">July  5, 2026 @ 1:00 PM</div>
+<div class="who"><a href="https://www.ravelry.com/events/sunday-circle-at-postdoc-brewing-10/people">1 person</a></div>
+</div>
+<div class="event">
+<div class="what"><a href="https://www.ravelry.com/events/wednesday-hh-at-chainline-39">Wednesday HH at Chainline</a></div>
+<div class="when">July  8, 2026 @ 5:30 PM</div>
+<div class="who"><a href="https://www.ravelry.com/events/wednesday-hh-at-chainline-39/people">0 people</a></div>
+</div>
+</div></div>
+"""

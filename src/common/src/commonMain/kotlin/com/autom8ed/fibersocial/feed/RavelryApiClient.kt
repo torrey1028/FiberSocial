@@ -2,6 +2,8 @@ package com.autom8ed.fibersocial.feed
 
 import com.autom8ed.fibersocial.auth.SessionExpiredException
 import com.autom8ed.fibersocial.auth.TokenStorage
+import com.autom8ed.fibersocial.events.EventSummary
+import com.autom8ed.fibersocial.events.GroupEventsParser
 import com.autom8ed.fibersocial.feed.models.Group
 import com.autom8ed.fibersocial.feed.models.Post
 import com.autom8ed.fibersocial.feed.models.RavelryUser
@@ -140,6 +142,25 @@ class RavelryApiClient(
         permalinks.map { permalink ->
             async { getGroup(permalink) }
         }.awaitAll().filterNotNull()
+    }
+
+    /**
+     * Returns the upcoming events listed on a group's page.
+     *
+     * Ravelry has no events API, so this scrapes `www.ravelry.com/groups/{permalink}`
+     * with the session cookie and parses the "upcoming events" box (see
+     * [GroupEventsParser]). Groups without the box yield an empty list.
+     *
+     * @param groupPermalink The group's permalink, e.g. `kirkland-fiber-arts-circle-2`.
+     */
+    suspend fun getGroupEvents(groupPermalink: String): List<EventSummary> {
+        val html = httpClient.get("https://www.ravelry.com/groups/$groupPermalink") {
+            header(HttpHeaders.Cookie, sessionCookie())
+            header(HttpHeaders.Accept, "text/html")
+        }.bodyAsText()
+        val events = GroupEventsParser.parse(html)
+        println("FiberSocial: getGroupEvents($groupPermalink) -> ${events.size} events")
+        return events
     }
 
     /**
