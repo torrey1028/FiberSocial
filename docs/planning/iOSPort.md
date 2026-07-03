@@ -145,7 +145,7 @@ native-feel becomes a hard requirement.
 | OAuth login + session cookie | WebView; captures `code` + `_ravelry_session` cookie at redirect (`WebViewLoginScreen.kt:38-47`) | `WKWebView` + `WKHTTPCookieStore` | Must read cookies for `www.ravelry.com` **and** `ravelry.com` (same fallback as Android). `ASWebAuthenticationSession` is *not* suitable — it hides its cookie jar; the scraping design needs that cookie. Downstream (`AuthViewModel.onAuthCodeReceived`) is already common. |
 | Token storage | EncryptedSharedPreferences | Keychain | Behind `KeyValueStore` (§3.3). |
 | Reminders (T-24h/T-15m) | `AlarmManager` exact alarms + `ReminderReceiver` + boot/`MY_PACKAGE_REPLACED` re-registration (#90) | `UNCalendarNotificationTrigger` local notifications | **iOS is simpler here**: local notifications are scheduled with the OS and fire without the app running — no receiver, no boot rescheduling, no exact-alarm permission. The planner's `SyncPlan` maps 1:1 (schedule → `add(request)`, cancel → `removePendingNotificationRequests(ids)`). Constraint: 64 pending-notification cap per app (2/event → fine; enforce nearest-32-events if ever needed). |
-| New-event polling | WorkManager periodic (user-set 1–24h, network-constrained) | `BGAppRefreshTask` | **The big behavioral gap.** iOS background refresh is opportunistic: the OS decides cadence from usage patterns; `earliestBeginDate` is a floor, not a schedule, and force-quit apps don't refresh. The poll-interval setting becomes "no more often than" on iOS. Mitigate: also run the sync on every foreground activation (cheap, already idempotent) and document the difference in the setting's UI copy. |
+| New-event polling | WorkManager periodic (user-set 1–24h, network-constrained) | `BGAppRefreshTask` | **The big behavioral gap.** iOS background refresh is opportunistic: the OS decides cadence from usage patterns; `earliestBeginDate` is a floor, not a schedule, and force-quit apps don't refresh. Mitigate: qualitative cadence labels (phase 0f) so the setting promises nothing iOS can't keep, plus a sync on every foreground activation (cheap, already idempotent). |
 | Notification channels/permission | Two channels; `POST_NOTIFICATIONS` runtime prompt | `UNUserNotificationCenter.requestAuthorization`; category per kind | ID math + copy shared via §2 so replace/stack semantics match. |
 | Deep link (notification tap → event) | Intent extra → `singleTop`/`onNewIntent` → `FeedScreen` | `UNNotificationResponse` handler → same shared navigation state | Navigation is manual Compose state — works unchanged under CMP. |
 | Debug panel "Run sync now" | WorkManager one-shot | direct `EventSyncRunner` invocation in a Task | Runner is common; trivial. |
@@ -160,9 +160,11 @@ session-cookie header; Ksoup parses the same HTML; the CSRF-token flow is HTTP-o
 
 Kotlin/Native iOS targets, the Xcode project, and the simulator **cannot build on
 Windows/WSL** (current dev environment). Options, cheapest first:
-1. **CI-first**: GitHub Actions `macos-14` runners build the XCFramework + app and run
-   `iosSimulatorArm64Test`; local work stays on Windows for common/Android. Sufficient
-   for phases 0–2 (§7), which are pure Gradle.
+1. **CI-first**: GitHub Actions supplies hosted macOS runners — `macos-14`/`macos-15`
+   (Apple Silicon) with Xcode preinstalled — and this repo is public, so they are
+   **free** (private repos pay a 10× minute multiplier; not our case). CI builds the
+   XCFramework + app and runs the Native test suite; local work stays on Windows for
+   common/Android. Sufficient for phases 0–2 (§7), which are pure Gradle.
 2. A Mac (or MacinCloud-style remote) becomes necessary at phase 3+ for the simulator,
    Xcode signing, and on-device verification. **Decision needed before phase 3.**
 
@@ -179,6 +181,17 @@ Windows setup and improve the Android app on their own merit.
   0b. `KeyValueStore` + common store implementations (§3.3).
   0c. `expect/actual` HttpClient factory + client-graph factory (§3.2, §3.5).
   0d. PKCE move with crypto expect/actuals (§3.4; JVM actuals only for now).
+  0e. Cleanup: rename the stuttery `src/common/src/commonMain` directory to
+      `src/common/src/main` (explicit `sourceSets["commonMain"].kotlin.srcDirs`
+      config — the *source set* keeps its KMP name, only the folder changes; same
+      for `commonTest` → `test`).
+  0f. Replace the precise poll-cadence choices (1/3/6/12/24h) with qualitative
+      labels — "Hourly", "A few times a day", "Once a day" — mapped to platform
+      schedules underneath. Motivated by iOS's opportunistic refresh (§5, §8.1):
+      qualitative wording stays truthful on both platforms. Lands on Android first.
+  0g. Toolchain bump: Kotlin 2.0 → 2.1+ (pulled forward per review — Coil 3 and
+      current CMP want it, and it unpins Ksoup from 0.2.4). Do this before any
+      CMP work so phase 2 starts on the final toolchain.
 - **Phase 1 — common module compiles for iOS**
   Add iOS targets + XCFramework export; iOS crypto/engine actuals; CI macOS job running
   commonTest on `iosSimulatorArm64`. Exit criterion: green Native test run.
@@ -203,16 +216,22 @@ Windows setup and improve the Android app on their own merit.
 ## 8. Risks & open questions
 
 1. **BGAppRefreshTask cadence** is the one user-visible regression risk: "new event"
-   notifications on iOS may lag hours behind the configured interval. Foreground-sync
-   mitigation shrinks this for active users; set expectations in the setting UI.
+   notifications on iOS may lag hours behind the configured cadence. Addressed by the
+   qualitative setting labels (phase 0f) plus foreground-activation sync; residual risk
+   is only for users who force-quit the app (iOS then never refreshes it).
 2. **CMP maturity surface**: `ModalNavigationDrawer`/`ModalBottomSheet`/`AlertDialog` are
    available in CMP material3, but phase 2 should smoke-test the drawer + dialogs early;
    any gap has a plain-composable fallback.
-3. **Kotlin 2.0 pin**: works, but the ecosystem (Coil 3, newer CMP) will eventually want
-   2.1+; budget a toolchain bump PR (also unblocks newer Ksoup).
-4. **Robolectric/compose-ui-test coverage** stays Android-side after phase 2; the CI
-   coverage gate reads JVM jacoco only — confirm the gate isn't distorted when UI moves
-   modules.
+3. **Kotlin toolchain bump** (phase 0g) is pulled forward deliberately; it is the change
+   most likely to surface incidental breakage (compiler warnings→errors, Ksoup unpin),
+   so it gets its own PR with the full suite as the gate.
+4. **Test parity on macOS/iOS**: commonTest — the suite guarding every parser,
+   ViewModel, and the notification planner — runs on `iosSimulatorArm64` in the free
+   macOS CI job from phase 1 onward, so shared-logic regressions surface on the Native
+   target exactly as they do on JVM today. Compose UI tests (drawer/back-handling/
+   settings) run against the CMP module after phase 2; Robolectric-based platform-glue
+   tests (stores, alarms, receivers) stay Android-only by nature, and their iOS
+   counterparts (Keychain store, notification scheduling) get XCTest coverage in
+   phases 3–4. The jacoco coverage gate reads JVM only — confirm it isn't distorted
+   when UI moves modules.
 5. **Mac access** (§6) gates phases 3–5 — decide hardware before starting phase 3.
-6. Existing issue #90 (`MY_PACKAGE_REPLACED` re-registration) is Android-only; its iOS
-   analog does not exist (local notifications survive updates).
