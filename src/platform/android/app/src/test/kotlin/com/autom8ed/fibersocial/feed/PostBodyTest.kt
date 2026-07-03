@@ -32,6 +32,24 @@ class ResolveRavelryHrefTest {
         assertNull(resolveRavelryHref("#fn1"))
         assertNull(resolveRavelryHref(""))
     }
+
+    @Test
+    fun `unsafe schemes resolve to nothing`() {
+        assertNull(resolveRavelryHref("javascript:alert(1)"))
+        assertNull(resolveRavelryHref("intent:#Intent;package=evil;end"))
+        assertNull(resolveRavelryHref("file:///etc/passwd"))
+    }
+
+    @Test
+    fun `mailto and case-variant http schemes are allowed`() {
+        assertEquals("mailto:someone@example.com", resolveRavelryHref("mailto:someone@example.com"))
+        assertEquals("HTTPS://example.com", resolveRavelryHref("HTTPS://example.com"))
+    }
+
+    @Test
+    fun `scheme-less non-rooted targets resolve to nothing`() {
+        assertNull(resolveRavelryHref("patterns/library"))
+    }
 }
 
 class BuildInlineTextTest {

@@ -124,7 +124,14 @@ private fun InlineText(
     ) { offset ->
         text.getStringAnnotations(URL_ANNOTATION, offset, offset)
             .firstOrNull()
-            ?.let { uriHandler.openUri(it.item) }
+            ?.let { annotation ->
+                // User-generated target: no activity may handle it; don't crash on tap.
+                try {
+                    uriHandler.openUri(annotation.item)
+                } catch (e: Exception) {
+                    println("FiberSocial: couldn't open link ${annotation.item}: ${e.message}")
+                }
+            }
     }
 }
 
@@ -334,14 +341,25 @@ internal fun splitOnImages(content: List<Inline>): List<ParagraphSegment> {
     return segments
 }
 
+/** Schemes a tapped link may open. Hrefs are user-generated, so anything else is inert. */
+private val ALLOWED_LINK_SCHEMES = setOf("http", "https", "mailto")
+
+private val URL_SCHEME = Regex("^([a-zA-Z][a-zA-Z0-9+.-]*):")
+
 /**
- * Resolves a post link target to something the device can open. Site-relative paths get
- * the Ravelry origin; fragment-only links (Markdown footnote refs) resolve to nothing.
+ * Resolves a post link target to something the device can safely open. Site-relative
+ * paths get the Ravelry origin; fragment-only links (Markdown footnote refs) and targets
+ * with schemes outside [ALLOWED_LINK_SCHEMES] (`javascript:`, `intent:`, …) resolve to
+ * nothing and render as styled but inert text.
  */
-internal fun resolveRavelryHref(href: String): String? = when {
-    href.isEmpty() || href.startsWith("#") -> null
-    href.startsWith("/") -> "https://www.ravelry.com$href"
-    else -> href
+internal fun resolveRavelryHref(href: String): String? {
+    val scheme = URL_SCHEME.find(href)?.groupValues?.get(1)?.lowercase()
+    return when {
+        href.startsWith("#") -> null
+        href.startsWith("/") -> "https://www.ravelry.com$href"
+        scheme != null -> href.takeIf { scheme in ALLOWED_LINK_SCHEMES }
+        else -> null
+    }
 }
 
 /**
