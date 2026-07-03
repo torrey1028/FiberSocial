@@ -19,6 +19,10 @@ import kotlinx.serialization.Serializable
 data class Post(
     val id: Long,
     @SerialName("body_html") val bodyHtml: String = "",
+    /** Source text of the post (markdown/BBcode), used to pre-fill the editor. */
+    val body: String = "",
+    /** True when the signed-in user is allowed to edit this post (server-computed). */
+    val editable: Boolean = false,
     @SerialName("created_at") val createdAt: String? = null,
     val user: RavelryUser? = null,
     @SerialName("vote_totals") val voteTotals: Map<String, Int> = emptyMap(),

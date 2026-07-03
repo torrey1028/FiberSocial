@@ -389,6 +389,134 @@ class TopicDetailViewModelTest {
         assertTrue(err1.toString().contains("oops"))
     }
 
+    private fun deleteRoutingClient(deleteResponds: String = "ok") = routingApiClient { path ->
+        when {
+            path.contains("/posts.json") -> postsJson(1L, 2L)
+            Regex("/forum_posts/\\d+$").containsMatchIn(path) -> deleteResponds
+            else -> TOKEN_PAGE_HTML
+        }
+    }
+
+    @Test
+    fun `deletePost removes the post and returns to Idle`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = TopicDetailViewModel(deleteRoutingClient(), this)
+        vm.load(42L)
+        awaitChildren(coroutineContext[Job]!!)
+        val target = (vm.state.value as TopicDetailState.Loaded).posts.first()
+        vm.deletePost(target)
+        awaitChildren(coroutineContext[Job]!!)
+        assertIs<DeleteState.Idle>(vm.deleteState.value)
+        val state = assertIs<TopicDetailState.Loaded>(vm.state.value)
+        assertEquals(listOf(2L), state.posts.map { it.id })
+    }
+
+    @Test
+    fun `deletePost failure keeps the thread and reports Error`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = TopicDetailViewModel(
+            routingApiClient { path ->
+                when {
+                    path.contains("/posts.json") -> postsJson(1L, 2L)
+                    Regex("/forum_posts/\\d+$").containsMatchIn(path) -> error("Simulated delete failure")
+                    else -> TOKEN_PAGE_HTML
+                }
+            },
+            this,
+        )
+        vm.load(42L)
+        awaitChildren(coroutineContext[Job]!!)
+        vm.deletePost((vm.state.value as TopicDetailState.Loaded).posts.first())
+        awaitChildren(coroutineContext[Job]!!)
+        assertIs<DeleteState.Error>(vm.deleteState.value)
+        assertEquals(2, (vm.state.value as TopicDetailState.Loaded).posts.size)
+    }
+
+    @Test
+    fun `deletePost session expiry signals sessionExpired`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = TopicDetailViewModel(sessionExpiredApiClient(), this)
+        vm.deletePost(Post(id = 1L))
+        awaitChildren(coroutineContext[Job]!!)
+        assertIs<DeleteState.Idle>(vm.deleteState.value)
+        assertEquals(Unit, vm.sessionExpired.first())
+    }
+
+    @Test
+    fun `acknowledgeDeleteError clears the error`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = TopicDetailViewModel(errorApiClient(), this)
+        vm.deletePost(Post(id = 1L))
+        awaitChildren(coroutineContext[Job]!!)
+        assertIs<DeleteState.Error>(vm.deleteState.value)
+        vm.acknowledgeDeleteError()
+        assertIs<DeleteState.Idle>(vm.deleteState.value)
+    }
+
+    @Test
+    fun `editPost replaces post body and returns to Idle`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = TopicDetailViewModel(
+            routingApiClient { path ->
+                when {
+                    path.contains("/forum_posts/") -> forumPostJson(id = 1L, body = "edited body", bodyHtml = "<p>edited body</p>")
+                    else -> postsJson(1L, 2L)
+                }
+            },
+            this,
+        )
+        vm.load(42L)
+        awaitChildren(coroutineContext[Job]!!)
+        val target = (vm.state.value as TopicDetailState.Loaded).posts.first()
+        vm.editPost(target, "edited body")
+        awaitChildren(coroutineContext[Job]!!)
+        assertIs<EditState.Idle>(vm.editState.value)
+        val updated = (vm.state.value as TopicDetailState.Loaded).posts.first { it.id == 1L }
+        assertEquals("edited body", updated.body)
+        assertEquals("<p>edited body</p>", updated.bodyHtml)
+    }
+
+    @Test
+    fun `editPost ignores blank body`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = TopicDetailViewModel(errorApiClient(), this)
+        vm.editPost(Post(id = 1L), "   ")
+        awaitChildren(coroutineContext[Job]!!)
+        assertIs<EditState.Idle>(vm.editState.value)
+    }
+
+    @Test
+    fun `editPost failure keeps original body and reports Error`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = TopicDetailViewModel(
+            routingApiClient { path ->
+                when {
+                    path.contains("/forum_posts/") -> error("Simulated edit failure")
+                    else -> postsJson(1L)
+                }
+            },
+            this,
+        )
+        vm.load(42L)
+        awaitChildren(coroutineContext[Job]!!)
+        vm.editPost((vm.state.value as TopicDetailState.Loaded).posts.first(), "new text")
+        awaitChildren(coroutineContext[Job]!!)
+        assertIs<EditState.Error>(vm.editState.value)
+        assertEquals("Reply 1", (vm.state.value as TopicDetailState.Loaded).posts.first().body)
+    }
+
+    @Test
+    fun `editPost session expiry signals sessionExpired`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = TopicDetailViewModel(sessionExpiredApiClient(), this)
+        vm.editPost(Post(id = 1L), "text")
+        awaitChildren(coroutineContext[Job]!!)
+        assertIs<EditState.Idle>(vm.editState.value)
+        assertEquals(Unit, vm.sessionExpired.first())
+    }
+
+    @Test
+    fun `acknowledgeEditError clears the error`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = TopicDetailViewModel(errorApiClient(), this)
+        vm.editPost(Post(id = 1L), "text")
+        awaitChildren(coroutineContext[Job]!!)
+        assertIs<EditState.Error>(vm.editState.value)
+        vm.acknowledgeEditError()
+        assertIs<EditState.Idle>(vm.editState.value)
+    }
+
     @Test
     fun `sendReply appends created post and transitions to Sent`() = runTest(UnconfinedTestDispatcher()) {
         val vm = TopicDetailViewModel(

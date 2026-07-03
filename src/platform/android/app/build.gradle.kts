@@ -102,6 +102,7 @@ tasks.withType<Test>().configureEach {
             "**/SettingsScreenTest*",
             "**/GroupDrawerTest*",
             "**/ReplyComposerTest*",
+            "**/DeletePostUiTest*",
         )
     }
 }

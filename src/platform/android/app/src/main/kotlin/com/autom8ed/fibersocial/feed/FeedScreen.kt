@@ -151,6 +151,13 @@ fun FeedScreen(
         // have nulled selectedTopic in the same frame — a !! there would crash.
         val topic = selectedTopic!!
         val replyState by viewModel.topicDetail.replyState.collectAsState()
+        val deleteState by viewModel.topicDetail.deleteState.collectAsState()
+        val editState by viewModel.topicDetail.editState.collectAsState()
+        val currentUsername = when (val s = state) {
+            is FeedState.Loaded -> s.user.username
+            is FeedState.Refreshing -> s.stale.user.username
+            else -> null
+        }
         TopicDetailScreen(
             topic = topic,
             postsState = topicDetailState,
@@ -159,6 +166,13 @@ fun FeedScreen(
             replyState = replyState,
             onSendReply = { body -> viewModel.topicDetail.sendReply(topic.id, body) },
             onReplySent = { viewModel.topicDetail.acknowledgeReplySent() },
+            currentUsername = currentUsername,
+            deleteState = deleteState,
+            onDeletePost = { post -> viewModel.topicDetail.deletePost(post) },
+            onDeleteErrorShown = { viewModel.topicDetail.acknowledgeDeleteError() },
+            editState = editState,
+            onEditPost = { post, newBody -> viewModel.topicDetail.editPost(post, newBody) },
+            onEditErrorShown = { viewModel.topicDetail.acknowledgeEditError() },
         )
         return
     }
