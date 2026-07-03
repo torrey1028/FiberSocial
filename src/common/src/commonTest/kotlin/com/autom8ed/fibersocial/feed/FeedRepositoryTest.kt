@@ -29,10 +29,10 @@ class FeedRepositoryTest {
     }
 
     @Test
-    fun `getFeedItems classifies topic with images as ProjectTopic`() = runTest {
+    fun `getFeedItems classifies topic with images as a plain DiscussionTopic`() = runTest {
+        // Issue #77: images in a thread must not change how the topic is listed.
         val items = singleTopicRepo(imagesCount = 3).getFeedItems(listOf(group))
-        assertIs<FeedItem.ProjectTopic>(items.single())
-        assertEquals(3, (items.single() as FeedItem.ProjectTopic).imageCount)
+        assertIs<FeedItem.DiscussionTopic>(items.single())
     }
 
     @Test
@@ -48,10 +48,11 @@ class FeedRepositoryTest {
     }
 
     @Test
-    fun `getFeedItems images flag takes precedence over sticky`() = runTest {
-        // imagesCount > 0 wins even when sticky = true
+    fun `getFeedItems sticky topic with images is still an AnnouncementTopic`() = runTest {
+        // A pinned topic must pin regardless of photos in the thread (issue #77: the old
+        // image-first classification hid three of a real group's four stickies).
         val items = singleTopicRepo(imagesCount = 1, sticky = true).getFeedItems(listOf(group))
-        assertIs<FeedItem.ProjectTopic>(items.single())
+        assertIs<FeedItem.AnnouncementTopic>(items.single())
     }
 
     @Test
@@ -216,20 +217,33 @@ class FeedRepositoryTest {
     }
 
     @Test
-    fun `getFeedItems skips latest-post fetch for project and sticky topics`() = runTest {
-        // Those map to card types that discard reply attribution — the extra
-        // request would be pure waste.
+    fun `getFeedItems skips latest-post fetch for sticky topics`() = runTest {
+        // Announcements discard reply attribution — the extra request would be pure waste.
         val requestedPaths = mutableListOf<String>()
         val repo = repoWithRoute { path ->
             requestedPaths += path
             when {
                 path.contains("/forums/") -> topicsJson(100L)
-                path.contains("/topics/") -> topicDetailJson(100L, imagesCount = 3)
+                path.contains("/topics/") -> topicDetailJson(100L, sticky = true)
                 else -> error("Unexpected: $path")
             }
         }
-        assertIs<FeedItem.ProjectTopic>(repo.getFeedItems(listOf(group)).single())
+        assertIs<FeedItem.AnnouncementTopic>(repo.getFeedItems(listOf(group)).single())
         assertEquals(emptyList(), requestedPaths.filter { it.contains("/posts.json") })
+    }
+
+    @Test
+    fun `getFeedItems attributes a topic with images to its latest replier like any other`() = runTest {
+        val repo = repoWithRoute { path ->
+            when {
+                path.contains("/forums/") -> topicsJson(100L)
+                path.contains("/posts.json") -> latestPostJson(username = "replier")
+                path.contains("/topics/") -> topicDetailJson(100L, imagesCount = 5)
+                else -> error("Unexpected: $path")
+            }
+        }
+        val item = repo.getFeedItems(listOf(group)).single() as FeedItem.DiscussionTopic
+        assertEquals("replier", item.latestReplyAuthor?.username)
     }
 
     @Test
