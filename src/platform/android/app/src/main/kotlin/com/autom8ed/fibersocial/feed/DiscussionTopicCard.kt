@@ -47,12 +47,21 @@ fun DiscussionTopicCard(
     item: FeedItem.DiscussionTopic,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    pinned: Boolean = false,
 ) {
     ElevatedCard(
         onClick = onClick,
         modifier = modifier.fillMaxWidth(),
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
+            if (pinned) {
+                Text(
+                    text = "📌 Pinned",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+            }
             Row(verticalAlignment = Alignment.Top) {
                 Avatar(url = item.displayAuthor.avatarUrl, size = 40.dp)
                 Spacer(modifier = Modifier.width(10.dp))

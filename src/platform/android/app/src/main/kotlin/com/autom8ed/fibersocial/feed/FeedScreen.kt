@@ -394,18 +394,34 @@ private fun FeedList(
     modifier: Modifier = Modifier,
     onTopicClick: (FeedItem.DiscussionTopic) -> Unit,
 ) {
-    val renderable = items.filterIsInstance<FeedItem.DiscussionTopic>()
+    // Sticky topics render as pinned discussion cards; the repository already
+    // sorts them first. Project topics still lack a card type and are skipped.
+    val renderable = items.filter {
+        it is FeedItem.DiscussionTopic || it is FeedItem.AnnouncementTopic
+    }
     LazyColumn(
         modifier = modifier.fillMaxSize(),
         contentPadding = PaddingValues(vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         items(renderable, key = { it.id }) { item ->
-            DiscussionTopicCard(
-                item = item,
-                onClick = { onTopicClick(item) },
-                modifier = Modifier.padding(horizontal = 16.dp),
-            )
+            when (item) {
+                is FeedItem.DiscussionTopic -> DiscussionTopicCard(
+                    item = item,
+                    onClick = { onTopicClick(item) },
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                )
+                is FeedItem.AnnouncementTopic -> {
+                    val asDiscussion = item.asDiscussionTopic()
+                    DiscussionTopicCard(
+                        item = asDiscussion,
+                        onClick = { onTopicClick(asDiscussion) },
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                        pinned = true,
+                    )
+                }
+                else -> Unit
+            }
         }
     }
 }

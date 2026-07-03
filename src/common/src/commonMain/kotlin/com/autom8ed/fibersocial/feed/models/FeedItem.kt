@@ -67,7 +67,24 @@ sealed class FeedItem {
         val bodyPreview: String,
         val bodySummary: String,
         val replyCount: Int,
-    ) : FeedItem()
+    ) : FeedItem() {
+        /**
+         * Bridges this announcement to the discussion shape for screens that only speak
+         * [DiscussionTopic] (the topic detail screen and its card): same topic, no
+         * latest-reply attribution — an announcement card always shows the opening post.
+         */
+        fun asDiscussionTopic(): DiscussionTopic = DiscussionTopic(
+            id = id,
+            groupId = groupId,
+            groupName = groupName,
+            lastPostAt = lastPostAt,
+            author = author,
+            title = title,
+            bodyPreview = bodyPreview,
+            bodySummary = bodySummary,
+            replyCount = replyCount,
+        )
+    }
 
     /**
      * A general discussion topic — questions, conversation, sharing without images.

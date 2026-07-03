@@ -55,7 +55,12 @@ class FeedRepository(private val apiClient: RavelryApiClient) {
                     }
                 }
                 .awaitAll()
-        }.sortedByDescending { it.lastPostAt }
+        }.sortedWith(
+            // Sticky topics are pinned to the top of a group's forum on the website;
+            // mirror that here, then newest-reply-first within each band (issue #78).
+            compareByDescending<FeedItem> { it is FeedItem.AnnouncementTopic }
+                .thenByDescending { it.lastPostAt },
+        )
     }
 
     /**
