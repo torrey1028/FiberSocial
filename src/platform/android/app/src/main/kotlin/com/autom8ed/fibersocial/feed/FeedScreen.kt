@@ -40,12 +40,10 @@ import androidx.compose.ui.unit.dp
 import com.autom8ed.fibersocial.BuildConfig
 import com.autom8ed.fibersocial.debug.DebugPanel
 import com.autom8ed.fibersocial.events.EventDetailScreen
-import com.autom8ed.fibersocial.events.EventDiscussion
 import com.autom8ed.fibersocial.events.EventsScreen
 import com.autom8ed.fibersocial.events.GroupEvent
 import com.autom8ed.fibersocial.feed.models.FeedItem
 import com.autom8ed.fibersocial.feed.models.Group
-import com.autom8ed.fibersocial.feed.models.RavelryUser
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -79,10 +77,6 @@ fun FeedScreen(viewModel: FeedAndroidViewModel) {
         EventDetailScreen(
             state = eventDetailState,
             onBack = { selectedEvent = null },
-            onDiscussionClick = { discussion ->
-                viewModel.topicDetail.load(discussion.topicId)
-                selectedTopic = discussionTopicFor(discussion, groups)
-            },
         )
         return
     }
@@ -238,30 +232,6 @@ private fun GroupDrawer(
             item { Spacer(Modifier.height(16.dp)) }
         }
     }
-}
-
-/**
- * Bridges an event's linked discussion into the topic detail screen. Only the topic ID
- * and title come from the event page; the group is matched by permalink from the loaded
- * groups (name falls back to the permalink) and the author is unknown until the posts
- * load.
- */
-private fun discussionTopicFor(
-    discussion: EventDiscussion,
-    groups: List<Group>,
-): FeedItem.DiscussionTopic {
-    val group = groups.firstOrNull { it.permalink == discussion.groupPermalink }
-    return FeedItem.DiscussionTopic(
-        id = discussion.topicId,
-        groupId = group?.id ?: 0L,
-        groupName = group?.name ?: discussion.groupPermalink,
-        lastPostAt = null,
-        author = RavelryUser(username = ""),
-        title = discussion.title,
-        bodyPreview = "",
-        bodySummary = "",
-        replyCount = discussion.postsCount,
-    )
 }
 
 @Composable
