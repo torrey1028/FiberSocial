@@ -2,6 +2,7 @@ package com.autom8ed.fibersocial.events
 
 import com.autom8ed.fibersocial.feed.errorApiClient
 import com.autom8ed.fibersocial.feed.models.Group
+import com.autom8ed.fibersocial.feed.nullMessageApiClient
 import com.autom8ed.fibersocial.feed.routingApiClient
 import com.autom8ed.fibersocial.feed.sessionExpiredApiClient
 import kotlin.test.Test
@@ -107,6 +108,14 @@ class EventsViewModelTest {
         vm.load(listOf(group("g")))
         awaitChildren(coroutineContext[Job]!!)
         assertIs<EventsState.Error>(vm.state.value)
+    }
+
+    @Test
+    fun `error without a message falls back to a generic description`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = EventsViewModel(nullMessageApiClient(), this)
+        vm.load(listOf(group("g")))
+        awaitChildren(coroutineContext[Job]!!)
+        assertEquals("Couldn't load events", assertIs<EventsState.Error>(vm.state.value).message)
     }
 
     @Test

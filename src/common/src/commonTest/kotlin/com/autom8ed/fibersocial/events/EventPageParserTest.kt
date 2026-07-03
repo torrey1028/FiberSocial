@@ -125,6 +125,39 @@ class EventPageParserLenienceTest {
     }
 
     @Test
+    fun `venue with only an address leaves other rows null`() {
+        val html = """
+            <div class="event__detail">
+            <ul id="venue_summary"><li class="address">500 Uptown Ct Ste 210</li></ul>
+            </div>
+        """
+        val venue = assertNotNull(EventPageParser.parse(html)).venue
+        assertEquals(EventVenue(address = "500 Uptown Ct Ste 210"), venue)
+    }
+
+    @Test
+    fun `venue with only a city and state leaves other rows null`() {
+        val html = """
+            <div class="event__detail">
+            <ul id="venue_summary"><li class="city_state">Kirkland, Washington</li></ul>
+            </div>
+        """
+        val venue = assertNotNull(EventPageParser.parse(html)).venue
+        assertEquals(EventVenue(cityState = "Kirkland, Washington"), venue)
+    }
+
+    @Test
+    fun `venue with only a country leaves other rows null`() {
+        val html = """
+            <div class="event__detail">
+            <ul id="venue_summary"><li class="country">United States</li></ul>
+            </div>
+        """
+        val venue = assertNotNull(EventPageParser.parse(html)).venue
+        assertEquals(EventVenue(country = "United States"), venue)
+    }
+
+    @Test
     fun `venue summary with no recognizable rows yields a null venue`() {
         val html = """
             <div class="event__detail">
