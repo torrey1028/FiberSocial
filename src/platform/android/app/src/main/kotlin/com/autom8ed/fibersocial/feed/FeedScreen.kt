@@ -1,5 +1,6 @@
 package com.autom8ed.fibersocial.feed
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -30,8 +31,9 @@ import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.rememberDrawerState
+import androidx.compose.material3.DrawerState
 import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -121,6 +123,8 @@ fun FeedScreen(viewModel: FeedAndroidViewModel) {
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     var showDebugPanel by remember { mutableStateOf(false) }
+
+    CloseDrawerOnBack(drawerState)
 
     val title = when (val s = state) {
         is FeedState.Loaded -> s.selectedGroup?.name ?: "All Groups"
@@ -314,5 +318,24 @@ private fun FeedList(
                 modifier = Modifier.padding(horizontal = 16.dp),
             )
         }
+    }
+}
+
+/**
+ * Closes an open navigation drawer on system back instead of letting the
+ * press fall through and exit the app (issue #38). No-op while the drawer
+ * is closed so normal back behavior is unaffected.
+ *
+ * Also enabled while the drawer is animating: isOpen tracks the *settled*
+ * value, which is still Closed for the first half of the opening animation
+ * and already Closed for the second half of the closing one — a back press
+ * in either window would otherwise fall through and exit the app while the
+ * drawer is visibly on screen (e.g. a habitual double-press of back).
+ */
+@Composable
+internal fun CloseDrawerOnBack(drawerState: DrawerState) {
+    val scope = rememberCoroutineScope()
+    BackHandler(enabled = drawerState.isOpen || drawerState.isAnimationRunning) {
+        scope.launch { drawerState.close() }
     }
 }
