@@ -40,6 +40,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import com.autom8ed.fibersocial.ui.Avatar
 import com.autom8ed.fibersocial.feed.PostBody
@@ -212,7 +213,19 @@ private fun VenueCard(venue: EventVenue) {
             .clip(RoundedCornerShape(12.dp))
             .background(MaterialTheme.colorScheme.surfaceVariant)
             .let { base ->
-                if (mapsUrl != null) base.clickable { uriHandler.openUri(mapsUrl) } else base
+                if (mapsUrl != null) {
+                    base.clickable(
+                        onClickLabel = "Open in Google Maps",
+                        role = Role.Button,
+                    ) {
+                        // A device with no browser/Maps handler throws instead of
+                        // opening; a dead tap beats a crash.
+                        runCatching { uriHandler.openUri(mapsUrl) }
+                            .onFailure { println("FiberSocial: openUri failed: ${it.message}") }
+                    }
+                } else {
+                    base
+                }
             }
             .padding(12.dp),
     ) {
