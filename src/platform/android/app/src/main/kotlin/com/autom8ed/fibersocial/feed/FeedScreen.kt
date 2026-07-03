@@ -65,15 +65,29 @@ import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun FeedScreen(viewModel: FeedAndroidViewModel, onLogout: () -> Unit) {
+fun FeedScreen(
+    viewModel: FeedAndroidViewModel,
+    onLogout: () -> Unit,
+    deepLinkEventPermalink: String? = null,
+    onDeepLinkConsumed: () -> Unit = {},
+) {
     val state by viewModel.feed.state.collectAsState()
     val topicDetailState by viewModel.topicDetail.state.collectAsState()
     val eventsState by viewModel.events.state.collectAsState()
     val eventDetailState by viewModel.eventDetail.state.collectAsState()
     var selectedTopic by remember { mutableStateOf<FeedItem.DiscussionTopic?>(null) }
-    var selectedEvent by remember { mutableStateOf<GroupEvent?>(null) }
+    var selectedEventPermalink by remember { mutableStateOf<String?>(null) }
     var eventsGroup by remember { mutableStateOf<Group?>(null) }
     var showSettings by rememberSaveable { mutableStateOf(false) }
+
+    // A tapped notification lands here: open the event detail directly.
+    LaunchedEffect(deepLinkEventPermalink) {
+        if (deepLinkEventPermalink != null) {
+            viewModel.eventDetail.load(deepLinkEventPermalink)
+            selectedEventPermalink = deepLinkEventPermalink
+            onDeepLinkConsumed()
+        }
+    }
 
     // One unwrap for every stale-capable field: Loaded directly, Refreshing via
     // its stale snapshot, anything else has no data yet.
@@ -117,12 +131,12 @@ fun FeedScreen(viewModel: FeedAndroidViewModel, onLogout: () -> Unit) {
         return
     }
 
-    if (selectedEvent != null) {
+    if (selectedEventPermalink != null) {
         val attendees by viewModel.eventDetail.attendees.collectAsState()
         EventDetailScreen(
             state = eventDetailState,
             attendees = attendees,
-            onBack = { selectedEvent = null },
+            onBack = { selectedEventPermalink = null },
             onToggleAttendance = { viewModel.eventDetail.toggleAttendance() },
         )
         return
@@ -135,7 +149,7 @@ fun FeedScreen(viewModel: FeedAndroidViewModel, onLogout: () -> Unit) {
             onBack = { eventsGroup = null },
             onEventClick = { groupEvent ->
                 viewModel.eventDetail.load(groupEvent.event.permalink)
-                selectedEvent = groupEvent
+                selectedEventPermalink = groupEvent.event.permalink
             },
         )
         return
