@@ -147,14 +147,17 @@ fun FeedScreen(
     }
 
     if (selectedTopic != null) {
+        // Captured once: the send lambda runs later, when another handler may already
+        // have nulled selectedTopic in the same frame — a !! there would crash.
+        val topic = selectedTopic!!
         val replyState by viewModel.topicDetail.replyState.collectAsState()
         TopicDetailScreen(
-            topic = selectedTopic!!,
+            topic = topic,
             postsState = topicDetailState,
             onBack = { selectedTopic = null },
             onVote = { post, type -> viewModel.topicDetail.toggleVote(post, type) },
             replyState = replyState,
-            onSendReply = { body -> viewModel.topicDetail.sendReply(selectedTopic!!.id, body) },
+            onSendReply = { body -> viewModel.topicDetail.sendReply(topic.id, body) },
             onReplySent = { viewModel.topicDetail.acknowledgeReplySent() },
         )
         return

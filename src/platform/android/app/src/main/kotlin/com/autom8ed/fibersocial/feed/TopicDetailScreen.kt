@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -240,10 +241,16 @@ internal fun ReplyComposer(
     }
 
     Surface(tonalElevation = 3.dp) {
-        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
+        // imePadding keeps the composer above the on-screen keyboard while typing.
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .imePadding()
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+        ) {
             if (replyState is ReplyState.Error) {
                 Text(
-                    text = "Couldn't post your reply. Try again.",
+                    text = replyState.message.ifBlank { "Couldn't post your reply. Try again." },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error,
                     modifier = Modifier.padding(bottom = 4.dp),

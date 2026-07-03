@@ -57,10 +57,16 @@ class ReplyComposerTest {
     }
 
     @Test
-    fun `Error state shows a message and keeps the text`() {
+    fun `Error state shows the failure message and keeps the text`() {
+        var replyState by mutableStateOf<ReplyState>(ReplyState.Idle)
         compose.setContent {
-            ReplyComposer(replyState = ReplyState.Error("boom"), onSend = {}, onSent = {})
+            ReplyComposer(replyState = replyState, onSend = {}, onSent = {})
         }
-        compose.onNodeWithText("Couldn't post your reply. Try again.").assertIsDisplayed()
+        compose.onNodeWithText("Write a reply…").performTextInput("my precious draft")
+        replyState = ReplyState.Error("boom")
+        compose.waitForIdle()
+
+        compose.onNodeWithText("boom").assertIsDisplayed()
+        compose.onNodeWithText("my precious draft").assertIsDisplayed()
     }
 }

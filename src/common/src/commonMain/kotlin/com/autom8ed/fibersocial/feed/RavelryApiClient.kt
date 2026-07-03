@@ -454,10 +454,17 @@ class RavelryApiClient(
         val raw = authenticatedRequest {
             httpClient.post("$BASE_URL/topics/$topicId/reply.json") {
                 header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
-                url.parameters.append("body", body)
+                // Form body, not a query parameter: free text can be multi-KB (URLs
+                // have request-line limits, 414s) and would land in server logs.
+                setBody(FormDataContent(Parameters.build { append("body", body) }))
             }
         }
-        return lenientJson.decodeFromString<ReplyResponse>(raw).forumPost
+        return try {
+            lenientJson.decodeFromString<ReplyResponse>(raw).forumPost
+        } catch (e: Exception) {
+            println("FiberSocial: postReply($topicId) unexpected response: ${raw.take(200)}")
+            error("Unexpected Ravelry response — check the thread before retrying, the reply may have posted.")
+        }
     }
 
     /**

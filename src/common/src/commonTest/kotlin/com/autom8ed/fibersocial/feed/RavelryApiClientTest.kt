@@ -722,7 +722,8 @@ class RavelryApiClientTest {
         val engine = MockEngine { request ->
             capturedPath = request.url.encodedPath
             capturedMethod = request.method.value
-            capturedBody = request.url.parameters["body"]
+            capturedBody = (request.body as io.ktor.client.request.forms.FormDataContent)
+                .formData["body"]
             respond(
                 content = replyResponseJson(id = 99L, username = "yarnie"),
                 status = HttpStatusCode.OK,
