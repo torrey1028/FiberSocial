@@ -186,6 +186,48 @@ class TopicDetailViewModelTest {
     }
 
     @Test
+    fun `toggleVote computes direction from current state, not a stale post parameter`() = runTest {
+        val capturedVotedParams = mutableListOf<String?>()
+        val engine = MockEngine { request ->
+            if (request.url.encodedPath.contains("vote")) {
+                val voted = request.url.parameters["vote"]
+                capturedVotedParams.add(voted)
+                respond(voteResponseJson("love", if (voted == "1") 1 else 0, userVoted = voted == "1"),
+                    HttpStatusCode.OK, headersOf("Content-Type", ContentType.Application.Json.toString()))
+            } else {
+                respond(
+                    """{"posts":[{"id":1,"body_html":"<p>Reply</p>","user":{"username":"user1"}}],
+                        "vote_totals":{"1":{"love":1}},"user_votes":{"1":["love"]}}""",
+                    HttpStatusCode.OK, headersOf("Content-Type", ContentType.Application.Json.toString()),
+                )
+            }
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val vm = TopicDetailViewModel(RavelryApiClient(httpClient, FakeFeedTokenStorage()), this)
+        vm.load(42L)
+        awaitChildren(coroutineContext[Job]!!)
+        // Captured once, before any toggling, and deliberately reused below as a stale reference.
+        val stalePost = (vm.state.value as TopicDetailState.Loaded).posts[0]
+        assertTrue(stalePost.userVotes.contains("love"))
+
+        vm.toggleVote(stalePost, VoteType.LOVE)
+        awaitChildren(coroutineContext[Job]!!)
+        assertEquals("0", capturedVotedParams[0])
+        assertTrue((vm.state.value as TopicDetailState.Loaded).posts[0].userVotes.isEmpty())
+
+        // Second call passes the SAME stale `stalePost` (whose userVotes still says ["love"]).
+        // If toggleVote read that parameter instead of the current state, it would compute
+        // wantsVoted=false again (trying to remove an already-removed vote) instead of
+        // correctly re-adding it.
+        vm.toggleVote(stalePost, VoteType.LOVE)
+        awaitChildren(coroutineContext[Job]!!)
+        assertEquals("1", capturedVotedParams[1])
+        assertTrue((vm.state.value as TopicDetailState.Loaded).posts[0].userVotes.contains("love"))
+    }
+
+    @Test
     fun `toggleVote reverts optimistic update when the vote call fails`() = runTest(UnconfinedTestDispatcher()) {
         val engine = MockEngine { request ->
             if (request.url.encodedPath.contains("vote")) {

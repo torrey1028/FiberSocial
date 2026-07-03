@@ -82,14 +82,17 @@ class TopicDetailViewModel(
     /**
      * Toggles the current user's vote of [type] on [post]: applies an optimistic local
      * update immediately, then confirms it against the server. On failure, the optimistic
-     * update is reverted; on session expiry, [sessionExpired] is also signaled.
+     * update is reverted (by applying the inverse of the optimistic change to whatever
+     * post is then in state); on session expiry, [sessionExpired] is also signaled.
      *
-     * @param post The post to vote on, as currently rendered (used both to determine
-     *   the new vote and as the value to revert to on failure).
+     * @param post Identifies which post to vote on ([Post.id]). The toggle direction and
+     *   all reverts are computed from the post's current value in [state], not from this
+     *   parameter, so a stale [post] (e.g. from a rapid double-tap) can't send the wrong
+     *   `voted` value or clobber a concurrent local update.
      * @param type Which reaction to toggle.
      */
     fun toggleVote(post: Post, type: VoteType) {
-        val wantsVoted = !post.hasVoted(type)
+        val wantsVoted = !(currentPost(post.id) ?: post).hasVoted(type)
         updatePost(post.id) { optimisticVote(it, type, wantsVoted) }
 
         scope.launch {
@@ -105,6 +108,12 @@ class TopicDetailViewModel(
                 updatePost(post.id) { optimisticVote(it, type, !wantsVoted) }
             }
         }
+    }
+
+    /** The post with [postId] in the current loaded state, or `null` if not loaded. */
+    private fun currentPost(postId: Long): Post? {
+        val current = _state.value
+        return (current as? TopicDetailState.Loaded)?.posts?.find { it.id == postId }
     }
 
     /** Applies [transform] to the post with [postId] in the current loaded state, if any. */
