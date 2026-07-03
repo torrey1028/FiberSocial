@@ -20,7 +20,8 @@ package com.autom8ed.fibersocial.feed.models
  * @property replyCount Total number of posts in the thread.
  * @property sticky Whether a moderator pinned this topic to the top of the forum. Sticky
  *   cards always attribute to the opening post ([latestReplyAuthor]/[latestReplyPreview]
- *   stay null — an announcement is its opening post, not its latest comment).
+ *   stay null — an announcement is its opening post, not its latest comment). The old
+ *   sealed hierarchy made the combination unrepresentable; `init` enforces it now.
  * @property latestReplyAuthor User who wrote the most recent reply, or `null` when the
  *   topic has no replies (or the latest reply couldn't be fetched).
  * @property latestReplyPreview Truncated plain-text excerpt of the most recent reply
@@ -40,6 +41,12 @@ data class FeedItem(
     val latestReplyAuthor: RavelryUser? = null,
     val latestReplyPreview: String? = null,
 ) {
+    init {
+        require(!sticky || (latestReplyAuthor == null && latestReplyPreview == null)) {
+            "Sticky topics attribute to the opening post; latest-reply fields must stay null"
+        }
+    }
+
     /** Author the feed card should attribute the topic to: latest replier, else opener. */
     val displayAuthor: RavelryUser get() = latestReplyAuthor ?: author
 

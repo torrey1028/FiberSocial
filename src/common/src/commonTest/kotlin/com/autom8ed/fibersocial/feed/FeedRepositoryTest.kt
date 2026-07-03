@@ -231,6 +231,13 @@ class FeedRepositoryTest {
         }
         assertTrue(repo.getFeedItems(listOf(group)).single().sticky)
         assertEquals(emptyList(), requestedPaths.filter { it.contains("/posts.json") })
+
+        // The field-level contract the old AnnouncementTopic type used to guarantee
+        // structurally: pinned cards attribute to the opening post.
+        val item = repo.getFeedItems(listOf(group)).single()
+        assertEquals(null, item.latestReplyAuthor)
+        assertEquals(null, item.latestReplyPreview)
+        assertEquals(item.author, item.displayAuthor)
     }
 
     @Test

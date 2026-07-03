@@ -16,7 +16,7 @@ import kotlinx.coroutines.coroutineScope
  * Translates raw Ravelry API data into [FeedItem]s ready for display.
  *
  * Orchestrates the multi-step fetch: groups → topic lists → topic details (in parallel),
- * then maps each [Topic] to a typed [FeedItem] subclass based on its fields.
+ * then maps each [Topic] to a [FeedItem] (one card shape; `sticky` is a flag, not a type).
  *
  * @param apiClient Low-level Ravelry HTTP client.
  */
@@ -44,10 +44,12 @@ class FeedRepository(private val apiClient: RavelryApiClient) {
                 .map { topic ->
                     async {
                         val detail = apiClient.getTopicDetail(topic.id)
-                        // Only discussion cards render reply attribution (sticky topics map
-                        // to the announcement card, which discards it), and only topics
-                        // with replies have a latest reply distinct from the opening post;
-                        // skip the extra request otherwise.
+                        // Sticky topics deliberately keep opening-post attribution (an
+                        // announcement is its opening post, not its latest comment — this
+                        // mirrors the website; FeedItem's init enforces it), and only
+                        // topics with replies have a latest reply distinct from the
+                        // opening post; skip the extra request otherwise. The !sticky
+                        // condition is load-bearing, not a leftover from the old card split.
                         val wantsLatestReply = detail.postsCount > 1 && !detail.sticky
                         val latestReply = if (wantsLatestReply) latestPostOrNull(detail.id) else null
                         detail.toFeedItem(groupId = group.id, groupName = group.name, latestReply = latestReply)
