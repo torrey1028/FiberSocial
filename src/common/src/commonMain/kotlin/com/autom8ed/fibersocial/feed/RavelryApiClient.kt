@@ -2,19 +2,30 @@ package com.autom8ed.fibersocial.feed
 
 import com.autom8ed.fibersocial.auth.SessionExpiredException
 import com.autom8ed.fibersocial.auth.TokenStorage
+import com.autom8ed.fibersocial.events.EventAttendee
+import com.autom8ed.fibersocial.events.EventDetail
+import com.autom8ed.fibersocial.events.EventPageParser
+import com.autom8ed.fibersocial.events.EventPeopleParser
+import com.autom8ed.fibersocial.events.EventSummary
+import com.autom8ed.fibersocial.events.GroupEventsParser
 import com.autom8ed.fibersocial.feed.models.Group
 import com.autom8ed.fibersocial.feed.models.Post
 import com.autom8ed.fibersocial.feed.models.RavelryUser
 import com.autom8ed.fibersocial.feed.models.Topic
 import com.autom8ed.fibersocial.feed.models.VoteType
 import io.ktor.client.HttpClient
+import io.ktor.client.request.forms.FormDataContent
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
+import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
+import io.ktor.client.statement.request
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.Parameters
+import io.ktor.http.isSuccess
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -140,6 +151,126 @@ class RavelryApiClient(
         permalinks.map { permalink ->
             async { getGroup(permalink) }
         }.awaitAll().filterNotNull()
+    }
+
+    /**
+     * Returns the upcoming events listed on a group's page.
+     *
+     * Ravelry has no events API, so this scrapes `www.ravelry.com/groups/{permalink}`
+     * with the session cookie and parses the "upcoming events" box (see
+     * [GroupEventsParser]). Groups without the box yield an empty list.
+     *
+     * @param groupPermalink The group's permalink, e.g. `kirkland-fiber-arts-circle-2`.
+     * @throws SessionExpiredException if the session cookie is rejected (401/403, or a
+     *   redirect off the group page — Ravelry sends expired sessions to the login page).
+     * @throws IllegalStateException on any other non-2xx response.
+     */
+    suspend fun getGroupEvents(groupPermalink: String): List<EventSummary> {
+        val html = scrapeHtml("https://www.ravelry.com/groups/$groupPermalink", "/groups/",
+            "Group page for $groupPermalink")
+        val events = GroupEventsParser.parse(html)
+        println("FiberSocial: getGroupEvents($groupPermalink) -> ${events.size} events")
+        return events
+    }
+
+    /**
+     * Returns the full details of an event, or null when [eventPermalink] doesn't
+     * resolve to an event page.
+     *
+     * Ravelry has no events API, so this scrapes `www.ravelry.com/events/{permalink}`
+     * with the session cookie (see [EventPageParser]).
+     *
+     * @param eventPermalink The event's slug, e.g. `wednesday-hh-at-chainline-39`
+     *   (from [EventSummary.permalink]).
+     * @throws SessionExpiredException if the session cookie is rejected (401/403, or a
+     *   redirect off the event page — Ravelry sends expired sessions to the login page).
+     * @throws IllegalStateException on any other non-2xx response.
+     */
+    suspend fun getEvent(eventPermalink: String): EventDetail? {
+        val html = scrapeHtml("https://www.ravelry.com/events/$eventPermalink", "/events/",
+            "Event page for $eventPermalink")
+        val detail = EventPageParser.parse(html)
+        println("FiberSocial: getEvent($eventPermalink) -> ${detail?.title ?: "NOT AN EVENT PAGE"}")
+        return detail
+    }
+
+    /**
+     * Returns the people attending an event, in the order the people page lists them.
+     *
+     * Ravelry has no events API, so this scrapes
+     * `www.ravelry.com/events/{permalink}/people` with the session cookie (see
+     * [EventPeopleParser]). An event with no attendees yields an empty list.
+     *
+     * @throws SessionExpiredException if the session cookie is rejected (401/403, or a
+     *   redirect off the events path — Ravelry sends expired sessions to the login page).
+     * @throws IllegalStateException on any other non-2xx response.
+     */
+    suspend fun getEventAttendees(eventPermalink: String): List<EventAttendee> {
+        val html = scrapeHtml("https://www.ravelry.com/events/$eventPermalink/people", "/events/",
+            "Event people page for $eventPermalink")
+        val attendees = EventPeopleParser.parse(html)
+        println("FiberSocial: getEventAttendees($eventPermalink) -> ${attendees.size} attendees")
+        return attendees
+    }
+
+    /**
+     * Fetches a `www.ravelry.com` page with the session cookie, failing loudly when the
+     * response is not an authenticated 200 — otherwise auth failures would be
+     * indistinguishable from a page that merely lacks the scraped markup.
+     *
+     * @throws SessionExpiredException on 401/403, or when the (Ktor-followed) redirect
+     *   chain lands outside [expectedPathPrefix] — an expired session cookie surfaces as
+     *   a 302 to the login page, not an error status. Redirects within the prefix
+     *   (permalink canonicalization) are fine.
+     * @throws IllegalStateException on any other non-2xx response.
+     */
+    private suspend fun scrapeHtml(url: String, expectedPathPrefix: String, what: String): String {
+        val response = httpClient.get(url) {
+            header(HttpHeaders.Cookie, sessionCookie())
+            header(HttpHeaders.Accept, "text/html")
+        }
+        when {
+            response.status == HttpStatusCode.Unauthorized || response.status == HttpStatusCode.Forbidden ->
+                throw SessionExpiredException("$what returned ${response.status}")
+            !response.request.url.encodedPath.startsWith(expectedPathPrefix) ->
+                throw SessionExpiredException(
+                    "$what redirected to ${response.request.url.encodedPath}"
+                )
+            !response.status.isSuccess() ->
+                error("$what returned ${response.status}")
+        }
+        return response.bodyAsText()
+    }
+
+    /**
+     * Saves or un-saves an event on the current user's calendar (Ravelry's RSVP).
+     *
+     * There is no events API: this posts to the website's own endpoints
+     * (`/events/{permalink}/attend?attending=1` or `/events/{permalink}/unattend`),
+     * authenticated by the session cookie plus the page's Rails authenticity token
+     * (see [EventDetail.csrfToken]).
+     *
+     * @param eventPermalink The event's slug.
+     * @param attending `true` to save the event, `false` to remove it.
+     * @param csrfToken Authenticity token scraped from the event page.
+     * @return `true` when the site accepted the change.
+     */
+    suspend fun setEventAttendance(
+        eventPermalink: String,
+        attending: Boolean,
+        csrfToken: String,
+    ): Boolean {
+        val url = if (attending) {
+            "https://www.ravelry.com/events/$eventPermalink/attend?attending=1"
+        } else {
+            "https://www.ravelry.com/events/$eventPermalink/unattend"
+        }
+        val response = httpClient.post(url) {
+            header(HttpHeaders.Cookie, sessionCookie())
+            setBody(FormDataContent(Parameters.build { append("authenticity_token", csrfToken) }))
+        }
+        println("FiberSocial: setEventAttendance($eventPermalink, attending=$attending) -> ${response.status}")
+        return response.status == HttpStatusCode.OK
     }
 
     /**

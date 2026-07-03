@@ -7,6 +7,8 @@ import com.autom8ed.fibersocial.BuildConfig
 import com.autom8ed.fibersocial.auth.AndroidTokenStorage
 import com.autom8ed.fibersocial.auth.AuthRepository
 import com.autom8ed.fibersocial.auth.RavelryOAuthClient
+import com.autom8ed.fibersocial.events.EventDetailViewModel
+import com.autom8ed.fibersocial.events.EventsViewModel
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.android.Android
 import io.ktor.client.plugins.HttpTimeout
@@ -44,9 +46,16 @@ class FeedAndroidViewModel(app: Application) : AndroidViewModel(app) {
     private val repository = FeedRepository(apiClient)
     val feed = FeedViewModel(repository, viewModelScope)
     val topicDetail = TopicDetailViewModel(apiClient, viewModelScope)
+    val events = EventsViewModel(apiClient, viewModelScope)
+    val eventDetail = EventDetailViewModel(apiClient, viewModelScope)
 
-    /** Emits when either the feed or topic detail encounters a session expiry. */
-    val sessionExpired: Flow<Unit> = merge(feed.sessionExpired, topicDetail.sessionExpired)
+    /** Emits when any screen's data source encounters a session expiry. */
+    val sessionExpired: Flow<Unit> = merge(
+        feed.sessionExpired,
+        topicDetail.sessionExpired,
+        events.sessionExpired,
+        eventDetail.sessionExpired,
+    )
 
     fun load() = feed.load()
 

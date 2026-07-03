@@ -1,17 +1,23 @@
 package com.autom8ed.fibersocial.feed
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -29,6 +35,7 @@ import androidx.compose.material3.DrawerState
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -37,9 +44,14 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import com.autom8ed.fibersocial.BuildConfig
 import com.autom8ed.fibersocial.debug.DebugPanel
+import com.autom8ed.fibersocial.events.EventDetailScreen
+import com.autom8ed.fibersocial.events.EventsScreen
+import com.autom8ed.fibersocial.events.EventsState
+import com.autom8ed.fibersocial.events.GroupEvent
 import com.autom8ed.fibersocial.feed.models.FeedItem
 import com.autom8ed.fibersocial.feed.models.Group
 import kotlinx.coroutines.launch
@@ -49,7 +61,30 @@ import kotlinx.coroutines.launch
 fun FeedScreen(viewModel: FeedAndroidViewModel) {
     val state by viewModel.feed.state.collectAsState()
     val topicDetailState by viewModel.topicDetail.state.collectAsState()
+    val eventsState by viewModel.events.state.collectAsState()
+    val eventDetailState by viewModel.eventDetail.state.collectAsState()
     var selectedTopic by remember { mutableStateOf<FeedItem.DiscussionTopic?>(null) }
+    var selectedEvent by remember { mutableStateOf<GroupEvent?>(null) }
+    var eventsGroup by remember { mutableStateOf<Group?>(null) }
+
+    val groups = when (val s = state) {
+        is FeedState.Loaded -> s.groups
+        is FeedState.Refreshing -> s.stale.groups
+        else -> emptyList()
+    }
+
+    // Scrape events in the background as soon as the groups are known so the drawer's
+    // per-group calendar badges are populated by the time it opens.
+    LaunchedEffect(groups) {
+        if (groups.isNotEmpty()) viewModel.events.load(groups)
+    }
+
+    // Per-group upcoming-event counts for the drawer badges. Events listed by several
+    // groups are attributed to the first group that listed them (see EventsViewModel).
+    val eventCounts: Map<Long, Int> = when (val s = eventsState) {
+        is EventsState.Loaded -> s.events.groupingBy { it.group.id }.eachCount()
+        else -> emptyMap()
+    }
 
     if (selectedTopic != null) {
         TopicDetailScreen(
@@ -57,6 +92,30 @@ fun FeedScreen(viewModel: FeedAndroidViewModel) {
             postsState = topicDetailState,
             onBack = { selectedTopic = null },
             onVote = { post, type -> viewModel.topicDetail.toggleVote(post, type) },
+        )
+        return
+    }
+
+    if (selectedEvent != null) {
+        val attendees by viewModel.eventDetail.attendees.collectAsState()
+        EventDetailScreen(
+            state = eventDetailState,
+            attendees = attendees,
+            onBack = { selectedEvent = null },
+            onToggleAttendance = { viewModel.eventDetail.toggleAttendance() },
+        )
+        return
+    }
+
+    if (eventsGroup != null) {
+        EventsScreen(
+            state = eventsState,
+            group = eventsGroup!!,
+            onBack = { eventsGroup = null },
+            onEventClick = { groupEvent ->
+                viewModel.eventDetail.load(groupEvent.event.permalink)
+                selectedEvent = groupEvent
+            },
         )
         return
     }
@@ -73,12 +132,6 @@ fun FeedScreen(viewModel: FeedAndroidViewModel) {
         else -> "FiberSocial"
     }
 
-    val groups = when (val s = state) {
-        is FeedState.Loaded -> s.groups
-        is FeedState.Refreshing -> s.stale.groups
-        else -> emptyList()
-    }
-
     val selectedGroup = when (val s = state) {
         is FeedState.Loaded -> s.selectedGroup
         is FeedState.Refreshing -> s.stale.selectedGroup
@@ -91,9 +144,14 @@ fun FeedScreen(viewModel: FeedAndroidViewModel) {
             GroupDrawer(
                 groups = groups,
                 selectedGroup = selectedGroup,
+                eventCounts = eventCounts,
                 onGroupSelected = { group ->
                     scope.launch { drawerState.close() }
                     viewModel.feed.selectGroup(group)
+                },
+                onGroupEventsClick = { group ->
+                    scope.launch { drawerState.close() }
+                    eventsGroup = group
                 },
             )
         },
@@ -167,7 +225,9 @@ fun FeedScreen(viewModel: FeedAndroidViewModel) {
 private fun GroupDrawer(
     groups: List<Group>,
     selectedGroup: Group?,
+    eventCounts: Map<Long, Int>,
     onGroupSelected: (Group?) -> Unit,
+    onGroupEventsClick: (Group) -> Unit,
 ) {
     ModalDrawerSheet {
         LazyColumn {
@@ -190,15 +250,52 @@ private fun GroupDrawer(
                 }
             }
             items(groups, key = { it.id }) { group ->
+                val eventCount = eventCounts[group.id] ?: 0
                 NavigationDrawerItem(
                     label = { Text(group.name) },
                     selected = selectedGroup?.id == group.id,
                     onClick = { onGroupSelected(group) },
+                    badge = if (eventCount > 0) {
+                        {
+                            GroupEventsBadge(
+                                count = eventCount,
+                                onClick = { onGroupEventsClick(group) },
+                            )
+                        }
+                    } else null,
                     modifier = Modifier.padding(horizontal = 12.dp),
                 )
             }
             item { Spacer(Modifier.height(16.dp)) }
         }
+    }
+}
+
+/**
+ * Calendar icon + upcoming-event count shown at the trailing edge of a drawer group row.
+ * Tapping it opens that group's events (the row itself still selects the feed filter).
+ */
+@Composable
+private fun GroupEventsBadge(count: Int, onClick: () -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+    ) {
+        Icon(
+            Icons.Default.DateRange,
+            contentDescription = "Upcoming events",
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(18.dp),
+        )
+        Spacer(Modifier.width(4.dp))
+        Text(
+            text = count.toString(),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.primary,
+        )
     }
 }
 

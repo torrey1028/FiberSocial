@@ -25,7 +25,8 @@ kotlin {
             implementation("io.ktor:ktor-serialization-kotlinx-json:2.3.12")
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1")
             implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.1")
-            implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.6.0")
+            // api: EventSummary/EventDetail expose kotlinx.datetime.LocalDateTime to consumers.
+            api("org.jetbrains.kotlinx:kotlinx-datetime:0.6.0")
         }
         commonTest.dependencies {
             implementation(kotlin("test"))

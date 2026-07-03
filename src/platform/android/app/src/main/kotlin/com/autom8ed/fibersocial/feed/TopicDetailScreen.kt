@@ -37,7 +37,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
-import coil.compose.AsyncImage
+import com.autom8ed.fibersocial.ui.Avatar
 import com.autom8ed.fibersocial.feed.html.HtmlPostParser
 import com.autom8ed.fibersocial.feed.models.FeedItem
 import com.autom8ed.fibersocial.feed.models.Post
@@ -183,15 +183,7 @@ private fun VoteButton(emoji: String, count: Int, voted: Boolean, onClick: () ->
 @Composable
 private fun AuthorRow(user: RavelryUser?, timestamp: String?) {
     Row(verticalAlignment = Alignment.CenterVertically) {
-        AsyncImage(
-            model = user?.avatarUrl,
-            contentDescription = null,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier
-                .size(32.dp)
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.surfaceVariant),
-        )
+        Avatar(url = user?.avatarUrl, size = 32.dp)
         Spacer(Modifier.width(8.dp))
         Column {
             Text(

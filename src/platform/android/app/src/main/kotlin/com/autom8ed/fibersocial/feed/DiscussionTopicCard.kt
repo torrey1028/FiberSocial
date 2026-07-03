@@ -22,7 +22,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import coil.compose.AsyncImage
+import com.autom8ed.fibersocial.ui.Avatar
 import com.autom8ed.fibersocial.feed.models.FeedItem
 import java.time.Duration
 import java.time.OffsetDateTime
@@ -58,15 +58,7 @@ fun DiscussionTopicCard(
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
             Row(verticalAlignment = Alignment.Top) {
-                AsyncImage(
-                    model = item.author.avatarUrl,
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier
-                        .size(40.dp)
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.surfaceVariant),
-                )
+                Avatar(url = item.author.avatarUrl, size = 40.dp)
                 Spacer(modifier = Modifier.width(10.dp))
                 Column {
                     Text(
