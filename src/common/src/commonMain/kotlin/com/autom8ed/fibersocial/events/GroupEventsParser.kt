@@ -29,10 +29,7 @@ object GroupEventsParser {
 
     private fun parseEvent(event: Element): EventSummary? {
         val link = event.selectFirst("div.what a") ?: return null
-        val permalink = link.attr("href")
-            .substringAfter("/events/", missingDelimiterValue = "")
-            .substringBefore('/')
-        if (permalink.isEmpty()) return null
+        val permalink = eventPermalinkFromHref(link.attr("href")) ?: return null
 
         val whenText = event.selectFirst("div.when")?.text().orEmpty()
         return EventSummary(
@@ -51,11 +48,6 @@ object GroupEventsParser {
 
     private val ATTENDEES_REGEX = Regex("""(\d+)\s+(?:person|people)""")
 
-    private val MONTHS = listOf(
-        "january", "february", "march", "april", "may", "june",
-        "july", "august", "september", "october", "november", "december",
-    )
-
     /**
      * Parses Ravelry's listing date format (`"July 8, 2026 @ 5:30 PM"`) into a venue-local
      * [LocalDateTime]. Returns null for anything else (e.g. multi-day festival ranges).
@@ -63,7 +55,7 @@ object GroupEventsParser {
     internal fun parseEventDateTime(whenText: String): LocalDateTime? {
         val match = WHEN_REGEX.find(whenText) ?: return null
         val (monthName, day, year, hour12, minute, amPm) = match.destructured
-        val month = MONTHS.indexOf(monthName.lowercase()) + 1
+        val month = monthNumber(monthName)
         if (month == 0) return null
         val hour = when {
             amPm.uppercase() == "AM" -> if (hour12.toInt() == 12) 0 else hour12.toInt()

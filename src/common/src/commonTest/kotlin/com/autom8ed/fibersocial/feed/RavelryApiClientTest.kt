@@ -610,6 +610,60 @@ class RavelryApiClientTest {
     }
 
     @Test
+    fun `getSavedEvents scrapes the saved-events page with the session cookie`() = runTest {
+        var requestedUrl = ""
+        var sentCookie: String? = null
+        val engine = MockEngine { request ->
+            requestedUrl = request.url.toString()
+            sentCookie = request.headers[HttpHeaders.Cookie]
+            respond(
+                """<div class="event_list" id="event_list">
+                   <div class="month">July 2026</div>
+                   <div class="event"><div class="date"><div class="day">5th</div></div>
+                   <div class="details"><a href="https://www.ravelry.com/events/cozy-meetup" class="title">Cozy Meetup</a></div>
+                   </div></div>""",
+                HttpStatusCode.OK,
+                headersOf("Content-Type", ContentType.Text.Html.toString()),
+            )
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val client = RavelryApiClient(httpClient, FakeFeedTokenStorage())
+
+        val saved = client.getSavedEvents()
+
+        assertEquals("https://www.ravelry.com/events/saved", requestedUrl)
+        assertEquals("sess=test", sentCookie)
+        assertEquals(listOf("cozy-meetup"), saved.map { it.permalink })
+    }
+
+    @Test
+    fun `getSavedEvents throws SessionExpiredException on 401`() = runTest {
+        val client = htmlApiClient(MockEngine { _ ->
+            respond("", HttpStatusCode.Unauthorized)
+        })
+        assertFailsWith<SessionExpiredException> { client.getSavedEvents() }
+    }
+
+    @Test
+    fun `getSavedEvents rejects a redirect to another events page`() = runTest {
+        // A session-limited redirect to /events/search renders similar markup that
+        // would otherwise parse as a bogus RSVP list — the exact /events/saved
+        // prefix must treat it as session expiry, not data.
+        val client = htmlApiClient(MockEngine { request ->
+            if (request.url.encodedPath == "/events/saved") {
+                respond("", HttpStatusCode.Found,
+                    headersOf(HttpHeaders.Location, "https://www.ravelry.com/events/search"))
+            } else {
+                respond("<div class=\"event_list\"></div>", HttpStatusCode.OK,
+                    headersOf("Content-Type", ContentType.Text.Html.toString()))
+            }
+        })
+        assertFailsWith<SessionExpiredException> { client.getSavedEvents() }
+    }
+
+    @Test
     fun `setEventAttendance false posts to unattend and reports rejection`() = runTest {
         var requestedUrl = ""
         val engine = MockEngine { request ->
