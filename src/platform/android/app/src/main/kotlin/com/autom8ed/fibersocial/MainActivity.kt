@@ -26,8 +26,10 @@ import com.autom8ed.fibersocial.feed.FeedScreen
 import com.autom8ed.fibersocial.login.AuthAndroidViewModel
 import com.autom8ed.fibersocial.login.LoginScreen
 import com.autom8ed.fibersocial.login.WebViewLoginScreen
+import com.autom8ed.fibersocial.notifications.AndroidNotificationSettingsStore
 import com.autom8ed.fibersocial.notifications.EXTRA_EVENT_PERMALINK
 import com.autom8ed.fibersocial.notifications.EventNotifier
+import com.autom8ed.fibersocial.notifications.EventSyncWorker
 import kotlinx.coroutines.flow.MutableStateFlow
 
 class MainActivity : ComponentActivity() {
@@ -81,7 +83,13 @@ class MainActivity : ComponentActivity() {
                             CircularProgressIndicator()
                         }
                     is AuthState.Authenticated -> {
-                        LaunchedEffect(Unit) { feedVm.load() }
+                        LaunchedEffect(Unit) {
+                            feedVm.load()
+                            EventSyncWorker.schedulePeriodic(
+                                this@MainActivity,
+                                AndroidNotificationSettingsStore(this@MainActivity).load().pollIntervalHours,
+                            )
+                        }
                         // On session expiry: show WebView login before clearing auth so there's no
                         // LoginScreen flash between the state change and the WebView appearing.
                         LaunchedEffect(feedVm) {

@@ -79,10 +79,12 @@ dependencies {
     implementation("io.ktor:ktor-serialization-kotlinx-json:2.3.12")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.1")
     implementation("io.coil-kt:coil-compose:2.7.0")
+    implementation("androidx.work:work-runtime-ktx:2.9.1")
     testImplementation(kotlin("test"))
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.robolectric:robolectric:4.12.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
+    testImplementation("androidx.work:work-testing:2.9.1")
     testImplementation(composeBom)
     testImplementation("androidx.compose.ui:ui-test-junit4")
     // Registers the test ComponentActivity that createAndroidComposeRule launches.

@@ -20,6 +20,7 @@ import androidx.compose.ui.unit.dp
 @Composable
 fun DebugPanel(
     onForceSessionExpiry: () -> Unit,
+    onRunEventSync: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     ModalBottomSheet(
@@ -43,6 +44,12 @@ fun DebugPanel(
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text("Force Session Expiry")
+            }
+            TextButton(
+                onClick = { onRunEventSync(); onDismiss() },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Run Event Sync Now")
             }
             Spacer(Modifier.height(16.dp))
         }
