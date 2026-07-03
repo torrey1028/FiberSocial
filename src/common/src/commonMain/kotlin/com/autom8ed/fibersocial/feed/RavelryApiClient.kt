@@ -43,7 +43,11 @@ import kotlinx.serialization.json.Json
 
 private const val BASE_URL = "https://api.ravelry.com"
 private const val WWW_URL = "https://www.ravelry.com"
-private val lenientJson = Json { ignoreUnknownKeys = true }
+// coerceInputValues: Ravelry sometimes returns an explicit JSON null for a field our model
+// treats as non-nullable-with-default (e.g. forum_post.editable is null right after a reply
+// is created). Without this, kotlinx.serialization throws on the null instead of falling back
+// to the default — a field default only applies when the key is absent, not when it is null.
+private val lenientJson = Json { ignoreUnknownKeys = true; coerceInputValues = true }
 
 // Ravelry has no API endpoint for "groups this user is a member of".
 // We scrape the memberships page on www.ravelry.com using the session cookie
