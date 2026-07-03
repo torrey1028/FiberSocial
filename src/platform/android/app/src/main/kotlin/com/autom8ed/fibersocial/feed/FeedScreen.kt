@@ -59,7 +59,9 @@ import com.autom8ed.fibersocial.events.EventsState
 import com.autom8ed.fibersocial.feed.models.FeedItem
 import com.autom8ed.fibersocial.feed.models.Group
 import com.autom8ed.fibersocial.feed.models.RavelryUser
+import com.autom8ed.fibersocial.notifications.AndroidNotificationSettingsStore
 import com.autom8ed.fibersocial.notifications.EventSyncWorker
+import com.autom8ed.fibersocial.notifications.NotificationSettings
 import com.autom8ed.fibersocial.settings.SettingsScreen
 import com.autom8ed.fibersocial.ui.UserAvatar
 import kotlinx.coroutines.launch
@@ -120,10 +122,26 @@ fun FeedScreen(
     }
 
     if (showSettings) {
+        val context = LocalContext.current
+        val settingsStore = remember { AndroidNotificationSettingsStore(context) }
+        var pollIntervalHours by remember { mutableStateOf<Int?>(null) }
+        // effective: a stale/corrupt persisted value renders as the clamped default
+        // rather than an off-menu cadence the dialog can't represent.
+        LaunchedEffect(Unit) { pollIntervalHours = settingsStore.load().effectivePollIntervalHours }
+        val settingsScope = rememberCoroutineScope()
         SettingsScreen(
             user = user,
             onBack = { showSettings = false },
             onSignOut = onLogout,
+            pollIntervalHours = pollIntervalHours,
+            onPollIntervalSelected = { hours ->
+                pollIntervalHours = hours
+                settingsScope.launch {
+                    settingsStore.save(NotificationSettings(pollIntervalHours = hours))
+                    // UPDATE policy re-registers the periodic sync at the new cadence.
+                    EventSyncWorker.schedulePeriodic(context, hours)
+                }
+            },
         )
         return
     }
