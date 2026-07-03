@@ -142,13 +142,13 @@ private fun EventDetailContent(
     }
 }
 
-/** Save/unsave toggle, mirroring the site's "save event" / "event saved" button. */
+/** RSVP toggle — the site calls this saving an event ("save event" / "event saved"). */
 @Composable
 private fun AttendButton(attending: Boolean, onClick: () -> Unit) {
     if (attending) {
-        Button(onClick = onClick) { Text("✓ Event saved") }
+        Button(onClick = onClick) { Text("✓ Going") }
     } else {
-        OutlinedButton(onClick = onClick) { Text("Save event") }
+        OutlinedButton(onClick = onClick) { Text("RSVP") }
     }
 }
 
