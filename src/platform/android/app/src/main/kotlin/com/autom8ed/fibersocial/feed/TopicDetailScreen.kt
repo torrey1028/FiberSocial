@@ -22,6 +22,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.AlertDialog
@@ -48,6 +50,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.unit.dp
 import com.autom8ed.fibersocial.feed.html.HtmlPostParser
 import com.autom8ed.fibersocial.feed.models.FeedItem
@@ -101,13 +105,14 @@ fun TopicDetailScreen(
             onDismiss = onDeleteErrorShown,
         )
     }
-    if (editState is EditState.Error) {
-        PostActionErrorDialog(
-            title = "Couldn't save your edit",
-            message = editState.message,
-            onDismiss = onEditErrorShown,
-        )
-    }
+    // The post currently being edited, if any. Drives the bottom edit bar (below) instead
+    // of a modal dialog so the text field and its confirm/cancel controls sit directly
+    // above the keyboard rather than being covered by it. Saveable as an ID so the bar
+    // (and its draft) survives rotation; resolving through the loaded posts also
+    // auto-dismisses it if the post vanishes.
+    var editingPostId by rememberSaveable { mutableStateOf<Long?>(null) }
+    val editingPost = (postsState as? TopicDetailState.Loaded)
+        ?.posts?.firstOrNull { it.id == editingPostId }
     // The system back button must mirror the top-bar back arrow instead of
     // finishing the activity (issue #38).
     BackHandler(onBack = onBack)
@@ -140,11 +145,24 @@ fun TopicDetailScreen(
             )
         },
         bottomBar = {
-            ReplyComposer(
-                replyState = replyState,
-                onSend = onSendReply,
-                onSent = onReplySent,
-            )
+            val editing = editingPost
+            if (editing != null) {
+                EditBar(
+                    post = editing,
+                    editState = editState,
+                    onSave = { newBody -> onEditPost(editing, newBody) },
+                    onClose = {
+                        onEditErrorShown()
+                        editingPostId = null
+                    },
+                )
+            } else {
+                ReplyComposer(
+                    replyState = replyState,
+                    onSend = onSendReply,
+                    onSent = onReplySent,
+                )
+            }
         },
     ) { padding ->
         PullToRefreshBox(
@@ -211,13 +229,11 @@ fun TopicDetailScreen(
                             // See Post.editable and issue #82 for the non-editable-null 403 gap.
                             canEdit = mine && post.editable != false,
                             saving = (editState as? EditState.Saving)?.postId == post.id,
-                            saveFailed = editState is EditState.Error,
-                            // One edit/delete at a time (the ViewModel enforces it): while
-                            // any post's operation is in flight, other posts' actions are
-                            // disabled instead of silently dropping taps.
-                            actionsEnabled = deleteState !is DeleteState.Deleting &&
-                                editState !is EditState.Saving,
-                            onEdit = { newBody -> onEditPost(post, newBody) },
+                            // One delete at a time (the ViewModel enforces it): while a
+                            // delete is in flight, other posts' actions are disabled
+                            // instead of silently dropping taps.
+                            actionsEnabled = deleteState !is DeleteState.Deleting,
+                            onEdit = { editingPostId = post.id },
                         )
                         HorizontalDivider()
                     }
@@ -236,20 +252,9 @@ internal fun ReplyItem(
     onDelete: () -> Unit = {},
     canEdit: Boolean = false,
     saving: Boolean = false,
-    saveFailed: Boolean = false,
     actionsEnabled: Boolean = true,
-    onEdit: (String) -> Unit = {},
+    onEdit: () -> Unit = {},
 ) {
-    // Saveable: scrolling the item out of a LazyColumn (or rotating) disposes plain
-    // remember state, which would silently discard an in-progress edit.
-    var editing by rememberSaveable(post.id) { mutableStateOf(false) }
-    // Leave edit mode only when a save SUCCEEDS (saving -> Idle). A failed save
-    // (saving -> Error) keeps the editor open so the edited text isn't lost —
-    // same contract as the reply composer.
-    val wasSaving = remember { mutableStateOf(false) }
-    if (wasSaving.value && !saving && !saveFailed) editing = false
-    wasSaving.value = saving
-
     Column(modifier = Modifier.padding(vertical = 12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(modifier = Modifier.weight(1f)) {
@@ -259,7 +264,7 @@ internal fun ReplyItem(
                 CircularProgressIndicator(modifier = Modifier.size(24.dp))
             } else {
                 if (canEdit) {
-                    IconButton(onClick = { editing = !editing }, enabled = actionsEnabled) {
+                    IconButton(onClick = onEdit, enabled = actionsEnabled) {
                         Icon(
                             Icons.Default.Edit,
                             contentDescription = "Edit post",
@@ -278,42 +283,80 @@ internal fun ReplyItem(
                 }
             }
         }
-        if (editing) {
-            PostEditor(
-                initial = post.body,
-                onCancel = { editing = false },
-                onSave = onEdit,
-            )
-        } else {
-            if (post.bodyHtml.isNotBlank()) {
-                Spacer(Modifier.height(8.dp))
-                PostBody(document = remember(post.bodyHtml) { HtmlPostParser.parse(post.bodyHtml) })
-            }
+        if (post.bodyHtml.isNotBlank()) {
             Spacer(Modifier.height(8.dp))
-            VoteRow(post = post, onVote = onVote)
+            PostBody(document = remember(post.bodyHtml) { HtmlPostParser.parse(post.bodyHtml) })
         }
+        Spacer(Modifier.height(8.dp))
+        VoteRow(post = post, onVote = onVote)
     }
 }
 
+/**
+ * Edit bar that replaces the reply composer in the bottom bar while a post is being
+ * edited, so its text field and confirm/cancel controls stay above the keyboard.
+ * Auto-closes once the save for this post succeeds; on failure it stays open with the
+ * edited text preserved and an inline error.
+ */
 @Composable
-private fun PostEditor(initial: String, onCancel: () -> Unit, onSave: (String) -> Unit) {
-    // Saveable for the same reason as `editing`: the draft must survive the item
-    // scrolling out of composition and configuration changes.
-    var text by rememberSaveable(initial) { mutableStateOf(initial) }
-    Column {
-        Spacer(Modifier.height(8.dp))
-        OutlinedTextField(
-            value = text,
-            onValueChange = { text = it },
-            modifier = Modifier.fillMaxWidth(),
-            maxLines = 8,
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            TextButton(onClick = onCancel) { Text("Cancel") }
-            TextButton(
-                onClick = { onSave(text) },
-                enabled = text.isNotBlank() && text.trim() != initial.trim(),
-            ) { Text("Save") }
+private fun EditBar(
+    post: Post,
+    editState: EditState,
+    onSave: (String) -> Unit,
+    onClose: () -> Unit,
+) {
+    var text by rememberSaveable(post.id) { mutableStateOf(post.body) }
+    val saving = editState is EditState.Saving && editState.postId == post.id
+    val error = editState is EditState.Error
+    val focusRequester = remember { FocusRequester() }
+
+    // Close only when this post's save completes (Saving -> Idle). An Error keeps the bar open.
+    val wasSaving = remember { mutableStateOf(false) }
+    LaunchedEffect(saving, error) {
+        if (wasSaving.value && !saving && !error) onClose()
+        if (saving) wasSaving.value = true
+    }
+    LaunchedEffect(post.id) { runCatching { focusRequester.requestFocus() } }
+
+    Surface(tonalElevation = 3.dp) {
+        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
+            if (error) {
+                Text(
+                    text = (editState as? EditState.Error)?.message
+                        ?.ifBlank { "Couldn't save your edit. Try again." }
+                        ?: "Couldn't save your edit. Try again.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(bottom = 4.dp),
+                )
+            }
+            Row(verticalAlignment = Alignment.Bottom) {
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    label = { Text("Editing") },
+                    enabled = !saving,
+                    modifier = Modifier.weight(1f).focusRequester(focusRequester),
+                    maxLines = 4,
+                )
+                Spacer(Modifier.width(4.dp))
+                if (saving) {
+                    CircularProgressIndicator(modifier = Modifier.size(32.dp).padding(4.dp))
+                } else {
+                    IconButton(onClick = onClose) {
+                        Icon(Icons.Default.Close, contentDescription = "Cancel edit")
+                    }
+                    IconButton(
+                        onClick = { onSave(text) },
+                        // Also gated on the global Saving state: the ViewModel runs one
+                        // edit at a time and would silently drop a second post's save.
+                        enabled = text.isNotBlank() && text.trim() != post.body.trim() &&
+                            editState !is EditState.Saving,
+                    ) {
+                        Icon(Icons.Default.Check, contentDescription = "Save edit")
+                    }
+                }
+            }
         }
     }
 }
