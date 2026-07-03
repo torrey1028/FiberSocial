@@ -23,6 +23,7 @@ jobs:
         run: |
           echo "sdk.dir=$ANDROID_HOME" > src/platform/android/local.properties
           echo "ravelry.client_id=${{ secrets.RAVELRY_CLIENT_ID }}" >> src/platform/android/local.properties
+          echo "ravelry.client_secret=${{ secrets.RAVELRY_CLIENT_SECRET }}" >> src/platform/android/local.properties
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
