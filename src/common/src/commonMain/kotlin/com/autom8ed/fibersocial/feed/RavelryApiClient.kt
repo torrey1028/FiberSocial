@@ -1,5 +1,6 @@
 package com.autom8ed.fibersocial.feed
 
+import com.autom8ed.fibersocial.auth.ForbiddenException
 import com.autom8ed.fibersocial.auth.SessionExpiredException
 import com.autom8ed.fibersocial.auth.TokenStorage
 import com.autom8ed.fibersocial.events.EventAttendee
@@ -61,8 +62,10 @@ private val TRAILING_DISAMBIGUATOR_REGEX = Regex("""-\d+$""")
  * @param httpClient Ktor client with JSON content negotiation configured.
  * @param tokenStorage Source of the Bearer token and session cookie.
  * @param refreshToken Suspend callback that refreshes the access token and saves the
- *   new token to [tokenStorage]. Called on 401/403 responses and proactively when
+ *   new token to [tokenStorage]. Called on 401 responses and proactively when
  *   the token is within 60 seconds of expiry. Pass `null` to disable auto-refresh.
+ *   403 responses are never treated as an expired session — a valid token without
+ *   permission surfaces as [ForbiddenException] instead.
  */
 class RavelryApiClient(
     private val httpClient: HttpClient,
@@ -85,16 +88,30 @@ class RavelryApiClient(
         }
 
         val response = block()
-        if (response.status == HttpStatusCode.Unauthorized || response.status == HttpStatusCode.Forbidden) {
+        // 403 means the token is valid but lacks permission (e.g. missing OAuth scope,
+        // moderator-only action). Refreshing or re-logging-in cannot fix it, so it must
+        // not be classified as session expiry (issue #82).
+        if (response.status == HttpStatusCode.Forbidden) {
+            throw ForbiddenException(forbiddenMessage(response))
+        }
+        if (response.status == HttpStatusCode.Unauthorized) {
             tryRefresh()
             val retried = block()
-            if (retried.status == HttpStatusCode.Unauthorized || retried.status == HttpStatusCode.Forbidden) {
+            if (retried.status == HttpStatusCode.Unauthorized) {
                 throw SessionExpiredException("Session expired")
+            }
+            if (retried.status == HttpStatusCode.Forbidden) {
+                throw ForbiddenException(forbiddenMessage(retried))
             }
             return retried.bodyAsText()
         }
         return response.bodyAsText()
     }
+
+    // Deliberately avoids the literal status code: parts of the UI pattern-match
+    // "401"/"403" in error messages to detect expired sessions.
+    private fun forbiddenMessage(response: HttpResponse): String =
+        "Permission denied for ${response.request.url.encodedPath}"
 
     private suspend fun tryRefresh() {
         val doRefresh = refreshToken ?: throw SessionExpiredException("Session expired")
