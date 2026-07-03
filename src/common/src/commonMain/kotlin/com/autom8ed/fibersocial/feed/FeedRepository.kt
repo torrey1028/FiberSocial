@@ -1,9 +1,13 @@
 package com.autom8ed.fibersocial.feed
 
+import com.autom8ed.fibersocial.auth.SessionExpiredException
+import kotlinx.coroutines.CancellationException
 import com.autom8ed.fibersocial.feed.models.FeedItem
 import com.autom8ed.fibersocial.feed.models.Group
+import com.autom8ed.fibersocial.feed.models.Post
 import com.autom8ed.fibersocial.feed.models.RavelryUser
 import com.autom8ed.fibersocial.feed.models.Topic
+import com.fleeksoft.ksoup.Ksoup
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -40,14 +44,38 @@ class FeedRepository(private val apiClient: RavelryApiClient) {
                 .map { topic ->
                     async {
                         val detail = apiClient.getTopicDetail(topic.id)
-                        detail.toFeedItem(groupId = group.id, groupName = group.name)
+                        // Only discussion cards render reply attribution (project/sticky
+                        // topics map to other card types that discard it), and only topics
+                        // with replies have a latest reply distinct from the opening post;
+                        // skip the extra request otherwise.
+                        val wantsLatestReply =
+                            detail.postsCount > 1 && detail.imagesCount == 0 && !detail.sticky
+                        val latestReply = if (wantsLatestReply) latestPostOrNull(detail.id) else null
+                        detail.toFeedItem(groupId = group.id, groupName = group.name, latestReply = latestReply)
                     }
                 }
                 .awaitAll()
         }.sortedByDescending { it.lastPostAt }
     }
 
-    private fun Topic.toFeedItem(groupId: Long, groupName: String): FeedItem {
+    /**
+     * Best-effort fetch of a topic's newest post. A failure here degrades the card to
+     * opening-post attribution rather than failing the whole feed — except session
+     * expiry, which must propagate so the auth flow can take over.
+     */
+    private suspend fun latestPostOrNull(topicId: Long): Post? = try {
+        apiClient.getLatestPost(topicId)
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: SessionExpiredException) {
+        throw e
+    } catch (e: Exception) {
+        println("FiberSocial: latestPostOrNull($topicId) failed: ${e.message}")
+        null
+    }
+
+    private fun Topic.toFeedItem(groupId: Long, groupName: String, latestReply: Post? = null): FeedItem {
+        val attributableReply = latestReply?.takeIf { it.user != null }
         val author = createdByUser ?: RavelryUser(username = "unknown")
         val full = summary ?: ""
         val preview = full.take(200)
@@ -84,7 +112,15 @@ class FeedRepository(private val apiClient: RavelryApiClient) {
                 bodyPreview = preview,
                 bodySummary = full,
                 replyCount = postsCount,
+                // Author and preview stand or fall together: a reply whose user is
+                // missing must not show its text attributed to the opening poster.
+                latestReplyAuthor = attributableReply?.user,
+                latestReplyPreview = attributableReply?.let { htmlPreview(it.bodyHtml) },
             )
         }
     }
+
+    /** Plain-text excerpt of a post's HTML body, matching the opening-post preview length. */
+    private fun htmlPreview(bodyHtml: String): String =
+        Ksoup.parse(bodyHtml).text().take(200)
 }

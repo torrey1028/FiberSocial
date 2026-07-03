@@ -1,6 +1,5 @@
 package com.autom8ed.fibersocial.feed
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -10,7 +9,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
@@ -18,8 +16,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.autom8ed.fibersocial.ui.Avatar
@@ -58,7 +54,7 @@ fun DiscussionTopicCard(
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
             Row(verticalAlignment = Alignment.Top) {
-                Avatar(url = item.author.avatarUrl, size = 40.dp)
+                Avatar(url = item.displayAuthor.avatarUrl, size = 40.dp)
                 Spacer(modifier = Modifier.width(10.dp))
                 Column {
                     Text(
@@ -67,10 +63,10 @@ fun DiscussionTopicCard(
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                     )
-                    if (item.bodyPreview.isNotBlank()) {
+                    if (item.displayPreview.isNotBlank()) {
                         Spacer(modifier = Modifier.height(2.dp))
                         Text(
-                            text = item.bodyPreview,
+                            text = item.displayPreview,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 2,
@@ -88,7 +84,7 @@ fun DiscussionTopicCard(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = "@${item.author.username}",
+                    text = "@${item.displayAuthor.username}",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

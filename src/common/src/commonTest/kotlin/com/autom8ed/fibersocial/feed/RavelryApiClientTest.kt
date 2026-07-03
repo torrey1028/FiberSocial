@@ -627,6 +627,38 @@ class RavelryApiClientTest {
         assertEquals(false, ok)
         assertEquals("https://www.ravelry.com/events/cozy-meetup/unattend", requestedUrl)
     }
+
+    @Test
+    fun `getLatestPost requests single newest post`() = runTest {
+        var capturedSort: String? = null
+        var capturedPageSize: String? = null
+        var capturedPath: String? = null
+        val engine = MockEngine { request ->
+            capturedPath = request.url.encodedPath
+            capturedSort = request.url.parameters["sort_reverse"]
+            capturedPageSize = request.url.parameters["page_size"]
+            respond(
+                content = latestPostJson(username = "replier"),
+                status = HttpStatusCode.OK,
+                headers = headersOf("Content-Type", ContentType.Application.Json.toString()),
+            )
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val post = RavelryApiClient(httpClient, FakeFeedTokenStorage()).getLatestPost(100L)
+        assertEquals("/topics/100/posts.json", capturedPath)
+        assertEquals("1", capturedSort)
+        assertEquals("1", capturedPageSize)
+        assertEquals("replier", post?.user?.username)
+        assertEquals("<p>Latest <b>reply</b> text</p>", post?.bodyHtml)
+    }
+
+    @Test
+    fun `getLatestPost returns null when topic has no posts`() = runTest {
+        val client = routingApiClient { """{"posts":[]}""" }
+        assertEquals(null, client.getLatestPost(100L))
+    }
 }
 
 private fun htmlApiClient(engine: MockEngine): RavelryApiClient {

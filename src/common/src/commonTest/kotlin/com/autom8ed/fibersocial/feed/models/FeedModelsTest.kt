@@ -160,6 +160,33 @@ class FeedItemTest {
     }
 
     @Test
+    fun `DiscussionTopic display fields fall back to opening post without latest reply`() {
+        val item = FeedItem.DiscussionTopic(
+            id = 4L, groupId = 10L, groupName = "KAL Hub", lastPostAt = "2024-01-13",
+            author = author, title = "T",
+            bodyPreview = "OP preview", bodySummary = "OP preview full",
+            replyCount = 0,
+        )
+        assertEquals(author, item.displayAuthor)
+        assertEquals("OP preview", item.displayPreview)
+    }
+
+    @Test
+    fun `DiscussionTopic display fields prefer the latest reply`() {
+        val replier = RavelryUser(username = "replier")
+        val item = FeedItem.DiscussionTopic(
+            id = 5L, groupId = 10L, groupName = "KAL Hub", lastPostAt = "2024-01-13",
+            author = author, title = "T",
+            bodyPreview = "OP preview", bodySummary = "OP preview full",
+            replyCount = 3,
+            latestReplyAuthor = replier,
+            latestReplyPreview = "Newest reply",
+        )
+        assertEquals(replier, item.displayAuthor)
+        assertEquals("Newest reply", item.displayPreview)
+    }
+
+    @Test
     fun `abstract properties accessible from base type`() {
         val items: List<FeedItem> = listOf(
             FeedItem.ProjectTopic(1L, 10L, "KAL Hub", "2024-01-15", author, "WIP", 1, emptyList(), 2),

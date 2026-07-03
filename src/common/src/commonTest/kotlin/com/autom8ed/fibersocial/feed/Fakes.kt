@@ -89,14 +89,21 @@ fun topicDetailJson(
     sticky: Boolean = false,
     repliedAt: String? = "2024-01-${(id % 28 + 1).toString().padStart(2, '0')}",
     summary: String? = "Summary for topic $id",
+    postsCount: Int = 2,
 ) = """{
   "topic":{
     "id":$id,"title":"Topic $id",
     "forum_images_count":$imagesCount,
     "sticky":$sticky,
-    "forum_posts_count":2,
+    "forum_posts_count":$postsCount,
     "replied_at":${if (repliedAt != null) "\"$repliedAt\"" else "null"},
     "created_by_user":{"username":"yarnie"},
     "summary":${if (summary != null) "\"$summary\"" else "null"}
   }
 }"""
+
+fun latestPostJson(
+    id: Long = 7L,
+    username: String = "replier",
+    bodyHtml: String = "<p>Latest <b>reply</b> text</p>",
+) = """{"posts":[{"id":$id,"body_html":"$bodyHtml","created_at":"2024-01-16T10:00:00Z","user":{"username":"$username","small_photo_url":"https://example.com/r.jpg"}}]}"""
