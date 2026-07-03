@@ -5,6 +5,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.content.pm.PackageManager
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -49,11 +50,14 @@ class EventNotifier(private val context: Context) {
     fun showReminder(eventPermalink: String, eventTitle: String, kind: ReminderKind) {
         val lead = when (kind) {
             ReminderKind.DAY_BEFORE -> "Tomorrow"
-            ReminderKind.SOON -> "Starting in 15 minutes"
+            ReminderKind.SOON -> "Starting in ${kind.offset.inWholeMinutes} minutes"
         }
         post(
             channel = CHANNEL_REMINDERS,
-            id = eventPermalink.hashCode(),
+            // Mask bit cleared: reminders and new-event cards get disjoint ID ranges.
+            // Both reminder kinds share the ID on purpose — the T-15m notification
+            // replaces the stale T-24h one for the same event.
+            id = eventPermalink.hashCode() and NEW_EVENT_ID_MASK.inv(),
             title = lead,
             text = eventTitle,
             eventPermalink = eventPermalink,
@@ -64,8 +68,8 @@ class EventNotifier(private val context: Context) {
     fun showNewEvent(notification: NewEventNotification) {
         post(
             channel = CHANNEL_NEW_EVENTS,
-            // Offset the ID space so a new-event card never collides with a reminder.
-            id = notification.eventPermalink.hashCode() xor NEW_EVENT_ID_MASK,
+            // Mask bit set (reminders clear it): the two kinds can never collide.
+            id = notification.eventPermalink.hashCode() or NEW_EVENT_ID_MASK,
             title = "New event in ${notification.groupName}",
             text = listOf(notification.eventTitle, notification.whenText)
                 .filter { it.isNotBlank() }
@@ -81,6 +85,11 @@ class EventNotifier(private val context: Context) {
         }
         val tapIntent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            // Distinct data URIs keep different events' PendingIntents distinct
+            // (Intent.filterEquals) even if their requestCode hashes collide —
+            // otherwise a collision would silently rewrite the shared intent's
+            // extras and a tap could deep-link to the wrong event.
+            data = Uri.parse("fibersocial://event/$eventPermalink")
             putExtra(EXTRA_EVENT_PERMALINK, eventPermalink)
         }
         val pending = PendingIntent.getActivity(
@@ -96,7 +105,10 @@ class EventNotifier(private val context: Context) {
             .setContentIntent(pending)
             .setAutoCancel(true)
             .build()
-        NotificationManagerCompat.from(context).notify(id, notification)
+        // The permalink tag scopes replacement to the same event: the SOON reminder
+        // still replaces DAY_BEFORE (same tag + id), but an id hash collision between
+        // two different events can no longer replace the wrong notification.
+        NotificationManagerCompat.from(context).notify(eventPermalink, id, notification)
     }
 
     private fun canNotify(): Boolean =
@@ -107,7 +119,9 @@ class EventNotifier(private val context: Context) {
             NotificationManagerCompat.from(context).areNotificationsEnabled()
         }
 
-    private companion object {
-        const val NEW_EVENT_ID_MASK = 0x40000000
+    companion object {
+        /** Set on every new-event ID, cleared on every reminder ID — the two
+         *  notification kinds can never collide. Internal for the invariant test. */
+        internal const val NEW_EVENT_ID_MASK = 0x40000000
     }
 }

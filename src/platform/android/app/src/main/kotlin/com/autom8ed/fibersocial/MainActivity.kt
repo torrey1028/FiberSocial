@@ -45,7 +45,12 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         EventNotifier(this).ensureChannels()
         requestNotificationPermissionIfNeeded()
-        deepLinkEvent.value = intent.getStringExtra(EXTRA_EVENT_PERMALINK)
+        // Only a genuinely new launch carries a fresh notification tap: on recreation
+        // (rotation, process restore) the retained launch intent would replay a deep
+        // link the user already consumed and dismissed.
+        if (savedInstanceState == null) {
+            deepLinkEvent.value = intent.getStringExtra(EXTRA_EVENT_PERMALINK)
+        }
         setContent {
             MaterialTheme {
                 val authState by authVm.auth.state.collectAsState()
@@ -105,6 +110,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        // Adopt the new intent so a later recreation doesn't resurrect the extras of
+        // whatever intent originally launched the activity.
+        setIntent(intent)
         deepLinkEvent.value = intent.getStringExtra(EXTRA_EVENT_PERMALINK)
     }
 

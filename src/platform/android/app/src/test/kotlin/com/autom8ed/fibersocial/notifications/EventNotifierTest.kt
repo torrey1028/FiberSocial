@@ -3,7 +3,6 @@ package com.autom8ed.fibersocial.notifications
 import android.app.Application
 import android.app.NotificationManager
 import android.content.Context
-import android.content.pm.PackageManager
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -80,6 +79,25 @@ class EventNotifierTest {
         val titles = all.map { shadowOf(it).contentTitle.toString() }
         assertTrue("New event in Kirkland Fiber Arts Circle" in titles)
         assertNotEquals(titles[0], titles[1])
+    }
+
+    @Test
+    fun `reminder ids clear the mask bit and new-event ids set it`() {
+        // The old xor scheme only flipped the bit, so a reminder for one event could
+        // collide with the new-event card of another. The invariant that prevents any
+        // cross-type collision: reminders always clear the bit, new events always set it.
+        val trickyPermalink = generateSequence(0) { it + 1 }
+            .map { "event-$it" }
+            .first { it.hashCode() and EventNotifier.NEW_EVENT_ID_MASK != 0 }
+        notifier.showReminder(trickyPermalink, "T", ReminderKind.SOON)
+        notifier.showNewEvent(
+            NewEventNotification("plain-event", "T", "Group", "July 10"),
+        )
+
+        val ids = manager.activeNotifications.map { it.id }
+        assertEquals(2, ids.size)
+        assertEquals(1, ids.count { it and EventNotifier.NEW_EVENT_ID_MASK == 0 })
+        assertEquals(1, ids.count { it and EventNotifier.NEW_EVENT_ID_MASK != 0 })
     }
 
     @Test

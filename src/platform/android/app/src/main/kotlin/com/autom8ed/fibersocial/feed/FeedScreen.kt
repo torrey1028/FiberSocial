@@ -55,7 +55,6 @@ import com.autom8ed.fibersocial.debug.DebugPanel
 import com.autom8ed.fibersocial.events.EventDetailScreen
 import com.autom8ed.fibersocial.events.EventsScreen
 import com.autom8ed.fibersocial.events.EventsState
-import com.autom8ed.fibersocial.events.GroupEvent
 import com.autom8ed.fibersocial.feed.models.FeedItem
 import com.autom8ed.fibersocial.feed.models.Group
 import com.autom8ed.fibersocial.feed.models.RavelryUser
@@ -83,6 +82,12 @@ fun FeedScreen(
     // A tapped notification lands here: open the event detail directly.
     LaunchedEffect(deepLinkEventPermalink) {
         if (deepLinkEventPermalink != null) {
+            // The tap must win over whatever screen is open — the early returns
+            // below (topic, settings, events list) would otherwise swallow it and
+            // the notification tap would visibly do nothing.
+            selectedTopic = null
+            showSettings = false
+            eventsGroup = null
             viewModel.eventDetail.load(deepLinkEventPermalink)
             selectedEventPermalink = deepLinkEventPermalink
             onDeepLinkConsumed()
