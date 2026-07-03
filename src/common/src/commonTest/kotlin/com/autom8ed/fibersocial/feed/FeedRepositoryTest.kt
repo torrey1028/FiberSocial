@@ -146,4 +146,69 @@ class FeedRepositoryTest {
         assertEquals(1, groups.size)
         assertEquals("KAL Hub", groups[0].name)
     }
+
+    @Test
+    fun `getFeedItems attributes discussion card to latest replier`() = runTest {
+        val repo = repoWithRoute { path ->
+            when {
+                path.contains("/forums/") -> topicsJson(100L)
+                path.contains("/posts.json") -> latestPostJson(username = "replier")
+                path.contains("/topics/") -> topicDetailJson(100L)
+                else -> error("Unexpected: $path")
+            }
+        }
+        val item = repo.getFeedItems(listOf(group)).single() as FeedItem.DiscussionTopic
+        assertEquals("replier", item.latestReplyAuthor?.username)
+        assertEquals("Latest reply text", item.latestReplyPreview)
+        assertEquals("replier", item.displayAuthor.username)
+        assertEquals("yarnie", item.author.username) // opening poster preserved for detail view
+    }
+
+    @Test
+    fun `getFeedItems skips latest-post fetch for single-post topics`() = runTest {
+        val requestedPaths = mutableListOf<String>()
+        val repo = repoWithRoute { path ->
+            requestedPaths += path
+            when {
+                path.contains("/forums/") -> topicsJson(100L)
+                path.contains("/topics/") -> topicDetailJson(100L, postsCount = 1)
+                else -> error("Unexpected: $path")
+            }
+        }
+        val item = repo.getFeedItems(listOf(group)).single() as FeedItem.DiscussionTopic
+        assertEquals(null, item.latestReplyAuthor)
+        assertEquals(emptyList(), requestedPaths.filter { it.contains("/posts.json") })
+    }
+
+    @Test
+    fun `getFeedItems falls back to opening post when latest-post fetch fails`() = runTest {
+        val repo = repoWithRoute { path ->
+            when {
+                path.contains("/forums/") -> topicsJson(100L)
+                path.contains("/posts.json") -> error("Simulated posts failure")
+                path.contains("/topics/") -> topicDetailJson(100L)
+                else -> error("Unexpected: $path")
+            }
+        }
+        val item = repo.getFeedItems(listOf(group)).single() as FeedItem.DiscussionTopic
+        assertEquals(null, item.latestReplyAuthor)
+        assertEquals(null, item.latestReplyPreview)
+        assertEquals("yarnie", item.displayAuthor.username)
+    }
+
+    @Test
+    fun `getFeedItems strips html and truncates latest reply preview`() = runTest {
+        val longBody = "<p>" + "y".repeat(300) + "</p>"
+        val repo = repoWithRoute { path ->
+            when {
+                path.contains("/forums/") -> topicsJson(100L)
+                path.contains("/posts.json") -> latestPostJson(bodyHtml = longBody)
+                path.contains("/topics/") -> topicDetailJson(100L)
+                else -> error("Unexpected: $path")
+            }
+        }
+        val item = repo.getFeedItems(listOf(group)).single() as FeedItem.DiscussionTopic
+        assertEquals(200, item.latestReplyPreview?.length)
+        assertEquals("y".repeat(200), item.latestReplyPreview)
+    }
 }

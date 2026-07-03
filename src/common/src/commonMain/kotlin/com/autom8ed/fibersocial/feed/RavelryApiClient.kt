@@ -374,6 +374,28 @@ class RavelryApiClient(
     }
 
     /**
+     * Returns the most recent post in a topic, or `null` if the topic has no posts.
+     *
+     * Uses `sort_reverse=1` with `page_size=1` so only the newest post is transferred —
+     * cheap enough to call once per feed topic. Vote data is not requested; feed cards
+     * don't display it.
+     *
+     * @param topicId Ravelry topic ID.
+     */
+    suspend fun getLatestPost(topicId: Long): Post? {
+        val raw = authenticatedRequest {
+            httpClient.get("$BASE_URL/topics/$topicId/posts.json") {
+                header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
+                url.parameters.apply {
+                    append("sort_reverse", "1")
+                    append("page_size", "1")
+                }
+            }
+        }
+        return lenientJson.decodeFromString<PostsResponse>(raw).posts.firstOrNull()
+    }
+
+    /**
      * Casts or clears the current user's vote of [type] on a forum post.
      *
      * @param postId Ravelry forum post ID.

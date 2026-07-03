@@ -58,7 +58,7 @@ fun DiscussionTopicCard(
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
             Row(verticalAlignment = Alignment.Top) {
-                Avatar(url = item.author.avatarUrl, size = 40.dp)
+                Avatar(url = item.displayAuthor.avatarUrl, size = 40.dp)
                 Spacer(modifier = Modifier.width(10.dp))
                 Column {
                     Text(
@@ -67,10 +67,10 @@ fun DiscussionTopicCard(
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                     )
-                    if (item.bodyPreview.isNotBlank()) {
+                    if (item.displayPreview.isNotBlank()) {
                         Spacer(modifier = Modifier.height(2.dp))
                         Text(
-                            text = item.bodyPreview,
+                            text = item.displayPreview,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 2,
@@ -88,7 +88,7 @@ fun DiscussionTopicCard(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = "@${item.author.username}",
+                    text = "@${item.displayAuthor.username}",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

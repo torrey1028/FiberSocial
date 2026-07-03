@@ -77,6 +77,10 @@ sealed class FeedItem {
      * @property bodyPreview Truncated plain-text excerpt of the opening post (max 200 chars).
      * @property bodySummary Full plain-text content of the opening post.
      * @property replyCount Total number of posts in the thread.
+     * @property latestReplyAuthor User who wrote the most recent reply, or `null` when the
+     *   topic has no replies (or the latest reply couldn't be fetched).
+     * @property latestReplyPreview Truncated plain-text excerpt of the most recent reply
+     *   (max 200 chars), or `null` under the same conditions as [latestReplyAuthor].
      */
     data class DiscussionTopic(
         override val id: Long,
@@ -88,5 +92,13 @@ sealed class FeedItem {
         val bodyPreview: String,
         val bodySummary: String,
         val replyCount: Int,
-    ) : FeedItem()
+        val latestReplyAuthor: RavelryUser? = null,
+        val latestReplyPreview: String? = null,
+    ) : FeedItem() {
+        /** Author the feed card should attribute the topic to: latest replier, else opener. */
+        val displayAuthor: RavelryUser get() = latestReplyAuthor ?: author
+
+        /** Preview text the feed card should show: latest reply, else the opening post. */
+        val displayPreview: String get() = latestReplyPreview ?: bodyPreview
+    }
 }
