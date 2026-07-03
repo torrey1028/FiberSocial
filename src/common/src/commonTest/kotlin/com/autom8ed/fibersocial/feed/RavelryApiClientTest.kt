@@ -1,6 +1,7 @@
 package com.autom8ed.fibersocial.feed
 
 import com.autom8ed.fibersocial.auth.AuthToken
+import com.autom8ed.fibersocial.auth.ForbiddenException
 import com.autom8ed.fibersocial.auth.SessionExpiredException
 import com.autom8ed.fibersocial.feed.models.VoteType
 import io.ktor.client.HttpClient
@@ -16,6 +17,7 @@ import io.ktor.serialization.kotlinx.json.json
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlinx.coroutines.test.runTest
 import kotlinx.datetime.Clock
@@ -369,13 +371,11 @@ class RavelryApiClientTest {
     }
 
     @Test
-    fun `on 403 retries request after successful token refresh`() = runTest {
+    fun `on 403 throws ForbiddenException without refreshing or retrying`() = runTest {
         var callCount = 0
         val engine = MockEngine {
             callCount++
-            if (callCount == 1) respond("", HttpStatusCode.Forbidden, headersOf())
-            else respond(CURRENT_USER_JSON, HttpStatusCode.OK,
-                headersOf("Content-Type", ContentType.Application.Json.toString()))
+            respond("", HttpStatusCode.Forbidden, headersOf())
         }
         val httpClient = HttpClient(engine) {
             install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
@@ -383,9 +383,9 @@ class RavelryApiClientTest {
         var refreshCalled = false
         val client = RavelryApiClient(httpClient, FakeFeedTokenStorage(),
             refreshToken = { refreshCalled = true })
-        client.getCurrentUser()
-        assertTrue(refreshCalled)
-        assertEquals(2, callCount)
+        assertFailsWith<ForbiddenException> { client.getCurrentUser() }
+        assertFalse(refreshCalled)
+        assertEquals(1, callCount)
     }
 
     @Test
@@ -402,16 +402,35 @@ class RavelryApiClientTest {
     }
 
     @Test
-    fun `on 403 when retry also returns 403 throws SessionExpiredException`() = runTest {
-        val engine = MockEngine { respond("", HttpStatusCode.Forbidden, headersOf()) }
+    fun `on 401 when retry returns 403 throws ForbiddenException`() = runTest {
+        var callCount = 0
+        val engine = MockEngine {
+            callCount++
+            if (callCount == 1) respond("", HttpStatusCode.Unauthorized, headersOf())
+            else respond("", HttpStatusCode.Forbidden, headersOf())
+        }
         val httpClient = HttpClient(engine) {
             install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
         }
         val client = RavelryApiClient(httpClient, FakeFeedTokenStorage(),
-            refreshToken = { /* refresh succeeds, but retry still fails */ })
-        assertFailsWith<SessionExpiredException> {
+            refreshToken = { /* refresh succeeds, but retry is forbidden */ })
+        assertFailsWith<ForbiddenException> {
             client.getCurrentUser()
         }
+    }
+
+    @Test
+    fun `ForbiddenException message avoids status-code digits that UI matches as expiry`() = runTest {
+        val engine = MockEngine { respond("", HttpStatusCode.Forbidden, headersOf()) }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val client = RavelryApiClient(httpClient, FakeFeedTokenStorage())
+        val e = assertFailsWith<ForbiddenException> { client.getCurrentUser() }
+        val message = e.message ?: ""
+        assertFalse(message.contains("403"))
+        assertFalse(message.contains("401"))
+        assertTrue(message.contains("/current_user.json"))
     }
 
     @Test
