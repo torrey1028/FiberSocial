@@ -463,6 +463,83 @@ class TopicDetailViewModelTest {
         assertEquals(Unit, vm.sessionExpired.first())
     }
 
+    /**
+     * Client whose reply POSTs suspend until [gate] completes (to interleave navigation
+     * with an in-flight send); GETs serve a one-post thread whose post ID is the topic ID.
+     */
+    private fun gatedReplyApiClient(
+        gate: CompletableDeferred<Unit>,
+        postOutcome: suspend () -> String,
+    ): RavelryApiClient {
+        val engine = MockEngine { request ->
+            if (request.method == HttpMethod.Post) {
+                gate.await()
+                respond(postOutcome(), HttpStatusCode.OK,
+                    headersOf("Content-Type", ContentType.Application.Json.toString()))
+            } else {
+                val topicId = Regex("""/topics/(\d+)/""").find(request.url.encodedPath)!!.groupValues[1].toLong()
+                respond(postsJson(topicId), HttpStatusCode.OK,
+                    headersOf("Content-Type", ContentType.Application.Json.toString()))
+            }
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        return RavelryApiClient(httpClient, FakeFeedTokenStorage())
+    }
+
+    @Test
+    fun `a stale send failure does not surface an error on the new topic`() = runTest(UnconfinedTestDispatcher()) {
+        val gate = CompletableDeferred<Unit>()
+        val vm = TopicDetailViewModel(gatedReplyApiClient(gate, { error("late failure") }), this)
+        vm.load(42L)
+        vm.sendReply(42L, "typed before navigating")
+
+        vm.load(43L)
+        gate.complete(Unit)
+        awaitChildren(coroutineContext[Job]!!)
+
+        assertIs<ReplyState.Idle>(vm.replyState.value)
+    }
+
+    @Test
+    fun `a stale send session expiry still signals but leaves composer state alone`() = runTest(UnconfinedTestDispatcher()) {
+        val gate = CompletableDeferred<Unit>()
+        val vm = TopicDetailViewModel(
+            gatedReplyApiClient(gate, { throw com.autom8ed.fibersocial.auth.SessionExpiredException("expired") }),
+            this,
+        )
+        vm.load(42L)
+        vm.sendReply(42L, "typed before navigating")
+
+        vm.load(43L)
+        gate.complete(Unit)
+        awaitChildren(coroutineContext[Job]!!)
+
+        assertIs<ReplyState.Idle>(vm.replyState.value)
+        assertEquals(Unit, vm.sessionExpired.first())
+    }
+
+    @Test
+    fun `a reply that succeeds while the thread is not loaded still reports Sent`() = runTest(UnconfinedTestDispatcher()) {
+        // Topic failed to load (state = Error, composer visible is a UI concern); the
+        // send itself succeeded on the server, so the composer must acknowledge it.
+        val vm = TopicDetailViewModel(
+            routingApiClient { path ->
+                if (path.contains("/reply.json")) replyResponseJson(id = 99L) else error("load failed")
+            },
+            this,
+        )
+        vm.load(42L)
+        awaitChildren(coroutineContext[Job]!!)
+        assertIs<TopicDetailState.Error>(vm.state.value)
+
+        vm.sendReply(42L, "still works")
+        awaitChildren(coroutineContext[Job]!!)
+        assertIs<ReplyState.Sent>(vm.replyState.value)
+        assertIs<TopicDetailState.Error>(vm.state.value)
+    }
+
     @Test
     fun `acknowledgeReplySent resets Sent to Idle`() = runTest(UnconfinedTestDispatcher()) {
         val vm = TopicDetailViewModel(

@@ -71,6 +71,15 @@ class EventPeopleParserLenienceTest {
     }
 
     @Test
+    fun `card whose username link is empty is skipped`() {
+        val html = card(
+            avatar = "",
+            details = """<a href="/people/ghost" class="login">   </a>""",
+        )
+        assertTrue(EventPeopleParser.parse(html).isEmpty())
+    }
+
+    @Test
     fun `card without a username link is skipped`() {
         val html = card(
             avatar = """<img src="/avatars/x.jpg">""",

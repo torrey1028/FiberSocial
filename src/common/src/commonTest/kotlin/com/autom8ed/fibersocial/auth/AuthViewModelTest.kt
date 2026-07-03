@@ -43,6 +43,23 @@ class AuthViewModelTest {
         }
 
     @Test
+    fun `onAuthCodeReceived falls back to a default message when the failure has none`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val failClient = HttpClient(MockEngine {
+                throw RuntimeException()
+            }) {
+                install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+            }
+            val vm = AuthViewModel(
+                AuthRepository(RavelryOAuthClient(failClient, "id", "secret"), FakeTokenStorage()),
+                this,
+            )
+            vm.onAuthCodeReceived("code", "verifier", "https://redirect")
+            awaitChildren(coroutineContext[Job]!!)
+            assertEquals("Login failed", assertIs<AuthState.Error>(vm.state.value).message)
+        }
+
+    @Test
     fun `onAuthCodeReceived transitions to Error on network failure`() =
         runTest(UnconfinedTestDispatcher()) {
             val failClient = HttpClient(MockEngine {

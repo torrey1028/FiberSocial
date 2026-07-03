@@ -66,6 +66,23 @@ class RavelryUserTest {
 
 class TopicTest {
     @Test
+    fun `value semantics hold across copy, equals, and toString`() {
+        val t = Topic(
+            id = 100L, title = "My New Sweater", forumId = 42L, postsCount = 5,
+            imagesCount = 3, repliedAt = "2024-01-15T10:00:00Z",
+            createdAt = "2024-01-10T08:00:00Z", sticky = true, archived = false,
+            createdByUser = RavelryUser(username = "yarnie"),
+            summary = "Working on a new colorwork sweater!",
+        )
+        assertEquals(t, t.copy())
+        assertEquals(t.hashCode(), t.copy().hashCode())
+        assertNotEquals(t, t.copy(id = 101L))
+        assertNotEquals(t, t.copy(sticky = false))
+        assertEquals("yarnie", t.copy(title = "Renamed").createdByUser?.username)
+        assertTrue(t.toString().contains("My New Sweater"))
+    }
+
+    @Test
     fun `deserializes full detail response`() {
         val t = json.decodeFromString<Topic>(
             """{
