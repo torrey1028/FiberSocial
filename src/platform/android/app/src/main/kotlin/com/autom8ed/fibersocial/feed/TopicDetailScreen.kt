@@ -1,7 +1,5 @@
 package com.autom8ed.fibersocial.feed
 
-import android.text.method.LinkMovementMethod
-import android.widget.TextView
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -36,22 +34,16 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
 import coil.compose.AsyncImage
+import com.autom8ed.fibersocial.feed.html.HtmlPostParser
 import com.autom8ed.fibersocial.feed.models.FeedItem
 import com.autom8ed.fibersocial.feed.models.Post
 import com.autom8ed.fibersocial.feed.models.RavelryUser
 import com.autom8ed.fibersocial.feed.models.VoteType
 import com.autom8ed.fibersocial.feed.models.hasVoted
 import com.autom8ed.fibersocial.feed.models.voteCount
-import io.noties.markwon.Markwon
-import io.noties.markwon.html.HtmlPlugin
-import io.noties.markwon.linkify.LinkifyPlugin
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TopicDetailScreen(
@@ -87,7 +79,7 @@ fun TopicDetailScreen(
                 HorizontalDivider()
                 Spacer(Modifier.height(16.dp))
                 if (topic.bodySummary.isNotBlank()) {
-                    MarkwonHtmlText(html = topic.bodySummary)
+                    PostBody(document = remember(topic.bodySummary) { HtmlPostParser.parse(topic.bodySummary) })
                     Spacer(Modifier.height(16.dp))
                 }
                 HorizontalDivider()
@@ -135,7 +127,7 @@ private fun ReplyItem(post: Post, onVote: (VoteType) -> Unit) {
         AuthorRow(user = post.user, timestamp = post.createdAt)
         if (post.bodyHtml.isNotBlank()) {
             Spacer(Modifier.height(8.dp))
-            MarkwonHtmlText(html = post.bodyHtml)
+            PostBody(document = remember(post.bodyHtml) { HtmlPostParser.parse(post.bodyHtml) })
         }
         Spacer(Modifier.height(8.dp))
         VoteRow(post = post, onVote = onVote)
@@ -211,35 +203,4 @@ private fun AuthorRow(user: RavelryUser?, timestamp: String?) {
             }
         }
     }
-}
-
-@Composable
-fun MarkwonHtmlText(html: String, modifier: Modifier = Modifier) {
-    val context = LocalContext.current
-    val markwon = remember {
-        Markwon.builder(context)
-            .usePlugin(HtmlPlugin.create())
-            .usePlugin(LinkifyPlugin.create())
-            .build()
-    }
-
-    // Capture theme values in Compose scope so the AndroidView update block can apply them
-    val textColor = MaterialTheme.colorScheme.onSurface.toArgb()
-    val linkColor = MaterialTheme.colorScheme.primary.toArgb()
-    val textSizeSp = MaterialTheme.typography.bodyMedium.fontSize.value
-
-    AndroidView(
-        factory = { ctx ->
-            TextView(ctx).apply {
-                movementMethod = LinkMovementMethod.getInstance()
-            }
-        },
-        update = { tv ->
-            tv.setTextColor(textColor)
-            tv.setLinkTextColor(linkColor)
-            tv.textSize = textSizeSp
-            markwon.setMarkdown(tv, html)
-        },
-        modifier = modifier.fillMaxWidth(),
-    )
 }
