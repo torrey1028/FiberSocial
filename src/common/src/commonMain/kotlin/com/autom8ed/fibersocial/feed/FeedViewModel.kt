@@ -78,6 +78,15 @@ class FeedViewModel(
     fun forceSessionExpiry() { _sessionExpired.trySend(Unit) }
 
     /** Performs an initial full load: user → groups → feed items. */
+    /**
+     * Clears any loaded feed back to [FeedState.Loading]. Call on sign-out so a
+     * subsequent login can't flash the previous account's feed, groups, or
+     * profile row before its own load() lands.
+     */
+    fun reset() {
+        _state.value = FeedState.Loading
+    }
+
     fun load() {
         scope.launch {
             println("FiberSocial: FeedViewModel.load() starting")

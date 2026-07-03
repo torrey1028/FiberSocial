@@ -37,6 +37,16 @@ class FeedViewModelTest {
     }
 
     @Test
+    fun `reset clears a loaded feed back to Loading`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = FeedViewModel(successRepo(), this)
+        vm.load()
+        awaitChildren(coroutineContext[Job]!!)
+        assertIs<FeedState.Loaded>(vm.state.value)
+        vm.reset()
+        assertIs<FeedState.Loading>(vm.state.value)
+    }
+
+    @Test
     fun `load transitions to Loaded on success`() = runTest(UnconfinedTestDispatcher()) {
         val vm = FeedViewModel(successRepo(), this)
         vm.load()

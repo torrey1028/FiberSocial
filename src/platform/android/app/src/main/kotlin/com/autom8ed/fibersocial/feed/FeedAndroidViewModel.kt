@@ -59,6 +59,8 @@ class FeedAndroidViewModel(app: Application) : AndroidViewModel(app) {
 
     fun load() = feed.load()
 
+    fun reset() = feed.reset()
+
     fun debugForceSessionExpiry() = feed.forceSessionExpiry()
 
     override fun onCleared() {

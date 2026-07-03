@@ -4,10 +4,12 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -40,11 +42,13 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import com.autom8ed.fibersocial.BuildConfig
 import com.autom8ed.fibersocial.debug.DebugPanel
@@ -54,11 +58,14 @@ import com.autom8ed.fibersocial.events.EventsState
 import com.autom8ed.fibersocial.events.GroupEvent
 import com.autom8ed.fibersocial.feed.models.FeedItem
 import com.autom8ed.fibersocial.feed.models.Group
+import com.autom8ed.fibersocial.feed.models.RavelryUser
+import com.autom8ed.fibersocial.settings.SettingsScreen
+import com.autom8ed.fibersocial.ui.UserAvatar
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun FeedScreen(viewModel: FeedAndroidViewModel) {
+fun FeedScreen(viewModel: FeedAndroidViewModel, onLogout: () -> Unit) {
     val state by viewModel.feed.state.collectAsState()
     val topicDetailState by viewModel.topicDetail.state.collectAsState()
     val eventsState by viewModel.events.state.collectAsState()
@@ -66,12 +73,17 @@ fun FeedScreen(viewModel: FeedAndroidViewModel) {
     var selectedTopic by remember { mutableStateOf<FeedItem.DiscussionTopic?>(null) }
     var selectedEvent by remember { mutableStateOf<GroupEvent?>(null) }
     var eventsGroup by remember { mutableStateOf<Group?>(null) }
+    var showSettings by rememberSaveable { mutableStateOf(false) }
 
-    val groups = when (val s = state) {
-        is FeedState.Loaded -> s.groups
-        is FeedState.Refreshing -> s.stale.groups
-        else -> emptyList()
+    // One unwrap for every stale-capable field: Loaded directly, Refreshing via
+    // its stale snapshot, anything else has no data yet.
+    val loaded = when (val s = state) {
+        is FeedState.Loaded -> s
+        is FeedState.Refreshing -> s.stale
+        else -> null
     }
+    val user = loaded?.user
+    val groups = loaded?.groups ?: emptyList()
 
     // Scrape events in the background as soon as the groups are known so the drawer's
     // per-group calendar badges are populated by the time it opens.
@@ -84,6 +96,15 @@ fun FeedScreen(viewModel: FeedAndroidViewModel) {
     val eventCounts: Map<Long, Int> = when (val s = eventsState) {
         is EventsState.Loaded -> s.events.groupingBy { it.group.id }.eachCount()
         else -> emptyMap()
+    }
+
+    if (showSettings) {
+        SettingsScreen(
+            user = user,
+            onBack = { showSettings = false },
+            onSignOut = onLogout,
+        )
+        return
     }
 
     if (selectedTopic != null) {
@@ -126,17 +147,8 @@ fun FeedScreen(viewModel: FeedAndroidViewModel) {
 
     CloseDrawerOnBack(drawerState)
 
-    val title = when (val s = state) {
-        is FeedState.Loaded -> s.selectedGroup?.name ?: "All Groups"
-        is FeedState.Refreshing -> s.stale.selectedGroup?.name ?: "All Groups"
-        else -> "FiberSocial"
-    }
-
-    val selectedGroup = when (val s = state) {
-        is FeedState.Loaded -> s.selectedGroup
-        is FeedState.Refreshing -> s.stale.selectedGroup
-        else -> null
-    }
+    val title = if (loaded == null) "FiberSocial" else loaded.selectedGroup?.name ?: "All Groups"
+    val selectedGroup = loaded?.selectedGroup
 
     ModalNavigationDrawer(
         drawerState = drawerState,
@@ -145,6 +157,7 @@ fun FeedScreen(viewModel: FeedAndroidViewModel) {
                 groups = groups,
                 selectedGroup = selectedGroup,
                 eventCounts = eventCounts,
+                user = user,
                 onGroupSelected = { group ->
                     scope.launch { drawerState.close() }
                     viewModel.feed.selectGroup(group)
@@ -152,6 +165,10 @@ fun FeedScreen(viewModel: FeedAndroidViewModel) {
                 onGroupEventsClick = { group ->
                     scope.launch { drawerState.close() }
                     eventsGroup = group
+                },
+                onSettingsClick = {
+                    scope.launch { drawerState.close() }
+                    showSettings = true
                 },
             )
         },
@@ -222,51 +239,82 @@ fun FeedScreen(viewModel: FeedAndroidViewModel) {
 }
 
 @Composable
-private fun GroupDrawer(
+internal fun GroupDrawer(
     groups: List<Group>,
     selectedGroup: Group?,
     eventCounts: Map<Long, Int>,
+    user: RavelryUser?,
     onGroupSelected: (Group?) -> Unit,
     onGroupEventsClick: (Group) -> Unit,
+    onSettingsClick: () -> Unit,
 ) {
     ModalDrawerSheet {
-        LazyColumn {
-            item {
-                Spacer(Modifier.height(16.dp))
-                Text(
-                    text = "Your Groups",
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 28.dp, vertical = 8.dp),
-                )
-                NavigationDrawerItem(
-                    label = { Text("All Groups") },
-                    selected = selectedGroup == null,
-                    onClick = { onGroupSelected(null) },
-                    modifier = Modifier.padding(horizontal = 12.dp),
-                )
-                if (groups.isNotEmpty()) {
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp, horizontal = 12.dp))
+        Column {
+            LazyColumn(modifier = Modifier.weight(1f)) {
+                item {
+                    Spacer(Modifier.height(16.dp))
+                    Text(
+                        text = "Your Groups",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 28.dp, vertical = 8.dp),
+                    )
+                    NavigationDrawerItem(
+                        label = { Text("All Groups") },
+                        selected = selectedGroup == null,
+                        onClick = { onGroupSelected(null) },
+                        modifier = Modifier.padding(horizontal = 12.dp),
+                    )
+                    if (groups.isNotEmpty()) {
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp, horizontal = 12.dp))
+                    }
                 }
+                items(groups, key = { it.id }) { group ->
+                    val eventCount = eventCounts[group.id] ?: 0
+                    NavigationDrawerItem(
+                        label = { Text(group.name) },
+                        selected = selectedGroup?.id == group.id,
+                        onClick = { onGroupSelected(group) },
+                        badge = if (eventCount > 0) {
+                            {
+                                GroupEventsBadge(
+                                    count = eventCount,
+                                    onClick = { onGroupEventsClick(group) },
+                                )
+                            }
+                        } else null,
+                        modifier = Modifier.padding(horizontal = 12.dp),
+                    )
+                }
+                item { Spacer(Modifier.height(16.dp)) }
             }
-            items(groups, key = { it.id }) { group ->
-                val eventCount = eventCounts[group.id] ?: 0
-                NavigationDrawerItem(
-                    label = { Text(group.name) },
-                    selected = selectedGroup?.id == group.id,
-                    onClick = { onGroupSelected(group) },
-                    badge = if (eventCount > 0) {
-                        {
-                            GroupEventsBadge(
-                                count = eventCount,
-                                onClick = { onGroupEventsClick(group) },
-                            )
-                        }
-                    } else null,
-                    modifier = Modifier.padding(horizontal = 12.dp),
-                )
-            }
-            item { Spacer(Modifier.height(16.dp)) }
+            HorizontalDivider()
+            ProfileFooter(user = user, onClick = onSettingsClick)
+        }
+    }
+}
+
+@Composable
+private fun ProfileFooter(user: RavelryUser?, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick, onClickLabel = "Open settings", role = Role.Button)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        UserAvatar(user, size = 40.dp)
+        Spacer(Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = user?.username ?: "Account",
+                style = MaterialTheme.typography.titleSmall,
+            )
+            Text(
+                text = "Settings",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }

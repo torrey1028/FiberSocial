@@ -69,7 +69,15 @@ class MainActivity : ComponentActivity() {
                                 authVm.auth.logout()
                             }
                         }
-                        FeedScreen(viewModel = feedVm)
+                        FeedScreen(
+                            viewModel = feedVm,
+                            // Reset first: the ViewModel outlives the session, and a
+                            // different account logging in next must not see this one's feed.
+                            onLogout = {
+                                feedVm.reset()
+                                authVm.auth.logout()
+                            },
+                        )
                     }
                 }
             }
