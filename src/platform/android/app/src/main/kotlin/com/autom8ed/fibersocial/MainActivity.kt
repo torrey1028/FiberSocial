@@ -69,7 +69,10 @@ class MainActivity : ComponentActivity() {
                                 authVm.auth.logout()
                             }
                         }
-                        FeedScreen(viewModel = feedVm)
+                        FeedScreen(
+                            viewModel = feedVm,
+                            onLogout = { authVm.auth.logout() },
+                        )
                     }
                 }
             }

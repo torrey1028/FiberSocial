@@ -4,10 +4,12 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -54,11 +56,14 @@ import com.autom8ed.fibersocial.events.EventsState
 import com.autom8ed.fibersocial.events.GroupEvent
 import com.autom8ed.fibersocial.feed.models.FeedItem
 import com.autom8ed.fibersocial.feed.models.Group
+import com.autom8ed.fibersocial.feed.models.RavelryUser
+import com.autom8ed.fibersocial.settings.SettingsScreen
+import com.autom8ed.fibersocial.settings.UserAvatar
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun FeedScreen(viewModel: FeedAndroidViewModel) {
+fun FeedScreen(viewModel: FeedAndroidViewModel, onLogout: () -> Unit = {}) {
     val state by viewModel.feed.state.collectAsState()
     val topicDetailState by viewModel.topicDetail.state.collectAsState()
     val eventsState by viewModel.events.state.collectAsState()
@@ -66,11 +71,18 @@ fun FeedScreen(viewModel: FeedAndroidViewModel) {
     var selectedTopic by remember { mutableStateOf<FeedItem.DiscussionTopic?>(null) }
     var selectedEvent by remember { mutableStateOf<GroupEvent?>(null) }
     var eventsGroup by remember { mutableStateOf<Group?>(null) }
+    var showSettings by remember { mutableStateOf(false) }
 
     val groups = when (val s = state) {
         is FeedState.Loaded -> s.groups
         is FeedState.Refreshing -> s.stale.groups
         else -> emptyList()
+    }
+
+    val user = when (val s = state) {
+        is FeedState.Loaded -> s.user
+        is FeedState.Refreshing -> s.stale.user
+        else -> null
     }
 
     // Scrape events in the background as soon as the groups are known so the drawer's
@@ -84,6 +96,15 @@ fun FeedScreen(viewModel: FeedAndroidViewModel) {
     val eventCounts: Map<Long, Int> = when (val s = eventsState) {
         is EventsState.Loaded -> s.events.groupingBy { it.group.id }.eachCount()
         else -> emptyMap()
+    }
+
+    if (showSettings) {
+        SettingsScreen(
+            user = user,
+            onBack = { showSettings = false },
+            onSignOut = onLogout,
+        )
+        return
     }
 
     if (selectedTopic != null) {
@@ -145,6 +166,7 @@ fun FeedScreen(viewModel: FeedAndroidViewModel) {
                 groups = groups,
                 selectedGroup = selectedGroup,
                 eventCounts = eventCounts,
+                user = user,
                 onGroupSelected = { group ->
                     scope.launch { drawerState.close() }
                     viewModel.feed.selectGroup(group)
@@ -152,6 +174,10 @@ fun FeedScreen(viewModel: FeedAndroidViewModel) {
                 onGroupEventsClick = { group ->
                     scope.launch { drawerState.close() }
                     eventsGroup = group
+                },
+                onSettingsClick = {
+                    scope.launch { drawerState.close() }
+                    showSettings = true
                 },
             )
         },
@@ -222,51 +248,82 @@ fun FeedScreen(viewModel: FeedAndroidViewModel) {
 }
 
 @Composable
-private fun GroupDrawer(
+internal fun GroupDrawer(
     groups: List<Group>,
     selectedGroup: Group?,
     eventCounts: Map<Long, Int>,
+    user: RavelryUser?,
     onGroupSelected: (Group?) -> Unit,
     onGroupEventsClick: (Group) -> Unit,
+    onSettingsClick: () -> Unit,
 ) {
     ModalDrawerSheet {
-        LazyColumn {
-            item {
-                Spacer(Modifier.height(16.dp))
-                Text(
-                    text = "Your Groups",
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 28.dp, vertical = 8.dp),
-                )
-                NavigationDrawerItem(
-                    label = { Text("All Groups") },
-                    selected = selectedGroup == null,
-                    onClick = { onGroupSelected(null) },
-                    modifier = Modifier.padding(horizontal = 12.dp),
-                )
-                if (groups.isNotEmpty()) {
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp, horizontal = 12.dp))
+        Column {
+            LazyColumn(modifier = Modifier.weight(1f)) {
+                item {
+                    Spacer(Modifier.height(16.dp))
+                    Text(
+                        text = "Your Groups",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 28.dp, vertical = 8.dp),
+                    )
+                    NavigationDrawerItem(
+                        label = { Text("All Groups") },
+                        selected = selectedGroup == null,
+                        onClick = { onGroupSelected(null) },
+                        modifier = Modifier.padding(horizontal = 12.dp),
+                    )
+                    if (groups.isNotEmpty()) {
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp, horizontal = 12.dp))
+                    }
                 }
+                items(groups, key = { it.id }) { group ->
+                    val eventCount = eventCounts[group.id] ?: 0
+                    NavigationDrawerItem(
+                        label = { Text(group.name) },
+                        selected = selectedGroup?.id == group.id,
+                        onClick = { onGroupSelected(group) },
+                        badge = if (eventCount > 0) {
+                            {
+                                GroupEventsBadge(
+                                    count = eventCount,
+                                    onClick = { onGroupEventsClick(group) },
+                                )
+                            }
+                        } else null,
+                        modifier = Modifier.padding(horizontal = 12.dp),
+                    )
+                }
+                item { Spacer(Modifier.height(16.dp)) }
             }
-            items(groups, key = { it.id }) { group ->
-                val eventCount = eventCounts[group.id] ?: 0
-                NavigationDrawerItem(
-                    label = { Text(group.name) },
-                    selected = selectedGroup?.id == group.id,
-                    onClick = { onGroupSelected(group) },
-                    badge = if (eventCount > 0) {
-                        {
-                            GroupEventsBadge(
-                                count = eventCount,
-                                onClick = { onGroupEventsClick(group) },
-                            )
-                        }
-                    } else null,
-                    modifier = Modifier.padding(horizontal = 12.dp),
-                )
-            }
-            item { Spacer(Modifier.height(16.dp)) }
+            HorizontalDivider()
+            ProfileFooter(user = user, onClick = onSettingsClick)
+        }
+    }
+}
+
+@Composable
+private fun ProfileFooter(user: RavelryUser?, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        UserAvatar(user, size = 40.dp)
+        Spacer(Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = user?.username ?: "Account",
+                style = MaterialTheme.typography.titleSmall,
+            )
+            Text(
+                text = "Settings",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }
