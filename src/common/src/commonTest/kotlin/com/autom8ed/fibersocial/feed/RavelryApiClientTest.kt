@@ -771,6 +771,47 @@ class RavelryApiClientTest {
         assertEquals("yarnie", post.user?.username)
         assertEquals("<p>My new reply</p>", post.bodyHtml)
     }
+
+    @Test
+    fun `createTopic posts form fields to create endpoint and returns created topic`() = runTest {
+        var capturedPath: String? = null
+        var capturedMethod: String? = null
+        var capturedForm: io.ktor.http.Parameters? = null
+        val engine = MockEngine { request ->
+            capturedPath = request.url.encodedPath
+            capturedMethod = request.method.value
+            capturedForm = (request.body as io.ktor.client.request.forms.FormDataContent).formData
+            respond(
+                content = topicCreateResponseJson(id = 7001L, title = "Show us your WIPs"),
+                status = HttpStatusCode.OK,
+                headers = headersOf("Content-Type", ContentType.Application.Json.toString()),
+            )
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val topic = RavelryApiClient(httpClient, FakeFeedTokenStorage())
+            .createTopic(123L, "Show us your WIPs", "Post a photo of what's on your needles!")
+        assertEquals("/topics/create.json", capturedPath)
+        assertEquals("POST", capturedMethod)
+        assertEquals("123", capturedForm!!["forum_id"])
+        assertEquals("Show us your WIPs", capturedForm!!["title"])
+        assertEquals("Post a photo of what's on your needles!", capturedForm!!["body"])
+        assertEquals(7001L, topic.id)
+        assertEquals("Show us your WIPs", topic.title)
+        assertEquals("yarnie", topic.createdByUser?.username)
+    }
+
+    @Test
+    fun `createTopic raises a cautious error when the response is not the created topic`() = runTest {
+        // A 200 with a non-JSON body (maintenance page, HTML error) must not be treated
+        // as success, and the message must warn the topic may still have been created.
+        val client = routingApiClient { path ->
+            if (path.contains("/topics/create.json")) "<html>down for maintenance</html>" else postsJson(1L)
+        }
+        val failure = runCatching { client.createTopic(123L, "title", "body") }.exceptionOrNull()
+        assertTrue(failure!!.message!!.contains("the topic may have been created"))
+    }
 }
 
 private fun htmlApiClient(engine: MockEngine): RavelryApiClient {

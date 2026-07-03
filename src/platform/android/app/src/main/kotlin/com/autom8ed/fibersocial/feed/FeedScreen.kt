@@ -20,8 +20,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -82,6 +84,7 @@ fun FeedScreen(
     var selectedEventPermalink by remember { mutableStateOf<String?>(null) }
     var eventsGroup by remember { mutableStateOf<Group?>(null) }
     var showSettings by rememberSaveable { mutableStateOf(false) }
+    var composingTopic by rememberSaveable { mutableStateOf(false) }
 
     // A tapped notification lands here: open the event detail directly.
     LaunchedEffect(deepLinkEventPermalink) {
@@ -92,6 +95,7 @@ fun FeedScreen(
             selectedTopic = null
             showSettings = false
             eventsGroup = null
+            composingTopic = false
             viewModel.eventDetail.load(deepLinkEventPermalink)
             selectedEventPermalink = deepLinkEventPermalink
             onDeepLinkConsumed()
@@ -159,6 +163,42 @@ fun FeedScreen(
             replyState = replyState,
             onSendReply = { body -> viewModel.topicDetail.sendReply(topic.id, body) },
             onReplySent = { viewModel.topicDetail.acknowledgeReplySent() },
+        )
+        return
+    }
+
+    if (composingTopic) {
+        val newTopicState by viewModel.newTopic.state.collectAsState()
+        NewTopicScreen(
+            groups = groups,
+            initialGroup = loaded?.selectedGroup,
+            state = newTopicState,
+            onBack = {
+                composingTopic = false
+                viewModel.newTopic.reset()
+            },
+            onPost = { group, title, body -> viewModel.newTopic.create(group.forumId, title, body) },
+            onCreated = { topic, group ->
+                composingTopic = false
+                viewModel.newTopic.acknowledgeCreated()
+                // Land the author inside their new topic, and refresh so the feed
+                // shows it once they navigate back.
+                viewModel.topicDetail.load(topic.id)
+                selectedTopic = FeedItem.DiscussionTopic(
+                    id = topic.id,
+                    groupId = group.id,
+                    groupName = group.name,
+                    lastPostAt = topic.repliedAt ?: topic.createdAt,
+                    // The create response includes created_by_user; the signed-in user
+                    // is the same person if it ever doesn't.
+                    author = topic.createdByUser ?: loaded?.user ?: RavelryUser(username = ""),
+                    title = topic.title,
+                    bodyPreview = topic.summary.orEmpty(),
+                    bodySummary = topic.summary.orEmpty(),
+                    replyCount = topic.postsCount,
+                )
+                viewModel.feed.refresh()
+            },
         )
         return
     }
@@ -236,6 +276,18 @@ fun FeedScreen(
                         }
                     },
                 )
+            },
+            floatingActionButton = {
+                if (loaded != null && groups.isNotEmpty()) {
+                    FloatingActionButton(
+                        onClick = {
+                            viewModel.newTopic.reset()
+                            composingTopic = true
+                        },
+                    ) {
+                        Icon(Icons.Default.Edit, contentDescription = "New topic")
+                    }
+                }
             },
         ) { padding ->
             when (val s = state) {

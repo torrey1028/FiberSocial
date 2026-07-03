@@ -48,6 +48,7 @@ class FeedAndroidViewModel(app: Application) : AndroidViewModel(app) {
     private val repository = FeedRepository(apiClient)
     val feed = FeedViewModel(repository, viewModelScope)
     val topicDetail = TopicDetailViewModel(apiClient, viewModelScope)
+    val newTopic = NewTopicViewModel(apiClient, viewModelScope)
     val events = EventsViewModel(apiClient, viewModelScope)
     val eventDetail = EventDetailViewModel(
         apiClient,
@@ -62,6 +63,7 @@ class FeedAndroidViewModel(app: Application) : AndroidViewModel(app) {
     val sessionExpired: Flow<Unit> = merge(
         feed.sessionExpired,
         topicDetail.sessionExpired,
+        newTopic.sessionExpired,
         events.sessionExpired,
         eventDetail.sessionExpired,
     )
