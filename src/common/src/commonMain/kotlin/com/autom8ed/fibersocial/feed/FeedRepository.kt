@@ -44,12 +44,11 @@ class FeedRepository(private val apiClient: RavelryApiClient) {
                 .map { topic ->
                     async {
                         val detail = apiClient.getTopicDetail(topic.id)
-                        // Only discussion cards render reply attribution (project/sticky
-                        // topics map to other card types that discard it), and only topics
+                        // Only discussion cards render reply attribution (sticky topics map
+                        // to the announcement card, which discards it), and only topics
                         // with replies have a latest reply distinct from the opening post;
                         // skip the extra request otherwise.
-                        val wantsLatestReply =
-                            detail.postsCount > 1 && detail.imagesCount == 0 && !detail.sticky
+                        val wantsLatestReply = detail.postsCount > 1 && !detail.sticky
                         val latestReply = if (wantsLatestReply) latestPostOrNull(detail.id) else null
                         detail.toFeedItem(groupId = group.id, groupName = group.name, latestReply = latestReply)
                     }
@@ -84,18 +83,11 @@ class FeedRepository(private val apiClient: RavelryApiClient) {
         val author = createdByUser ?: RavelryUser(username = "unknown")
         val full = summary ?: ""
         val preview = full.take(200)
+        // Whether posts carry images does not affect classification: a topic with a photo
+        // in it is still a discussion (issue #77 — the old ProjectTopic mapping silently
+        // dropped nearly half of a real group's topics from the feed). Images render in
+        // the topic detail view.
         return when {
-            imagesCount > 0 -> FeedItem.ProjectTopic(
-                id = id,
-                groupId = groupId,
-                groupName = groupName,
-                lastPostAt = repliedAt,
-                author = author,
-                title = title,
-                imageCount = imagesCount,
-                imageUrls = emptyList(), // requires fetching posts; deferred to future phase
-                replyCount = postsCount,
-            )
             sticky -> FeedItem.AnnouncementTopic(
                 id = id,
                 groupId = groupId,
