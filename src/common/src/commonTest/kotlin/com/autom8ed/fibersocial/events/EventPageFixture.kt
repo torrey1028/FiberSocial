@@ -2,16 +2,19 @@ package com.autom8ed.fibersocial.events
 
 /**
  * Golden fixture: trimmed capture of a real event page (Wednesday HH at Chainline,
- * 2026-06-28) — page title, attend button, and the full `event__detail` block with
- * venue, markdown description, and 10 linked discussions. Canonical copy:
- * `docs/samples/event_page.html` — keep the two in sync.
+ * 2026-06-28) — authenticity-token meta, page title, attend button ("save event" =
+ * not attending), and the full `event__detail` block with venue, markdown description,
+ * and 10 linked discussions. Canonical copy: `docs/samples/event_page.html` — keep the
+ * two in sync.
  */
 internal val EVENT_PAGE_HTML = """
 <!DOCTYPE html>
 <!-- Trimmed capture of https://www.ravelry.com/events/wednesday-hh-at-chainline-38 (2026-06-28).
      Page chrome removed; page_title, attend button, and event__detail are verbatim. -->
 <html>
-<head><title>Ravelry: Event - Wednesday HH at Chainline</title></head>
+<head><title>Ravelry: Event - Wednesday HH at Chainline</title>
+<meta content="JEN38Bicg515OwvzGE7jaHa9qYjMQgYwmIZsRpzPYzU=" id="authenticity-token" name="authenticity-token">
+</head>
 <body>
 <div class="page_title">
 <div class="page_title__supertitle">

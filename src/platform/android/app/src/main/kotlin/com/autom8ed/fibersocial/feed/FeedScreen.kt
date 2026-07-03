@@ -77,6 +77,7 @@ fun FeedScreen(viewModel: FeedAndroidViewModel) {
         EventDetailScreen(
             state = eventDetailState,
             onBack = { selectedEvent = null },
+            onToggleAttendance = { viewModel.eventDetail.toggleAttendance() },
         )
         return
     }

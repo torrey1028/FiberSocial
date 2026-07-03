@@ -17,6 +17,11 @@ import kotlinx.datetime.LocalDateTime
  *   as forum post `body_html` — display with `HtmlPostParser` + `PostBody`). Empty when
  *   the event has no description.
  * @property discussions Forum topics linked to this event, in page order.
+ * @property attending Whether the current user has saved this event ("event saved" on
+ *   the page's attend button — the site calls RSVPing "saving" an event).
+ * @property csrfToken Rails authenticity token from the page's
+ *   `meta#authenticity-token`, required by the attend/unattend endpoints. Null when the
+ *   page carried none (RSVP is then unavailable).
  */
 data class EventDetail(
     val title: String,
@@ -26,6 +31,8 @@ data class EventDetail(
     val venue: EventVenue?,
     val descriptionHtml: String,
     val discussions: List<EventDiscussion>,
+    val attending: Boolean = false,
+    val csrfToken: String? = null,
 )
 
 /**

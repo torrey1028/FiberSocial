@@ -18,8 +18,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -36,15 +38,17 @@ import com.autom8ed.fibersocial.feed.PostBody
 import com.autom8ed.fibersocial.feed.html.HtmlPostParser
 
 /**
- * Full details of one event: when, where, and the description (rendered like a forum
- * post body). The event page's "discussions" table is deliberately not shown — it's just
- * the hosting group's recent topics, which the feed already covers.
+ * Full details of one event: when, where, the description (rendered like a forum post
+ * body), and a save/unsave toggle (Ravelry's RSVP). The event page's "discussions"
+ * table is deliberately not shown — it's just the hosting group's recent topics, which
+ * the feed already covers.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EventDetailScreen(
     state: EventDetailState,
     onBack: () -> Unit,
+    onToggleAttendance: () -> Unit,
 ) {
     Scaffold(
         topBar = {
@@ -72,6 +76,7 @@ fun EventDetailScreen(
             is EventDetailState.Loaded -> EventDetailContent(
                 detail = state.detail,
                 padding = padding,
+                onToggleAttendance = onToggleAttendance,
             )
         }
     }
@@ -81,6 +86,7 @@ fun EventDetailScreen(
 private fun EventDetailContent(
     detail: EventDetail,
     padding: PaddingValues,
+    onToggleAttendance: () -> Unit,
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(padding),
@@ -109,6 +115,11 @@ private fun EventDetailContent(
                     Text(detail.whenText, style = MaterialTheme.typography.bodyMedium)
                 }
             }
+            // RSVP needs the page's authenticity token; without one the toggle can't work.
+            if (detail.csrfToken != null) {
+                Spacer(Modifier.height(12.dp))
+                AttendButton(attending = detail.attending, onClick = onToggleAttendance)
+            }
             Spacer(Modifier.height(12.dp))
         }
 
@@ -128,6 +139,16 @@ private fun EventDetailContent(
                 )
             }
         }
+    }
+}
+
+/** RSVP toggle — the site calls this saving an event ("save event" / "event saved"). */
+@Composable
+private fun AttendButton(attending: Boolean, onClick: () -> Unit) {
+    if (attending) {
+        Button(onClick = onClick) { Text("✓ Going") }
+    } else {
+        OutlinedButton(onClick = onClick) { Text("RSVP") }
     }
 }
 
