@@ -72,6 +72,16 @@ class NewEventPlanningTest {
     }
 
     @Test
+    fun `a non-null state with an empty known set also seeds silently`() {
+        // A glitchy scrape that persisted an empty list must not turn the next healthy
+        // sync into a notification storm.
+        val emptied = NotificationState(knownEvents = emptyMap())
+        val result = plan(state = emptied, upcoming = listOf(upcoming("a"), upcoming("b")))
+        assertTrue(result.newEventNotifications.isEmpty())
+        assertEquals(setOf("a", "b"), result.newState.knownEvents.keys)
+    }
+
+    @Test
     fun `known events do not re-notify`() {
         val state = plan(state = null, upcoming = listOf(upcoming("a"))).newState
         val result = plan(state = state, upcoming = listOf(upcoming("a")))
