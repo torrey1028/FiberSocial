@@ -83,4 +83,17 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.robolectric:robolectric:4.12.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
+    testImplementation(composeBom)
+    testImplementation("androidx.compose.ui:ui-test-junit4")
+    // Registers the test ComponentActivity that createAndroidComposeRule launches.
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
+}
+
+// createAndroidComposeRule resolves the test ComponentActivity from the merged
+// manifest, and ui-test-manifest only contributes it to the debug variant —
+// on testReleaseUnitTest these tests die with "Unable to resolve activity".
+tasks.withType<Test>().configureEach {
+    if (name == "testReleaseUnitTest") {
+        exclude("**/CloseDrawerOnBackTest*", "**/TopicDetailScreenBackTest*")
+    }
 }

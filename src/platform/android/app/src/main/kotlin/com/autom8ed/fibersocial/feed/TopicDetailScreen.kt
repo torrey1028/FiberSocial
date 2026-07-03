@@ -1,5 +1,6 @@
 package com.autom8ed.fibersocial.feed
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -52,6 +53,9 @@ fun TopicDetailScreen(
     onBack: () -> Unit,
     onVote: (Post, VoteType) -> Unit,
 ) {
+    // The system back button must mirror the top-bar back arrow instead of
+    // finishing the activity (issue #38).
+    BackHandler(onBack = onBack)
     Scaffold(
         topBar = {
             TopAppBar(
