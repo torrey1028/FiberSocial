@@ -2,6 +2,8 @@ package com.autom8ed.fibersocial.feed
 
 import com.autom8ed.fibersocial.auth.SessionExpiredException
 import com.autom8ed.fibersocial.feed.models.Post
+import com.autom8ed.fibersocial.feed.models.VoteType
+import com.autom8ed.fibersocial.feed.models.hasVoted
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
@@ -76,4 +78,71 @@ class TopicDetailViewModel(
             }
         }
     }
+
+    /**
+     * Toggles the current user's vote of [type] on [post]: applies an optimistic local
+     * update immediately, then confirms it against the server. On failure, the optimistic
+     * update is reverted (by applying the inverse of the optimistic change to whatever
+     * post is then in state); on session expiry, [sessionExpired] is also signaled.
+     *
+     * @param post Identifies which post to vote on ([Post.id]). The toggle direction and
+     *   all reverts are computed from the post's current value in [state], not from this
+     *   parameter, so a stale [post] (e.g. from a rapid double-tap) can't send the wrong
+     *   `voted` value or clobber a concurrent local update.
+     * @param type Which reaction to toggle.
+     */
+    fun toggleVote(post: Post, type: VoteType) {
+        val wantsVoted = !(currentPost(post.id) ?: post).hasVoted(type)
+        updatePost(post.id) { optimisticVote(it, type, wantsVoted) }
+
+        scope.launch {
+            try {
+                val result = apiClient.voteOnPost(post.id, type, voted = wantsVoted)
+                updatePost(post.id) { it.copy(voteTotals = result.voteTotals, userVotes = result.userVotes) }
+            } catch (e: SessionExpiredException) {
+                println("FiberSocial: TopicDetailViewModel.toggleVote session expired")
+                updatePost(post.id) { optimisticVote(it, type, !wantsVoted) }
+                _sessionExpired.trySend(Unit)
+            } catch (e: Exception) {
+                println("FiberSocial: TopicDetailViewModel.toggleVote error: ${e.message}")
+                updatePost(post.id) { optimisticVote(it, type, !wantsVoted) }
+            }
+        }
+    }
+
+    /** The post with [postId] in the current loaded state, or `null` if not loaded. */
+    private fun currentPost(postId: Long): Post? {
+        val current = _state.value
+        return (current as? TopicDetailState.Loaded)?.posts?.find { it.id == postId }
+    }
+
+    /** Applies [transform] to the post with [postId] in the current loaded state, if any. */
+    private fun updatePost(postId: Long, transform: (Post) -> Post) {
+        val current = _state.value
+        if (current is TopicDetailState.Loaded) {
+            _state.value = current.copy(posts = current.posts.map { if (it.id == postId) transform(it) else it })
+        }
+    }
+}
+
+/**
+ * Returns a copy of [post] with its [type] vote totals/user votes optimistically updated.
+ *
+ * A count that drops to zero removes the map entry entirely (rather than keeping a
+ * `type -> 0` entry) so that applying this twice with opposite [voted] values exactly
+ * restores the original post — needed for reverting a failed optimistic update.
+ */
+private fun optimisticVote(post: Post, type: VoteType, voted: Boolean): Post {
+    val currentCount = post.voteTotals[type.wireValue] ?: 0
+    val newCount = if (voted) currentCount + 1 else (currentCount - 1).coerceAtLeast(0)
+    val newVoteTotals = if (newCount > 0) {
+        post.voteTotals + (type.wireValue to newCount)
+    } else {
+        post.voteTotals - type.wireValue
+    }
+    val newUserVotes = if (voted) post.userVotes + type.wireValue else post.userVotes - type.wireValue
+    return post.copy(
+        voteTotals = newVoteTotals,
+        userVotes = newUserVotes,
+    )
 }
