@@ -60,32 +60,9 @@ jobs:
       - name: Compare JVM coverage to baseline
         if: github.event_name == 'pull_request' && steps.baseline-jvm.outputs.available == 'true'
         run: |
-          python3 - << 'PYEOF'
-          import xml.etree.ElementTree as ET, sys
-
-          METRICS = ("INSTRUCTION", "BRANCH")
-
-          def total_coverage(path):
-              # Top-level <counter> elements are the report-wide totals across all packages.
-              root = ET.parse(path).getroot()
-              return {
-                  c.get("type"): int(c.get("covered")) / (int(c.get("missed")) + int(c.get("covered")))
-                  for c in root.findall("counter")
-                  if c.get("type") in METRICS
-              }
-
-          baseline = total_coverage("/tmp/jvm-baseline/report.xml")
-          current  = total_coverage("src/common/build/reports/jacoco/jvmCoverageReport/report.xml")
-
-          failed = False
-          for t in METRICS:
-              b, c = baseline.get(t, 0), current.get(t, 0)
-              ok = c >= b - 0.001          # 0.1 % rounding tolerance
-              print(f"JVM {t}: {c:.1%} vs baseline {b:.1%}  {'OK' if ok else 'REGRESSION'}")
-              if not ok:
-                  failed = True
-          sys.exit(1 if failed else 0)
-          PYEOF
+          python3 scripts/compare_coverage.py JVM \
+            src/common/build/reports/jacoco/jvmCoverageReport/report.xml \
+            /tmp/jvm-baseline/report.xml
 
       - name: Upload JVM coverage report
         if: always()
@@ -155,32 +132,9 @@ jobs:
       - name: Compare Android coverage to baseline
         if: github.event_name == 'pull_request' && steps.baseline-android.outputs.available == 'true'
         run: |
-          python3 - << 'PYEOF'
-          import xml.etree.ElementTree as ET, sys
-
-          METRICS = ("INSTRUCTION", "BRANCH")
-
-          def total_coverage(path):
-              # Top-level <counter> elements are the report-wide totals across all packages.
-              root = ET.parse(path).getroot()
-              return {
-                  c.get("type"): int(c.get("covered")) / (int(c.get("missed")) + int(c.get("covered")))
-                  for c in root.findall("counter")
-                  if c.get("type") in METRICS
-              }
-
-          baseline = total_coverage("/tmp/android-baseline/report.xml")
-          current  = total_coverage("src/common/build/reports/coverage/test/debug/report.xml")
-
-          failed = False
-          for t in METRICS:
-              b, c = baseline.get(t, 0), current.get(t, 0)
-              ok = c >= b - 0.001
-              print(f"Android {t}: {c:.1%} vs baseline {b:.1%}  {'OK' if ok else 'REGRESSION'}")
-              if not ok:
-                  failed = True
-          sys.exit(1 if failed else 0)
-          PYEOF
+          python3 scripts/compare_coverage.py Android \
+            src/common/build/reports/coverage/test/debug/report.xml \
+            /tmp/android-baseline/report.xml
 
       - name: Upload Android coverage report
         if: always()
