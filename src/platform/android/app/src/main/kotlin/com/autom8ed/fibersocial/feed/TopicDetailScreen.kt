@@ -3,6 +3,7 @@ package com.autom8ed.fibersocial.feed
 import android.text.method.LinkMovementMethod
 import android.widget.TextView
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,6 +19,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.CircularProgressIndicator
@@ -43,6 +45,9 @@ import coil.compose.AsyncImage
 import com.autom8ed.fibersocial.feed.models.FeedItem
 import com.autom8ed.fibersocial.feed.models.Post
 import com.autom8ed.fibersocial.feed.models.RavelryUser
+import com.autom8ed.fibersocial.feed.models.VoteType
+import com.autom8ed.fibersocial.feed.models.hasVoted
+import com.autom8ed.fibersocial.feed.models.voteCount
 import io.noties.markwon.Markwon
 import io.noties.markwon.html.HtmlPlugin
 import io.noties.markwon.linkify.LinkifyPlugin
@@ -53,6 +58,7 @@ fun TopicDetailScreen(
     topic: FeedItem.DiscussionTopic,
     postsState: TopicDetailState,
     onBack: () -> Unit,
+    onVote: (Post, VoteType) -> Unit,
 ) {
     Scaffold(
         topBar = {
@@ -115,7 +121,7 @@ fun TopicDetailScreen(
                     postsState.posts,
                     key = { it.id },
                 ) { post ->
-                    ReplyItem(post = post)
+                    ReplyItem(post = post, onVote = { type -> onVote(post, type) })
                     HorizontalDivider()
                 }
             }
@@ -124,12 +130,56 @@ fun TopicDetailScreen(
 }
 
 @Composable
-private fun ReplyItem(post: Post) {
+private fun ReplyItem(post: Post, onVote: (VoteType) -> Unit) {
     Column(modifier = Modifier.padding(vertical = 12.dp)) {
         AuthorRow(user = post.user, timestamp = post.createdAt)
         if (post.bodyHtml.isNotBlank()) {
             Spacer(Modifier.height(8.dp))
             MarkwonHtmlText(html = post.bodyHtml)
+        }
+        Spacer(Modifier.height(8.dp))
+        VoteRow(post = post, onVote = onVote)
+    }
+}
+
+private val VOTE_TYPE_EMOJI: Map<VoteType, String> = mapOf(
+    VoteType.INTERESTING to "🤔",
+    VoteType.EDUCATIONAL to "📚",
+    VoteType.FUNNY to "😂",
+    VoteType.AGREE to "👍",
+    VoteType.DISAGREE to "👎",
+    VoteType.LOVE to "❤️",
+)
+
+@Composable
+private fun VoteRow(post: Post, onVote: (VoteType) -> Unit) {
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        VoteType.entries.forEach { type ->
+            VoteButton(
+                emoji = VOTE_TYPE_EMOJI.getValue(type),
+                count = post.voteCount(type),
+                voted = post.hasVoted(type),
+                onClick = { onVote(type) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun VoteButton(emoji: String, count: Int, voted: Boolean, onClick: () -> Unit) {
+    val background = if (voted) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(background)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+    ) {
+        Text(text = emoji, style = MaterialTheme.typography.labelMedium)
+        if (count > 0) {
+            Spacer(Modifier.width(4.dp))
+            Text(text = count.toString(), style = MaterialTheme.typography.labelSmall)
         }
     }
 }
