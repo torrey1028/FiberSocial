@@ -104,22 +104,24 @@ class TopicDetailViewModelTest {
         }
 
     @Test
-    fun `toggleVote optimistically flips vote state and count before server responds`() =
-        runTest(UnconfinedTestDispatcher()) {
-            val vm = TopicDetailViewModel(routingApiClient { path ->
-                if (path.contains("vote")) voteResponseJson("love", 1, userVoted = true) else postsJson(1L)
-            }, this)
-            vm.load(42L)
-            awaitChildren(coroutineContext[Job]!!)
-            val original = (vm.state.value as TopicDetailState.Loaded).posts[0]
-            assertEquals(0, original.voteTotals["love"] ?: 0)
+    fun `toggleVote optimistically flips vote state and count before server responds`() = runTest {
+        // Deliberately NOT UnconfinedTestDispatcher: toggleVote's network call runs in a
+        // launched child coroutine that must stay suspended so we can observe the
+        // synchronous optimistic update before it's overwritten by the server response.
+        val vm = TopicDetailViewModel(routingApiClient { path ->
+            if (path.contains("vote")) voteResponseJson("love", 1, userVoted = true) else postsJson(1L)
+        }, this)
+        vm.load(42L)
+        awaitChildren(coroutineContext[Job]!!)
+        val original = (vm.state.value as TopicDetailState.Loaded).posts[0]
+        assertEquals(0, original.voteTotals["love"] ?: 0)
 
-            vm.toggleVote(original, VoteType.LOVE)
+        vm.toggleVote(original, VoteType.LOVE)
 
-            val optimistic = (vm.state.value as TopicDetailState.Loaded).posts[0]
-            assertEquals(listOf("love"), optimistic.userVotes)
-            assertEquals(1, optimistic.voteTotals["love"])
-        }
+        val optimistic = (vm.state.value as TopicDetailState.Loaded).posts[0]
+        assertEquals(listOf("love"), optimistic.userVotes)
+        assertEquals(1, optimistic.voteTotals["love"])
+    }
 
     @Test
     fun `toggleVote replaces optimistic state with server-confirmed vote totals`() =
@@ -162,24 +164,24 @@ class TopicDetailViewModelTest {
     }
 
     @Test
-    fun `toggleVote on one type does not disturb an existing vote of another type`() =
-        runTest(UnconfinedTestDispatcher()) {
-            val vm = TopicDetailViewModel(routingApiClient { path ->
-                if (path.contains("vote")) {
-                    voteResponseJson("funny", 1, userVoted = true)
-                } else {
-                    """{"posts":[{"id":1,"body_html":"<p>Reply</p>","user":{"username":"user1"},"vote_totals":{"love":1},"user_votes":["love"]}]}"""
-                }
-            }, this)
-            vm.load(42L)
-            awaitChildren(coroutineContext[Job]!!)
-            val original = (vm.state.value as TopicDetailState.Loaded).posts[0]
+    fun `toggleVote on one type does not disturb an existing vote of another type`() = runTest {
+        // Deliberately NOT UnconfinedTestDispatcher — see comment on the optimistic-flip test above.
+        val vm = TopicDetailViewModel(routingApiClient { path ->
+            if (path.contains("vote")) {
+                voteResponseJson("funny", 1, userVoted = true)
+            } else {
+                """{"posts":[{"id":1,"body_html":"<p>Reply</p>","user":{"username":"user1"},"vote_totals":{"love":1},"user_votes":["love"]}]}"""
+            }
+        }, this)
+        vm.load(42L)
+        awaitChildren(coroutineContext[Job]!!)
+        val original = (vm.state.value as TopicDetailState.Loaded).posts[0]
 
-            vm.toggleVote(original, VoteType.FUNNY)
+        vm.toggleVote(original, VoteType.FUNNY)
 
-            val optimistic = (vm.state.value as TopicDetailState.Loaded).posts[0]
-            assertTrue(optimistic.userVotes.containsAll(listOf("love", "funny")))
-        }
+        val optimistic = (vm.state.value as TopicDetailState.Loaded).posts[0]
+        assertTrue(optimistic.userVotes.containsAll(listOf("love", "funny")))
+    }
 
     @Test
     fun `toggleVote reverts optimistic update when the vote call fails`() = runTest(UnconfinedTestDispatcher()) {

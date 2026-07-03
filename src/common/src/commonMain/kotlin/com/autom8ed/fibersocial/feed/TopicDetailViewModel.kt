@@ -90,38 +90,50 @@ class TopicDetailViewModel(
      */
     fun toggleVote(post: Post, type: VoteType) {
         val wantsVoted = !post.hasVoted(type)
-        replacePost(post.id, optimisticVote(post, type, wantsVoted))
+        updatePost(post.id) { optimisticVote(it, type, wantsVoted) }
 
         scope.launch {
             try {
                 val result = apiClient.voteOnPost(post.id, type, voted = wantsVoted)
-                replacePost(post.id, post.copy(voteTotals = result.voteTotals, userVotes = result.userVotes))
+                updatePost(post.id) { it.copy(voteTotals = result.voteTotals, userVotes = result.userVotes) }
             } catch (e: SessionExpiredException) {
                 println("FiberSocial: TopicDetailViewModel.toggleVote session expired")
-                replacePost(post.id, post)
+                updatePost(post.id) { optimisticVote(it, type, !wantsVoted) }
                 _sessionExpired.trySend(Unit)
             } catch (e: Exception) {
                 println("FiberSocial: TopicDetailViewModel.toggleVote error: ${e.message}")
-                replacePost(post.id, post)
+                updatePost(post.id) { optimisticVote(it, type, !wantsVoted) }
             }
         }
     }
 
-    private fun replacePost(postId: Long, updated: Post) {
+    /** Applies [transform] to the post with [postId] in the current loaded state, if any. */
+    private fun updatePost(postId: Long, transform: (Post) -> Post) {
         val current = _state.value
         if (current is TopicDetailState.Loaded) {
-            _state.value = current.copy(posts = current.posts.map { if (it.id == postId) updated else it })
+            _state.value = current.copy(posts = current.posts.map { if (it.id == postId) transform(it) else it })
         }
     }
 }
 
-/** Returns a copy of [post] with its [type] vote totals/user votes optimistically updated. */
+/**
+ * Returns a copy of [post] with its [type] vote totals/user votes optimistically updated.
+ *
+ * A count that drops to zero removes the map entry entirely (rather than keeping a
+ * `type -> 0` entry) so that applying this twice with opposite [voted] values exactly
+ * restores the original post — needed for reverting a failed optimistic update.
+ */
 private fun optimisticVote(post: Post, type: VoteType, voted: Boolean): Post {
     val currentCount = post.voteTotals[type.wireValue] ?: 0
     val newCount = if (voted) currentCount + 1 else (currentCount - 1).coerceAtLeast(0)
+    val newVoteTotals = if (newCount > 0) {
+        post.voteTotals + (type.wireValue to newCount)
+    } else {
+        post.voteTotals - type.wireValue
+    }
     val newUserVotes = if (voted) post.userVotes + type.wireValue else post.userVotes - type.wireValue
     return post.copy(
-        voteTotals = post.voteTotals + (type.wireValue to newCount),
+        voteTotals = newVoteTotals,
         userVotes = newUserVotes,
     )
 }
