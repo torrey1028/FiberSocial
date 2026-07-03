@@ -54,6 +54,7 @@ fun FeedScreen(viewModel: FeedAndroidViewModel) {
             topic = selectedTopic!!,
             postsState = topicDetailState,
             onBack = { selectedTopic = null },
+            onVote = { post, type -> viewModel.topicDetail.toggleVote(post, type) },
         )
         return
     }

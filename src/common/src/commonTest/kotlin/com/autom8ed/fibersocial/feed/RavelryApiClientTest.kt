@@ -2,6 +2,7 @@ package com.autom8ed.fibersocial.feed
 
 import com.autom8ed.fibersocial.auth.AuthToken
 import com.autom8ed.fibersocial.auth.SessionExpiredException
+import com.autom8ed.fibersocial.feed.models.VoteType
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
@@ -188,6 +189,125 @@ class RavelryApiClientTest {
     fun `getTopicPosts returns empty list when topic has no posts`() = runTest {
         val client = routingApiClient { """{"posts":[]}""" }
         assertEquals(emptyList(), client.getTopicPosts(42L))
+    }
+
+    @Test
+    fun `getTopicPosts requests vote_totals and user_votes`() = runTest {
+        var capturedInclude: String? = null
+        val engine = MockEngine { request ->
+            capturedInclude = request.url.parameters["include"]
+            respond(postsJson(1L), HttpStatusCode.OK,
+                headersOf("Content-Type", ContentType.Application.Json.toString()))
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        RavelryApiClient(httpClient, FakeFeedTokenStorage()).getTopicPosts(42L)
+        assertEquals("vote_totals user_votes", capturedInclude)
+    }
+
+    @Test
+    fun `getTopicPosts merges top-level vote_totals and user_votes onto matching post by id`() = runTest {
+        // Ravelry doesn't nest vote_totals/user_votes inside each post in this endpoint's
+        // response — it returns them as separate maps keyed by post id (as a string),
+        // alongside the posts array.
+        val client = routingApiClient {
+            """{"posts":[{"id":1,"body_html":"<p>Reply</p>","user":{"username":"user1"}}],
+                "vote_totals":{"1":{"love":3}},"user_votes":{"1":["love"]}}"""
+        }
+        val posts = client.getTopicPosts(42L)
+        assertEquals(mapOf("love" to 3), posts[0].voteTotals)
+        assertEquals(listOf("love"), posts[0].userVotes)
+    }
+
+    @Test
+    fun `getTopicPosts matches each post's own vote data by id, not another post's`() = runTest {
+        val client = routingApiClient {
+            """{"posts":[
+                {"id":1,"body_html":"<p>A</p>","user":{"username":"user1"}},
+                {"id":2,"body_html":"<p>B</p>","user":{"username":"user2"}}
+               ],
+               "vote_totals":{"1":{"interesting":1,"agree":2},"2":{"funny":1}},
+               "user_votes":{"1":["agree"],"2":[]}}"""
+        }
+        val posts = client.getTopicPosts(42L)
+        assertEquals(mapOf("interesting" to 1, "agree" to 2), posts[0].voteTotals)
+        assertEquals(listOf("agree"), posts[0].userVotes)
+        assertEquals(mapOf("funny" to 1), posts[1].voteTotals)
+        assertEquals(emptyList(), posts[1].userVotes)
+    }
+
+    @Test
+    fun `getTopicPosts defaults vote fields to empty when absent`() = runTest {
+        val client = routingApiClient { postsJson(1L) }
+        val posts = client.getTopicPosts(42L)
+        assertEquals(emptyMap(), posts[0].voteTotals)
+        assertEquals(emptyList(), posts[0].userVotes)
+    }
+
+    @Test
+    fun `voteOnPost posts to forum_posts vote endpoint with the given type`() = runTest {
+        var capturedPath: String? = null
+        var capturedMethod: String? = null
+        var capturedType: String? = null
+        var capturedVote: String? = null
+        val engine = MockEngine { request ->
+            capturedPath = request.url.encodedPath
+            capturedMethod = request.method.value
+            capturedType = request.url.parameters["type"]
+            capturedVote = request.url.parameters["vote"]
+            respond(voteResponseJson("love", 1, userVoted = true), HttpStatusCode.OK,
+                headersOf("Content-Type", ContentType.Application.Json.toString()))
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val result = RavelryApiClient(httpClient, FakeFeedTokenStorage())
+            .voteOnPost(1000L, VoteType.LOVE, voted = true)
+
+        assertEquals("/forum_posts/1000/vote.json", capturedPath)
+        assertEquals("POST", capturedMethod)
+        assertEquals("love", capturedType)
+        assertEquals("1", capturedVote)
+        assertEquals(mapOf("love" to 1), result.voteTotals)
+        assertEquals(listOf("love"), result.userVotes)
+    }
+
+    @Test
+    fun `voteOnPost passes through non-love vote types`() = runTest {
+        var capturedType: String? = null
+        val engine = MockEngine { request ->
+            capturedType = request.url.parameters["type"]
+            respond(voteResponseJson("funny", 1, userVoted = true), HttpStatusCode.OK,
+                headersOf("Content-Type", ContentType.Application.Json.toString()))
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val result = RavelryApiClient(httpClient, FakeFeedTokenStorage())
+            .voteOnPost(1000L, VoteType.FUNNY, voted = true)
+
+        assertEquals("funny", capturedType)
+        assertEquals(mapOf("funny" to 1), result.voteTotals)
+        assertEquals(listOf("funny"), result.userVotes)
+    }
+
+    @Test
+    fun `voteOnPost clears vote when voted is false`() = runTest {
+        var capturedVote: String? = null
+        val engine = MockEngine { request ->
+            capturedVote = request.url.parameters["vote"]
+            respond(voteResponseJson("love", 0, userVoted = false), HttpStatusCode.OK,
+                headersOf("Content-Type", ContentType.Application.Json.toString()))
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val result = RavelryApiClient(httpClient, FakeFeedTokenStorage())
+            .voteOnPost(1000L, VoteType.LOVE, voted = false)
+
+        assertEquals("0", capturedVote)
+        assertEquals(emptyList(), result.userVotes)
     }
 
     @Test

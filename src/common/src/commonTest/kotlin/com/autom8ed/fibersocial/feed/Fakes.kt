@@ -78,6 +78,11 @@ fun postsJson(vararg ids: Long) = """{"posts":[${
     }
 }]}"""
 
+fun voteResponseJson(type: String, count: Int, userVoted: Boolean) = """{
+    "vote_totals":{"$type":$count},
+    "user_votes":[${if (userVoted) "\"$type\"" else ""}]
+}"""
+
 fun topicDetailJson(
     id: Long,
     imagesCount: Int = 0,

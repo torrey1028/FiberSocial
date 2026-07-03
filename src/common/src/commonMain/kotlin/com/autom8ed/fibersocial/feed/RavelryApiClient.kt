@@ -6,9 +6,11 @@ import com.autom8ed.fibersocial.feed.models.Group
 import com.autom8ed.fibersocial.feed.models.Post
 import com.autom8ed.fibersocial.feed.models.RavelryUser
 import com.autom8ed.fibersocial.feed.models.Topic
+import com.autom8ed.fibersocial.feed.models.VoteType
 import io.ktor.client.HttpClient
 import io.ktor.client.request.get
 import io.ktor.client.request.header
+import io.ktor.client.request.post
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpHeaders
@@ -215,7 +217,8 @@ class RavelryApiClient(
     }
 
     /**
-     * Returns all posts (replies) for a topic, ordered oldest-first.
+     * Returns all posts (replies) for a topic, ordered oldest-first. Each post's
+     * [Post.voteTotals] and [Post.userVotes] are populated with its current reaction state.
      *
      * @param topicId Ravelry topic ID.
      */
@@ -223,9 +226,42 @@ class RavelryApiClient(
         val raw = authenticatedRequest {
             httpClient.get("$BASE_URL/topics/$topicId/posts.json") {
                 header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
+                url.parameters.append("include", "vote_totals user_votes")
             }
         }
-        return lenientJson.decodeFromString<PostsResponse>(raw).posts
+        val response = lenientJson.decodeFromString<PostsResponse>(raw)
+        // Unlike forum_posts/vote, this endpoint doesn't nest vote_totals/user_votes inside
+        // each post — it returns them as separate maps keyed by post ID (as a string),
+        // alongside the posts array. Merge them onto their matching post here.
+        return response.posts.map { post ->
+            val postKey = post.id.toString()
+            post.copy(
+                voteTotals = response.voteTotals[postKey] ?: emptyMap(),
+                userVotes = response.userVotes[postKey] ?: emptyList(),
+            )
+        }
+    }
+
+    /**
+     * Casts or clears the current user's vote of [type] on a forum post.
+     *
+     * @param postId Ravelry forum post ID.
+     * @param type Which reaction to cast (interesting, educational, funny, agree, disagree, love).
+     * @param voted `true` to cast the vote, `false` to clear it.
+     * @return The post's updated vote totals and the current user's vote types.
+     */
+    suspend fun voteOnPost(postId: Long, type: VoteType, voted: Boolean): VoteResult {
+        val raw = authenticatedRequest {
+            httpClient.post("$BASE_URL/forum_posts/$postId/vote.json") {
+                header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
+                url.parameters.apply {
+                    append("type", type.wireValue)
+                    append("vote", if (voted) "1" else "0")
+                }
+            }
+        }
+        val response = lenientJson.decodeFromString<VoteResponse>(raw)
+        return VoteResult(voteTotals = response.voteTotals, userVotes = response.userVotes)
     }
 
     /**
@@ -242,7 +278,11 @@ class RavelryApiClient(
         return lenientJson.decodeFromString<TopicDetailResponse>(raw).topic
     }
 
-    @Serializable private data class PostsResponse(val posts: List<Post> = emptyList())
+    @Serializable private data class PostsResponse(
+        val posts: List<Post> = emptyList(),
+        @SerialName("vote_totals") val voteTotals: Map<String, Map<String, Int>> = emptyMap(),
+        @SerialName("user_votes") val userVotes: Map<String, List<String>> = emptyMap(),
+    )
     @Serializable private data class CurrentUserResponse(val user: RavelryUser)
     @Serializable private data class GroupsSearchResponse(val groups: List<Group> = emptyList())
     @Serializable private data class TopicsResponse(
@@ -255,4 +295,19 @@ class RavelryApiClient(
         @SerialName("page_count") val pageCount: Int = 1,
         @SerialName("results") val totalResults: Int = 0,
     )
+    @Serializable private data class VoteResponse(
+        @SerialName("vote_totals") val voteTotals: Map<String, Int> = emptyMap(),
+        @SerialName("user_votes") val userVotes: List<String> = emptyList(),
+    )
 }
+
+/**
+ * Result of casting or clearing a vote on a forum post.
+ *
+ * @property voteTotals Vote-type name to total vote count on the post, after the vote.
+ * @property userVotes Vote-type names the current user has cast on the post, after the vote.
+ */
+data class VoteResult(
+    val voteTotals: Map<String, Int>,
+    val userVotes: List<String>,
+)
