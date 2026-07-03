@@ -126,14 +126,14 @@ object HtmlPostParser {
         alignment = cellAlignment(cell),
     )
 
-    private fun cellAlignment(cell: Element): CellAlignment {
-        val style = cell.attr("style")
-        return when {
-            style.contains("text-align: center") -> CellAlignment.CENTER
-            style.contains("text-align: right") -> CellAlignment.RIGHT
+    private fun cellAlignment(cell: Element): CellAlignment =
+        when (TEXT_ALIGN.find(cell.attr("style"))?.groupValues?.get(1)?.lowercase()) {
+            "center" -> CellAlignment.CENTER
+            "right" -> CellAlignment.RIGHT
             else -> CellAlignment.LEFT
         }
-    }
+
+    private val TEXT_ALIGN = Regex("text-align\\s*:\\s*(left|center|right)", RegexOption.IGNORE_CASE)
 
     private fun parseInlineChildren(element: Element): List<Inline> =
         element.childNodes().flatMap { parseInlineNode(it) }

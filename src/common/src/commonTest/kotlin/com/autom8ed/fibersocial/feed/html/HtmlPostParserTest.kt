@@ -241,6 +241,21 @@ class HtmlPostParserBlockTest {
     }
 
     @Test
+    fun `table cell alignment tolerates spacing and casing variants`() {
+        val doc = HtmlPostParser.parse(
+            """<table><tbody><tr>
+               <td style="text-align:center;">no space</td>
+               <td style="TEXT-ALIGN: Right">upper</td>
+               </tr></tbody></table>"""
+        )
+        val table = assertIs<PostBlock.Table>(doc.blocks.single())
+        assertEquals(
+            listOf(CellAlignment.CENTER, CellAlignment.RIGHT),
+            table.rows.single().map { it.alignment },
+        )
+    }
+
+    @Test
     fun `table without thead has an empty header row`() {
         val doc = HtmlPostParser.parse("<table><tbody><tr><td>only</td></tr></tbody></table>")
         val table = assertIs<PostBlock.Table>(doc.blocks.single())
