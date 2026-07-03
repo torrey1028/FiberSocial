@@ -2,6 +2,7 @@ package com.autom8ed.fibersocial.feed
 
 import com.autom8ed.fibersocial.auth.AuthToken
 import com.autom8ed.fibersocial.auth.SessionExpiredException
+import com.autom8ed.fibersocial.feed.models.Post
 import com.autom8ed.fibersocial.feed.models.VoteType
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
@@ -273,6 +274,99 @@ class TopicDetailViewModelTest {
         assertEquals(original, (vm.state.value as TopicDetailState.Loaded).posts[0])
         vm.sessionExpired.first()
     }
+
+    @Test
+    fun `toggleVote before any load computes wantsVoted from the post parameter and leaves state untouched`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val vm = TopicDetailViewModel(routingApiClient { path ->
+                if (path.contains("vote")) voteResponseJson("love", 1, userVoted = true) else postsJson(1L)
+            }, this)
+            // Deliberately no vm.load() call: state stays Loading, so currentPost(post.id) can't
+            // find anything and toggleVote must fall back to the passed-in `post` parameter.
+            assertIs<TopicDetailState.Loading>(vm.state.value)
+
+            vm.toggleVote(Post(id = 1L), VoteType.LOVE)
+            awaitChildren(coroutineContext[Job]!!)
+
+            assertIs<TopicDetailState.Loading>(vm.state.value)
+        }
+
+    @Test
+    fun `toggleVote on a post no longer in the loaded list leaves the list unchanged`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val vm = TopicDetailViewModel(routingApiClient { path ->
+                if (path.contains("vote")) voteResponseJson("love", 1, userVoted = true) else postsJson(1L)
+            }, this)
+            vm.load(42L)
+            awaitChildren(coroutineContext[Job]!!)
+            val before = (vm.state.value as TopicDetailState.Loaded).posts
+
+            // id 999 isn't in the loaded list, so currentPost(999) must search the whole list,
+            // find nothing, and fall back to the passed-in post parameter for direction.
+            vm.toggleVote(Post(id = 999L), VoteType.LOVE)
+            awaitChildren(coroutineContext[Job]!!)
+
+            assertEquals(before, (vm.state.value as TopicDetailState.Loaded).posts)
+        }
+
+    @Test
+    fun `toggleVote reverts when clearing an already-cast vote fails with a generic exception`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val engine = MockEngine { request ->
+                if (request.url.encodedPath.contains("vote")) {
+                    error("Simulated network error")
+                } else {
+                    respond(
+                        """{"posts":[{"id":1,"body_html":"<p>Reply</p>","user":{"username":"user1"}}],
+                            "vote_totals":{"1":{"love":1}},"user_votes":{"1":["love"]}}""",
+                        HttpStatusCode.OK, headersOf("Content-Type", ContentType.Application.Json.toString()),
+                    )
+                }
+            }
+            val httpClient = HttpClient(engine) {
+                install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+            }
+            val vm = TopicDetailViewModel(RavelryApiClient(httpClient, FakeFeedTokenStorage()), this)
+            vm.load(42L)
+            awaitChildren(coroutineContext[Job]!!)
+            val original = (vm.state.value as TopicDetailState.Loaded).posts[0]
+            assertTrue(original.userVotes.contains("love"))
+
+            vm.toggleVote(original, VoteType.LOVE)
+            awaitChildren(coroutineContext[Job]!!)
+
+            assertEquals(original, (vm.state.value as TopicDetailState.Loaded).posts[0])
+        }
+
+    @Test
+    fun `toggleVote reverts and signals sessionExpired when clearing an already-cast vote fails`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val engine = MockEngine { request ->
+                if (request.url.encodedPath.contains("vote")) {
+                    throw SessionExpiredException("expired")
+                } else {
+                    respond(
+                        """{"posts":[{"id":1,"body_html":"<p>Reply</p>","user":{"username":"user1"}}],
+                            "vote_totals":{"1":{"love":1}},"user_votes":{"1":["love"]}}""",
+                        HttpStatusCode.OK, headersOf("Content-Type", ContentType.Application.Json.toString()),
+                    )
+                }
+            }
+            val httpClient = HttpClient(engine) {
+                install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+            }
+            val vm = TopicDetailViewModel(RavelryApiClient(httpClient, FakeFeedTokenStorage()), this)
+            vm.load(42L)
+            awaitChildren(coroutineContext[Job]!!)
+            val original = (vm.state.value as TopicDetailState.Loaded).posts[0]
+            assertTrue(original.userVotes.contains("love"))
+
+            vm.toggleVote(original, VoteType.LOVE)
+            awaitChildren(coroutineContext[Job]!!)
+
+            assertEquals(original, (vm.state.value as TopicDetailState.Loaded).posts[0])
+            vm.sessionExpired.first()
+        }
 
     @Test
     fun `TopicDetailState data classes support equality copy hashCode and toString`() {
