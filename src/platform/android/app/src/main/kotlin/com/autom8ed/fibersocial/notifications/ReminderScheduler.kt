@@ -4,6 +4,7 @@ import android.app.AlarmManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
 
 /**
@@ -54,6 +55,13 @@ class ReminderScheduler(private val context: Context) {
      */
     private fun pendingIntent(reminder: ScheduledReminder): PendingIntent {
         val intent = Intent(context, ReminderReceiver::class.java).apply {
+            // Identity lives in the data URI, not just the requestCode hash:
+            // Intent.filterEquals includes data, so two reminders whose Int hashes
+            // collide still map to distinct PendingIntents (same hardening as the
+            // notification tap intents in EventNotifier).
+            data = Uri.parse(
+                "fibersocial://reminder/${reminder.eventPermalink}/${reminder.kind.name}/${reminder.fireAtEpochMs}",
+            )
             putExtra(EXTRA_EVENT_PERMALINK, reminder.eventPermalink)
             putExtra(ReminderReceiver.EXTRA_EVENT_TITLE, reminder.eventTitle)
             putExtra(ReminderReceiver.EXTRA_REMINDER_KIND, reminder.kind.name)
