@@ -462,6 +462,46 @@ class RavelryApiClientTest {
         val client = routingApiClient { "<html><body>no box</body></html>" }
         assertEquals(emptyList(), client.getGroupEvents("quiet-group"))
     }
+
+    @Test
+    fun `getGroupEvents throws SessionExpiredException on 401`() = runTest {
+        val client = htmlApiClient(MockEngine { _ ->
+            respond("", HttpStatusCode.Unauthorized)
+        })
+        assertFailsWith<SessionExpiredException> { client.getGroupEvents("quiet-group") }
+    }
+
+    @Test
+    fun `getGroupEvents throws SessionExpiredException when redirected to the login page`() = runTest {
+        // An expired session cookie doesn't 401 on www.ravelry.com — it 302s to the login
+        // page, which Ktor follows to a 200. The client must not mistake that for a group
+        // page with no events box.
+        val client = htmlApiClient(MockEngine { request ->
+            if (request.url.encodedPath.startsWith("/groups/")) {
+                respond("", HttpStatusCode.Found,
+                    headersOf(HttpHeaders.Location, "https://www.ravelry.com/account/login"))
+            } else {
+                respond("<html><body>please log in</body></html>", HttpStatusCode.OK,
+                    headersOf("Content-Type", ContentType.Text.Html.toString()))
+            }
+        })
+        assertFailsWith<SessionExpiredException> { client.getGroupEvents("quiet-group") }
+    }
+
+    @Test
+    fun `getGroupEvents throws on a server error response`() = runTest {
+        val client = htmlApiClient(MockEngine { _ ->
+            respond("oops", HttpStatusCode.InternalServerError)
+        })
+        assertFailsWith<IllegalStateException> { client.getGroupEvents("quiet-group") }
+    }
+}
+
+private fun htmlApiClient(engine: MockEngine): RavelryApiClient {
+    val httpClient = HttpClient(engine) {
+        install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+    }
+    return RavelryApiClient(httpClient, FakeFeedTokenStorage())
 }
 
 private val GROUP_PAGE_EVENTS_HTML = """

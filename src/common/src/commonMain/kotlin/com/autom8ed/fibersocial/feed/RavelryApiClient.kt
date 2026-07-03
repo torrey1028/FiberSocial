@@ -15,8 +15,10 @@ import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
+import io.ktor.client.statement.request
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.isSuccess
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -152,13 +154,29 @@ class RavelryApiClient(
      * [GroupEventsParser]). Groups without the box yield an empty list.
      *
      * @param groupPermalink The group's permalink, e.g. `kirkland-fiber-arts-circle-2`.
+     * @throws SessionExpiredException if the session cookie is rejected (401/403, or a
+     *   redirect off the group page — Ravelry sends expired sessions to the login page).
+     * @throws IllegalStateException on any other non-2xx response.
      */
     suspend fun getGroupEvents(groupPermalink: String): List<EventSummary> {
-        val html = httpClient.get("https://www.ravelry.com/groups/$groupPermalink") {
+        val response = httpClient.get("https://www.ravelry.com/groups/$groupPermalink") {
             header(HttpHeaders.Cookie, sessionCookie())
             header(HttpHeaders.Accept, "text/html")
-        }.bodyAsText()
-        val events = GroupEventsParser.parse(html)
+        }
+        when {
+            response.status == HttpStatusCode.Unauthorized || response.status == HttpStatusCode.Forbidden ->
+                throw SessionExpiredException("Group page for $groupPermalink returned ${response.status}")
+            // Ktor follows redirects, so an expired session cookie surfaces here as a 200
+            // login page, not a 302. Landing anywhere outside /groups/ means we were
+            // bounced; a redirect within /groups/ (permalink canonicalization) is fine.
+            !response.request.url.encodedPath.startsWith("/groups/") ->
+                throw SessionExpiredException(
+                    "Group page for $groupPermalink redirected to ${response.request.url.encodedPath}"
+                )
+            !response.status.isSuccess() ->
+                error("Group page for $groupPermalink returned ${response.status}")
+        }
+        val events = GroupEventsParser.parse(response.bodyAsText())
         println("FiberSocial: getGroupEvents($groupPermalink) -> ${events.size} events")
         return events
     }
