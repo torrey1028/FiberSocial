@@ -111,6 +111,10 @@ fun TopicDetailScreen(
     // (and its draft) survives rotation; resolving through the loaded posts also
     // auto-dismisses it if the post vanishes.
     var editingPostId by rememberSaveable { mutableStateOf<Long?>(null) }
+    // Hoisted: the bottomBar swaps ReplyComposer out for the EditBar, and a branch
+    // swap disposes composition state (rememberSaveable does not restore across
+    // leave/re-enter) — an in-progress reply draft must survive a quick edit.
+    var replyDraft by rememberSaveable { mutableStateOf("") }
     val editingPost = (postsState as? TopicDetailState.Loaded)
         ?.posts?.firstOrNull { it.id == editingPostId }
     // The system back button must mirror the top-bar back arrow instead of
@@ -158,6 +162,8 @@ fun TopicDetailScreen(
                 )
             } else {
                 ReplyComposer(
+                    text = replyDraft,
+                    onTextChange = { replyDraft = it },
                     replyState = replyState,
                     onSend = onSendReply,
                     onSent = onReplySent,
@@ -233,7 +239,12 @@ fun TopicDetailScreen(
                             // delete is in flight, other posts' actions are disabled
                             // instead of silently dropping taps.
                             actionsEnabled = deleteState !is DeleteState.Deleting,
-                            onEdit = { editingPostId = post.id },
+                            onEdit = {
+                                // Opening (or switching) the bar consumes any stale error —
+                                // post A's failure must not render inside post B's bar.
+                                onEditErrorShown()
+                                editingPostId = post.id
+                            },
                         )
                         HorizontalDivider()
                     }
@@ -310,8 +321,11 @@ private fun EditBar(
     val error = editState is EditState.Error
     val focusRequester = remember { FocusRequester() }
 
-    // Close only when this post's save completes (Saving -> Idle). An Error keeps the bar open.
-    val wasSaving = remember { mutableStateOf(false) }
+    // Close only when this post's save completes (Saving -> Idle). An Error keeps
+    // the bar open. Keyed by post: leftover true from post A's in-flight save would
+    // otherwise instantly close post B's freshly-opened bar (and A's later completion
+    // would close whatever bar is open).
+    val wasSaving = remember(post.id) { mutableStateOf(false) }
     LaunchedEffect(saving, error) {
         if (wasSaving.value && !saving && !error) onClose()
         if (saving) wasSaving.value = true
@@ -319,7 +333,15 @@ private fun EditBar(
     LaunchedEffect(post.id) { runCatching { focusRequester.requestFocus() } }
 
     Surface(tonalElevation = 3.dp) {
-        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
+        // imePadding: the bar requests focus on open, so the keyboard rises
+        // immediately — without this the bar sits behind the very keyboard it
+        // exists to stay above.
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .imePadding()
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+        ) {
             if (error) {
                 Text(
                     text = (editState as? EditState.Error)?.message
@@ -445,13 +467,16 @@ internal fun ReplyComposer(
     replyState: ReplyState,
     onSend: (String) -> Unit,
     onSent: () -> Unit,
+    // Hoisted by the screen so the draft survives the composer being swapped out
+    // for the edit bar (a bottomBar branch swap disposes composition state).
+    text: String,
+    onTextChange: (String) -> Unit,
 ) {
-    var text by rememberSaveable { mutableStateOf("") }
     val sending = replyState is ReplyState.Sending
 
     LaunchedEffect(replyState) {
         if (replyState is ReplyState.Sent) {
-            text = ""
+            onTextChange("")
             onSent()
         }
     }
@@ -475,7 +500,7 @@ internal fun ReplyComposer(
             Row(verticalAlignment = Alignment.Bottom) {
                 OutlinedTextField(
                     value = text,
-                    onValueChange = { text = it },
+                    onValueChange = onTextChange,
                     placeholder = { Text("Write a reply…") },
                     enabled = !sending,
                     modifier = Modifier.weight(1f),
