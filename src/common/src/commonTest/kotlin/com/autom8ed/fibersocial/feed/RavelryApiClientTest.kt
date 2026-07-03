@@ -592,16 +592,21 @@ class RavelryApiClientTest {
                 headersOf("Content-Type", ContentType.Text.Html.toString()),
             )
         }
-        val httpClient = HttpClient(engine) {
-            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
-        }
-        val client = RavelryApiClient(httpClient, FakeFeedTokenStorage())
+        val client = htmlApiClient(engine)
 
         val attendees = client.getEventAttendees("cozy-meetup")
 
         assertEquals("https://www.ravelry.com/events/cozy-meetup/people", requestedUrl)
         assertEquals("sess=test", sentCookie)
         assertEquals(listOf("knitwit"), attendees.map { it.username })
+    }
+
+    @Test
+    fun `getEventAttendees throws SessionExpiredException on 401`() = runTest {
+        val client = htmlApiClient(MockEngine { _ ->
+            respond("", HttpStatusCode.Unauthorized)
+        })
+        assertFailsWith<SessionExpiredException> { client.getEventAttendees("cozy-meetup") }
     }
 
     @Test

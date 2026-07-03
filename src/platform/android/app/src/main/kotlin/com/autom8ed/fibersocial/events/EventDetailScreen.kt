@@ -1,5 +1,6 @@
 package com.autom8ed.fibersocial.events
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -37,7 +38,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
-import coil.compose.AsyncImage
+import com.autom8ed.fibersocial.ui.Avatar
 import com.autom8ed.fibersocial.feed.PostBody
 import com.autom8ed.fibersocial.feed.html.HtmlPostParser
 
@@ -55,6 +56,9 @@ fun EventDetailScreen(
     onBack: () -> Unit,
     onToggleAttendance: () -> Unit,
 ) {
+    // System back must mirror the top-bar back arrow instead of exiting the app
+    // (same contract as TopicDetailScreen; see issue #38 / PR #56).
+    BackHandler(onBack = onBack)
     Scaffold(
         topBar = {
             TopAppBar(
@@ -158,7 +162,10 @@ private fun EventDetailContent(
                 )
                 Spacer(Modifier.height(4.dp))
             }
-            items(attendees, key = { it.username }) { attendee ->
+            // Namespaced so a username can never collide with the literal item
+            // keys above ("header", "going_header", …); duplicate usernames are
+            // already deduped by EventPeopleParser.
+            items(attendees, key = { "attendee:${it.username}" }) { attendee ->
                 AttendeeRow(attendee)
             }
         }
@@ -173,15 +180,7 @@ private fun AttendeeRow(attendee: EventAttendee) {
             .fillMaxWidth()
             .padding(vertical = 6.dp),
     ) {
-        AsyncImage(
-            model = attendee.avatarUrl,
-            contentDescription = null,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier
-                .size(36.dp)
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.surfaceVariant),
-        )
+        Avatar(url = attendee.avatarUrl, size = 36.dp)
         Spacer(Modifier.width(10.dp))
         Text(
             text = "@${attendee.username}",

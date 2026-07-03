@@ -20,6 +20,7 @@ import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
@@ -279,6 +280,92 @@ class EventDetailViewModelToggleAttendanceTest {
         vm.toggleAttendance()
         awaitChildren(coroutineContext[Job]!!)
         assertEquals(listOf("Megannnnn", "torrey1028"), vm.attendees.value?.map { it.username })
+    }
+
+    @Test
+    fun `a failed refresh keeps the last good attendee list`() = runTest(UnconfinedTestDispatcher()) {
+        var failPeople = false
+        val vm = EventDetailViewModel(
+            rsvpApiClient(mutableListOf(), peopleHtml = {
+                if (failPeople) error("transient network error") else peoplePage("Megannnnn")
+            }),
+            this,
+        )
+        vm.load("cozy-meetup")
+        awaitChildren(coroutineContext[Job]!!)
+        assertEquals(1, vm.attendees.value?.size)
+
+        failPeople = true
+        vm.toggleAttendance()
+        awaitChildren(coroutineContext[Job]!!)
+        // The RSVP succeeded but the follow-up scrape failed: the populated list
+        // must survive rather than the whole "Going" section vanishing.
+        assertEquals(listOf("Megannnnn"), vm.attendees.value?.map { it.username })
+    }
+
+    @Test
+    fun `a stale attendee fetch does not overwrite a newer one`() = runTest(UnconfinedTestDispatcher()) {
+        // Park the load-time people fetch (a pre-toggle snapshot) until released,
+        // so it resolves only after the post-toggle refresh. firstFetchStarted
+        // guarantees the parked request really is the load-time one: the test
+        // waits for it to reach the engine before toggling.
+        val firstFetchStarted = CompletableDeferred<Unit>()
+        val releaseFirst = CompletableDeferred<Unit>()
+        var peopleCalls = 0
+        val engine = MockEngine { request ->
+            if (request.method == HttpMethod.Post) {
+                respond("R.popover.close();", HttpStatusCode.OK,
+                    headersOf("Content-Type", "text/javascript"))
+            } else if (request.url.encodedPath.endsWith("/people")) {
+                peopleCalls++
+                if (peopleCalls == 1) {
+                    firstFetchStarted.complete(Unit)
+                    releaseFirst.await()
+                    respond(peoplePage("Megannnnn"), HttpStatusCode.OK,
+                        headersOf("Content-Type", ContentType.Text.Html.toString()))
+                } else {
+                    respond(peoplePage("Megannnnn", "torrey1028"), HttpStatusCode.OK,
+                        headersOf("Content-Type", ContentType.Text.Html.toString()))
+                }
+            } else {
+                respond(EVENT_PAGE_WITH_TOKEN, HttpStatusCode.OK,
+                    headersOf("Content-Type", ContentType.Text.Html.toString()))
+            }
+        }
+        val client = RavelryApiClient(
+            HttpClient(engine) {
+                install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+            },
+            FakeFeedTokenStorage(),
+        )
+        val vm = EventDetailViewModel(client, this)
+        vm.load("cozy-meetup")
+        firstFetchStarted.await()
+        // The event page loads independently of the parked people fetch; toggling
+        // is a no-op until the state is Loaded.
+        vm.state.first { it is EventDetailState.Loaded }
+
+        vm.toggleAttendance()
+        // Wait for the post-toggle refresh to publish, THEN release the stale
+        // fetch — the guard is now the only thing preventing the overwrite.
+        vm.attendees.first { it?.size == 2 }
+        releaseFirst.complete(Unit)
+        awaitChildren(coroutineContext[Job]!!)
+
+        // The post-toggle refresh (fetch #2) is newer; the parked load-time fetch
+        // (#1) resolving late must not revert the list to the pre-toggle snapshot.
+        assertEquals(listOf("Megannnnn", "torrey1028"), vm.attendees.value?.map { it.username })
+    }
+
+    @Test
+    fun `session expiry emits the signal once, not once per parallel fetch`() = runTest(UnconfinedTestDispatcher()) {
+        // load() fires two parallel scrapes (event page + people page); if both
+        // emitted, the second buffered Unit would instantly log out the next session.
+        val vm = EventDetailViewModel(sessionExpiredApiClient(), this)
+        vm.load("cozy-meetup")
+        awaitChildren(coroutineContext[Job]!!)
+        assertEquals(Unit, vm.sessionExpired.first())
+        assertEquals(null, withTimeoutOrNull(1_000) { vm.sessionExpired.first() })
     }
 
     @Test

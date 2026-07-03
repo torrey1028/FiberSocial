@@ -40,6 +40,9 @@ object EventPeopleParser {
         Ksoup.parse(peoplePageHtml)
             .select("div.event__user_cards div.user_card")
             .mapNotNull { parseCard(it) }
+            // The UI keys rows by username; a page shape that repeats a card must
+            // degrade (like every other parser edge) rather than crash the screen.
+            .distinctBy { it.username }
 
     private fun parseCard(card: Element): EventAttendee? {
         val username = card.selectFirst("div.details a.login")?.text()?.trim().orEmpty()
@@ -54,6 +57,10 @@ object EventPeopleParser {
         val src = card.selectFirst("div.avatar img")?.attr("src").orEmpty()
         return when {
             src.isEmpty() || src.contains(PLACEHOLDER_PATH) -> null
+            // Protocol-relative (//cdn.host/…) must be checked before site-relative:
+            // startsWith("/") also matches it and would mangle the URL into
+            // https://www.ravelry.com//cdn.host/….
+            src.startsWith("//") -> "https:$src"
             src.startsWith("/") -> "https://www.ravelry.com$src"
             else -> src
         }

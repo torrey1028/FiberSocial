@@ -50,6 +50,27 @@ class EventPeopleParserLenienceTest {
     }
 
     @Test
+    fun `protocol-relative avatar urls get the https scheme, not the ravelry origin`() {
+        val html = card(
+            avatar = """<a href="/people/x"><img src="//images4.ravelrycache.com/avatars/x.jpg" class="avatar__image"></a>""",
+            details = """<a href="/people/x" class="login">x</a>""",
+        )
+        assertEquals(
+            "https://images4.ravelrycache.com/avatars/x.jpg",
+            EventPeopleParser.parse(html).single().avatarUrl,
+        )
+    }
+
+    @Test
+    fun `duplicated cards for the same username are deduped`() {
+        // The UI keys rows by username, so a page shape that repeats a card must
+        // degrade instead of crashing the screen with a duplicate LazyColumn key.
+        val one = """<div class="user_card"><div class="details"><a class="login" href="/people/x">x</a></div></div>"""
+        val html = """<div class="event__user_cards">$one$one</div>"""
+        assertEquals(listOf("x"), EventPeopleParser.parse(html).map { it.username })
+    }
+
+    @Test
     fun `card without a username link is skipped`() {
         val html = card(
             avatar = """<img src="/avatars/x.jpg">""",

@@ -2,6 +2,7 @@ package com.autom8ed.fibersocial.events
 
 import com.autom8ed.fibersocial.auth.SessionExpiredException
 import com.autom8ed.fibersocial.feed.RavelryApiClient
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
@@ -129,21 +130,30 @@ class EventDetailViewModel(
         }
     }
 
+    /** Monotonic token: only the newest attendees fetch may publish its result. */
+    private var attendeesFetchId = 0
+
     private suspend fun refreshAttendees(eventPermalink: String) {
-        val result = try {
+        val fetchId = ++attendeesFetchId
+        val result: List<EventAttendee>? = try {
             apiClient.getEventAttendees(eventPermalink)
-        } catch (e: SessionExpiredException) {
-            _sessionExpired.trySend(Unit)
-            emptyList()
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
+            // Attendees are decorative: every failure — including session expiry,
+            // whose signal the event-page fetch and the RSVP POST already own —
+            // degrades quietly instead of double-emitting sessionExpired or
+            // bouncing the user to login over a side list.
             println("FiberSocial: EventDetailViewModel attendees failed: ${e.message}")
-            emptyList()
+            null
         }
-        // Publish only if this event is still the one on screen: an older fetch
-        // resolving after a newer load() must not overwrite the newer list (or
-        // fill in a list for an event the user already navigated away from).
-        if (loadedPermalink == eventPermalink) {
-            _attendees.value = result
-        }
+        // Publish only if no newer load()/toggle refresh superseded this fetch and
+        // this event is still on screen: an older fetch resolving late (e.g. the
+        // load-time fetch finishing after a post-toggle refresh of the same event)
+        // must not overwrite the newer list.
+        if (fetchId != attendeesFetchId || loadedPermalink != eventPermalink) return
+        // A failed refresh keeps the last good list; degrade to empty only when
+        // nothing has loaded yet (the UI hides the section for null/empty).
+        _attendees.value = result ?: _attendees.value ?: emptyList()
     }
 }
