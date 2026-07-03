@@ -32,10 +32,15 @@ sealed class EventDetailState {
  *
  * @param apiClient Used to scrape the event page.
  * @param scope Coroutine scope tied to the host ViewModel's lifecycle.
+ * @param onAttendanceChanged Invoked after the site accepts an RSVP change. The Android
+ *   host uses it to trigger an immediate notification sync, so reminders for a fresh
+ *   RSVP are scheduled — and pending reminders for a withdrawn one cancelled — right
+ *   away instead of at the next background poll.
  */
 class EventDetailViewModel(
     private val apiClient: RavelryApiClient,
     private val scope: CoroutineScope,
+    private val onAttendanceChanged: (() -> Unit)? = null,
 ) {
     private val _state = MutableStateFlow<EventDetailState>(EventDetailState.Loading)
     private val _sessionExpired = Channel<Unit>(Channel.BUFFERED)
@@ -126,6 +131,7 @@ class EventDetailViewModel(
             } else {
                 // The user just joined or left; the people page is the source of truth.
                 refreshAttendees(permalink)
+                onAttendanceChanged?.invoke()
             }
         }
     }
