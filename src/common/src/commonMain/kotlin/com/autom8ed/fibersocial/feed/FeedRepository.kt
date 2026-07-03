@@ -57,7 +57,7 @@ class FeedRepository(private val apiClient: RavelryApiClient) {
         }.sortedWith(
             // Sticky topics are pinned to the top of a group's forum on the website;
             // mirror that here, then newest-reply-first within each band (issue #78).
-            compareByDescending<FeedItem> { it is FeedItem.AnnouncementTopic }
+            compareByDescending<FeedItem> { it.sticky }
                 .thenByDescending { it.lastPostAt },
         )
     }
@@ -83,38 +83,26 @@ class FeedRepository(private val apiClient: RavelryApiClient) {
         val author = createdByUser ?: RavelryUser(username = "unknown")
         val full = summary ?: ""
         val preview = full.take(200)
-        // Whether posts carry images does not affect classification: a topic with a photo
-        // in it is still a discussion (issue #77 — the old ProjectTopic mapping silently
-        // dropped nearly half of a real group's topics from the feed). Images render in
-        // the topic detail view.
-        return when {
-            sticky -> FeedItem.AnnouncementTopic(
-                id = id,
-                groupId = groupId,
-                groupName = groupName,
-                lastPostAt = repliedAt,
-                author = author,
-                title = title,
-                bodyPreview = preview,
-                bodySummary = full,
-                replyCount = postsCount,
-            )
-            else -> FeedItem.DiscussionTopic(
-                id = id,
-                groupId = groupId,
-                groupName = groupName,
-                lastPostAt = repliedAt,
-                author = author,
-                title = title,
-                bodyPreview = preview,
-                bodySummary = full,
-                replyCount = postsCount,
-                // Author and preview stand or fall together: a reply whose user is
-                // missing must not show its text attributed to the opening poster.
-                latestReplyAuthor = attributableReply?.user,
-                latestReplyPreview = attributableReply?.let { htmlPreview(it.bodyHtml) },
-            )
-        }
+        // Whether posts carry images does not affect the card: a topic with a photo in
+        // it is still a discussion (issue #77 — the old image-first ProjectTopic mapping
+        // silently dropped nearly half of a real group's topics from the feed). Images
+        // render in the topic detail view.
+        return FeedItem(
+            id = id,
+            groupId = groupId,
+            groupName = groupName,
+            lastPostAt = repliedAt,
+            author = author,
+            title = title,
+            bodyPreview = preview,
+            bodySummary = full,
+            replyCount = postsCount,
+            sticky = sticky,
+            // Author and preview stand or fall together: a reply whose user is
+            // missing must not show its text attributed to the opening poster.
+            latestReplyAuthor = attributableReply?.user,
+            latestReplyPreview = attributableReply?.let { htmlPreview(it.bodyHtml) },
+        )
     }
 
     /** Plain-text excerpt of a post's HTML body, matching the opening-post preview length. */

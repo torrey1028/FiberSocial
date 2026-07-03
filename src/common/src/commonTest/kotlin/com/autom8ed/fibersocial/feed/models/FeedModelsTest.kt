@@ -3,7 +3,6 @@ package com.autom8ed.fibersocial.feed.models
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
-import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
@@ -118,106 +117,52 @@ class TopicTest {
 class FeedItemTest {
     private val author = RavelryUser(username = "yarnie")
 
-    @Test
-    fun `ProjectTopic carries image count and empty url list`() {
-        val item = FeedItem.ProjectTopic(
-            id = 1L, groupId = 10L, groupName = "KAL Hub", lastPostAt = "2024-01-15",
-            author = author, title = "My WIP", imageCount = 3, imageUrls = emptyList(),
-            replyCount = 5,
-        )
-        assertIs<FeedItem>(item)
-        assertEquals(3, item.imageCount)
-        assertEquals(emptyList(), item.imageUrls)
-        assertEquals(5, item.replyCount)
-    }
+    private fun item(
+        sticky: Boolean = false,
+        replyCount: Int = 7,
+        latestReplyAuthor: RavelryUser? = null,
+        latestReplyPreview: String? = null,
+    ) = FeedItem(
+        id = 3L, groupId = 10L, groupName = "KAL Hub", lastPostAt = "2024-01-13",
+        author = author, title = "Yarn substitution help?",
+        bodyPreview = "Can I sub DK for worsted?",
+        bodySummary = "Can I sub DK for worsted? I have this beautiful skein...",
+        replyCount = replyCount,
+        sticky = sticky,
+        latestReplyAuthor = latestReplyAuthor,
+        latestReplyPreview = latestReplyPreview,
+    )
 
     @Test
-    fun `AnnouncementTopic exposes body preview and full summary`() {
-        val item = FeedItem.AnnouncementTopic(
-            id = 2L, groupId = 10L, groupName = "KAL Hub", lastPostAt = "2024-01-14",
-            author = author, title = "KAL Sign-up",
-            bodyPreview = "Join our new KAL!",
-            bodySummary = "Join our new KAL! Full details inside.",
-            replyCount = 12,
-        )
-        assertIs<FeedItem>(item)
-        assertEquals("Join our new KAL!", item.bodyPreview)
-        assertEquals("Join our new KAL! Full details inside.", item.bodySummary)
-    }
-
-    @Test
-    fun `AnnouncementTopic bridges to a DiscussionTopic with the same fields and no reply attribution`() {
-        val item = FeedItem.AnnouncementTopic(
-            id = 2L, groupId = 10L, groupName = "KAL Hub", lastPostAt = "2024-01-14",
-            author = author, title = "KAL Sign-up",
-            bodyPreview = "Join our new KAL!",
-            bodySummary = "Join our new KAL! Full details inside.",
-            replyCount = 12,
-        )
-        val bridged = item.asDiscussionTopic()
-        assertEquals(2L, bridged.id)
-        assertEquals(10L, bridged.groupId)
-        assertEquals("KAL Hub", bridged.groupName)
-        assertEquals("2024-01-14", bridged.lastPostAt)
-        assertEquals(author, bridged.author)
-        assertEquals("KAL Sign-up", bridged.title)
-        assertEquals("Join our new KAL!", bridged.bodyPreview)
-        assertEquals("Join our new KAL! Full details inside.", bridged.bodySummary)
-        assertEquals(12, bridged.replyCount)
-        assertNull(bridged.latestReplyAuthor)
-        assertNull(bridged.latestReplyPreview)
-    }
-
-    @Test
-    fun `DiscussionTopic exposes body preview and full summary`() {
-        val item = FeedItem.DiscussionTopic(
-            id = 3L, groupId = 10L, groupName = "KAL Hub", lastPostAt = "2024-01-13",
-            author = author, title = "Yarn substitution help?",
-            bodyPreview = "Can I sub DK for worsted?",
-            bodySummary = "Can I sub DK for worsted? I have this beautiful skein...",
-            replyCount = 7,
-        )
-        assertIs<FeedItem>(item)
+    fun `exposes body preview and full summary`() {
+        val item = item()
         assertEquals("Can I sub DK for worsted?", item.bodyPreview)
         assertEquals("Can I sub DK for worsted? I have this beautiful skein...", item.bodySummary)
     }
 
     @Test
-    fun `DiscussionTopic display fields fall back to opening post without latest reply`() {
-        val item = FeedItem.DiscussionTopic(
-            id = 4L, groupId = 10L, groupName = "KAL Hub", lastPostAt = "2024-01-13",
-            author = author, title = "T",
-            bodyPreview = "OP preview", bodySummary = "OP preview full",
-            replyCount = 0,
-        )
-        assertEquals(author, item.displayAuthor)
-        assertEquals("OP preview", item.displayPreview)
+    fun `sticky defaults to false`() {
+        assertFalse(item().sticky)
+        assertTrue(item(sticky = true).sticky)
     }
 
     @Test
-    fun `DiscussionTopic display fields prefer the latest reply`() {
+    fun `display fields fall back to opening post without latest reply`() {
+        val item = item(replyCount = 0)
+        assertEquals(author, item.displayAuthor)
+        assertEquals("Can I sub DK for worsted?", item.displayPreview)
+    }
+
+    @Test
+    fun `display fields prefer the latest reply`() {
         val replier = RavelryUser(username = "replier")
-        val item = FeedItem.DiscussionTopic(
-            id = 5L, groupId = 10L, groupName = "KAL Hub", lastPostAt = "2024-01-13",
-            author = author, title = "T",
-            bodyPreview = "OP preview", bodySummary = "OP preview full",
+        val item = item(
             replyCount = 3,
             latestReplyAuthor = replier,
             latestReplyPreview = "Newest reply",
         )
         assertEquals(replier, item.displayAuthor)
         assertEquals("Newest reply", item.displayPreview)
-    }
-
-    @Test
-    fun `abstract properties accessible from base type`() {
-        val items: List<FeedItem> = listOf(
-            FeedItem.ProjectTopic(1L, 10L, "KAL Hub", "2024-01-15", author, "WIP", 1, emptyList(), 2),
-            FeedItem.AnnouncementTopic(2L, 10L, "KAL Hub", "2024-01-14", author, "KAL", "", "", 3),
-            FeedItem.DiscussionTopic(3L, 10L, "KAL Hub", "2024-01-13", author, "Q", "", "", 1),
-        )
-        assertEquals(listOf(1L, 2L, 3L), items.map { it.id })
-        assertEquals(listOf(10L, 10L, 10L), items.map { it.groupId })
     }
 }
 
