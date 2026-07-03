@@ -105,11 +105,14 @@ object HtmlPostParser {
     }
 
     private fun parseTable(table: Element): PostBlock.Table {
-        val headerRow = table.selectFirst("thead tr")
-            ?.children()
-            ?.filter { it.tagName() == "th" || it.tagName() == "td" }
-            ?.map { parseCell(it) }
-            .orEmpty()
+        val headerTr = table.selectFirst("thead tr")
+        val headerRow = if (headerTr == null) {
+            emptyList()
+        } else {
+            headerTr.children()
+                .filter { it.tagName() == "th" || it.tagName() == "td" }
+                .map { parseCell(it) }
+        }
         val rows = table.select("tr")
             .filter { tr -> tr.parents().none { it.tagName() == "thead" } }
             .map { tr ->
@@ -126,12 +129,14 @@ object HtmlPostParser {
         alignment = cellAlignment(cell),
     )
 
-    private fun cellAlignment(cell: Element): CellAlignment =
-        when (TEXT_ALIGN.find(cell.attr("style"))?.groupValues?.get(1)?.lowercase()) {
+    private fun cellAlignment(cell: Element): CellAlignment {
+        val match = TEXT_ALIGN.find(cell.attr("style")) ?: return CellAlignment.LEFT
+        return when (match.groupValues[1].lowercase()) {
             "center" -> CellAlignment.CENTER
             "right" -> CellAlignment.RIGHT
             else -> CellAlignment.LEFT
         }
+    }
 
     private val TEXT_ALIGN = Regex("text-align\\s*:\\s*(left|center|right)", RegexOption.IGNORE_CASE)
 
@@ -140,10 +145,9 @@ object HtmlPostParser {
 
     /** Parses one node in inline position. Returns a list: unknown tags unwrap to children. */
     private fun parseInlineNode(node: Node): List<Inline> = when {
-        node is TextNode -> {
-            val text = collapseWhitespace(node.getWholeText())
-            if (text.isEmpty()) emptyList() else listOf(Inline.Text(text))
-        }
+        // Ksoup never produces empty text nodes, so the collapsed text is never empty;
+        // whitespace-only nodes become " " and get dropped by trimEdges at block edges.
+        node is TextNode -> listOf(Inline.Text(collapseWhitespace(node.getWholeText())))
         node !is Element -> emptyList() // comments etc.
         else -> when (val tag = node.tagName()) {
             "strong", "b" -> styled(InlineStyle.BOLD, node)
@@ -175,10 +179,7 @@ object HtmlPostParser {
      * Collapses whitespace runs (including the newlines HTML source wraps at) to single
      * spaces. Interior single spaces between inline elements are preserved.
      */
-    private fun collapseWhitespace(text: String): String {
-        if (text.isBlank()) return if (text.isEmpty()) "" else " "
-        return text.replace(WHITESPACE_RUN, " ")
-    }
+    private fun collapseWhitespace(text: String): String = text.replace(WHITESPACE_RUN, " ")
 
     private val WHITESPACE_RUN = Regex("\\s+")
 

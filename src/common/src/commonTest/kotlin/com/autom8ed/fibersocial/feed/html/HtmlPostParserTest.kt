@@ -186,6 +186,54 @@ class HtmlPostParserInlineTest {
         val content = singleParagraph("<p>a <span class=\"future\">kept</span> b</p>")
         assertEquals("a kept b", content.plainText())
     }
+
+    @Test
+    fun `s and strike map to strikethrough like del`() {
+        val content = singleParagraph("<p><s>a</s><strike>b</strike></p>")
+        assertEquals(
+            listOf(InlineStyle.STRIKETHROUGH, InlineStyle.STRIKETHROUGH),
+            content.map { (it as Inline.Styled).style },
+        )
+    }
+
+    @Test
+    fun `html comments are ignored`() {
+        val content = singleParagraph("<p>a<!-- hidden -->b</p>")
+        assertEquals(listOf<Inline>(Inline.Text("a"), Inline.Text("b")), content)
+    }
+
+    @Test
+    fun `leading whitespace before a styled element is dropped`() {
+        val content = singleParagraph("<p> <em>lead</em></p>")
+        assertEquals(
+            listOf<Inline>(Inline.Styled(InlineStyle.ITALIC, listOf(Inline.Text("lead")))),
+            content,
+        )
+    }
+
+    @Test
+    fun `trailing whitespace after a styled element is dropped`() {
+        val content = singleParagraph("<p>a <em>b</em>   </p>")
+        assertEquals(
+            listOf(
+                Inline.Text("a "),
+                Inline.Styled(InlineStyle.ITALIC, listOf(Inline.Text("b"))),
+            ),
+            content,
+        )
+    }
+
+    @Test
+    fun `paragraph starting with a styled element keeps trailing text trimmed`() {
+        val content = singleParagraph("<p><strong>x</strong> tail </p>")
+        assertEquals(
+            listOf(
+                Inline.Styled(InlineStyle.BOLD, listOf(Inline.Text("x"))),
+                Inline.Text(" tail"),
+            ),
+            content,
+        )
+    }
 }
 
 class HtmlPostParserBlockTest {
@@ -253,6 +301,37 @@ class HtmlPostParserBlockTest {
             listOf(CellAlignment.CENTER, CellAlignment.RIGHT),
             table.rows.single().map { it.alignment },
         )
+    }
+
+    @Test
+    fun `thead cells may be td elements`() {
+        val doc = HtmlPostParser.parse(
+            "<table><thead><tr><td>H1</td><td>H2</td></tr></thead><tbody><tr><td>x</td><td>y</td></tr></tbody></table>"
+        )
+        val table = assertIs<PostBlock.Table>(doc.blocks.single())
+        assertEquals(listOf("H1", "H2"), table.headerRow.map { it.content.plainText() })
+        assertEquals(1, table.rows.size)
+    }
+
+    @Test
+    fun `th row-header cells in the body are kept`() {
+        val doc = HtmlPostParser.parse("<table><tbody><tr><th>name</th><td>value</td></tr></tbody></table>")
+        val table = assertIs<PostBlock.Table>(doc.blocks.single())
+        assertEquals(listOf("name", "value"), table.rows.single().map { it.content.plainText() })
+    }
+
+    @Test
+    fun `empty body rows are dropped`() {
+        val doc = HtmlPostParser.parse("<table><tbody><tr></tr><tr><td>only</td></tr></tbody></table>")
+        val table = assertIs<PostBlock.Table>(doc.blocks.single())
+        assertEquals(1, table.rows.size)
+    }
+
+    @Test
+    fun `cell style without text-align defaults to left`() {
+        val doc = HtmlPostParser.parse("""<table><tbody><tr><td style="color: red;">x</td></tr></tbody></table>""")
+        val table = assertIs<PostBlock.Table>(doc.blocks.single())
+        assertEquals(CellAlignment.LEFT, table.rows.single().single().alignment)
     }
 
     @Test
