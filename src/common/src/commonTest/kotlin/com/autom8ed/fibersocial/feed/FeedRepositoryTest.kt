@@ -116,6 +116,41 @@ class FeedRepositoryTest {
     }
 
     @Test
+    fun `getFeedItems pins sticky topics above newer discussions`() = runTest {
+        val group2 = group.copy(id = 11L, forumId = 43L)
+        val repo = repoWithRoute { path ->
+            when {
+                path.contains("/forums/42/") -> topicsJson(100L)
+                path.contains("/forums/43/") -> topicsJson(101L)
+                // The sticky topic's last reply is OLDER than the discussion's,
+                // yet it must still sort first.
+                path.contains("/topics/100") -> topicDetailJson(100L, sticky = true, repliedAt = "2024-01-10")
+                path.contains("/topics/101") -> topicDetailJson(101L, repliedAt = "2024-01-20")
+                else -> error("Unexpected: $path")
+            }
+        }
+        val items = repo.getFeedItems(listOf(group, group2))
+        assertEquals(listOf(100L, 101L), items.map { it.id })
+        assertIs<FeedItem.AnnouncementTopic>(items.first())
+    }
+
+    @Test
+    fun `getFeedItems sorts sticky topics among themselves by lastPostAt`() = runTest {
+        val group2 = group.copy(id = 11L, forumId = 43L)
+        val repo = repoWithRoute { path ->
+            when {
+                path.contains("/forums/42/") -> topicsJson(100L)
+                path.contains("/forums/43/") -> topicsJson(101L)
+                path.contains("/topics/100") -> topicDetailJson(100L, sticky = true, repliedAt = "2024-01-10")
+                path.contains("/topics/101") -> topicDetailJson(101L, sticky = true, repliedAt = "2024-01-20")
+                else -> error("Unexpected: $path")
+            }
+        }
+        val items = repo.getFeedItems(listOf(group, group2))
+        assertEquals(listOf(101L, 100L), items.map { it.id })
+    }
+
+    @Test
     fun `getFeedItems returns empty list when groups have no topics`() = runTest {
         val repo = repoWithRoute { """{"topics":[]}""" }
         assertEquals(emptyList(), repo.getFeedItems(listOf(group)))

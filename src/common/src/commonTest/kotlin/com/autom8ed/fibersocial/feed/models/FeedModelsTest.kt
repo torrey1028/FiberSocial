@@ -146,6 +146,29 @@ class FeedItemTest {
     }
 
     @Test
+    fun `AnnouncementTopic bridges to a DiscussionTopic with the same fields and no reply attribution`() {
+        val item = FeedItem.AnnouncementTopic(
+            id = 2L, groupId = 10L, groupName = "KAL Hub", lastPostAt = "2024-01-14",
+            author = author, title = "KAL Sign-up",
+            bodyPreview = "Join our new KAL!",
+            bodySummary = "Join our new KAL! Full details inside.",
+            replyCount = 12,
+        )
+        val bridged = item.asDiscussionTopic()
+        assertEquals(2L, bridged.id)
+        assertEquals(10L, bridged.groupId)
+        assertEquals("KAL Hub", bridged.groupName)
+        assertEquals("2024-01-14", bridged.lastPostAt)
+        assertEquals(author, bridged.author)
+        assertEquals("KAL Sign-up", bridged.title)
+        assertEquals("Join our new KAL!", bridged.bodyPreview)
+        assertEquals("Join our new KAL! Full details inside.", bridged.bodySummary)
+        assertEquals(12, bridged.replyCount)
+        assertNull(bridged.latestReplyAuthor)
+        assertNull(bridged.latestReplyPreview)
+    }
+
+    @Test
     fun `DiscussionTopic exposes body preview and full summary`() {
         val item = FeedItem.DiscussionTopic(
             id = 3L, groupId = 10L, groupName = "KAL Hub", lastPostAt = "2024-01-13",
