@@ -255,6 +255,21 @@ class HtmlPostParserBlockTest {
     }
 
     @Test
+    fun `unknown block containers unwrap to their nested blocks`() {
+        val doc = HtmlPostParser.parse("<section><p>a</p><p>b</p></section>")
+        assertEquals(2, doc.blocks.size)
+        assertEquals("a", (doc.blocks[0] as PostBlock.Paragraph).content.plainText())
+        assertEquals("b", (doc.blocks[1] as PostBlock.Paragraph).content.plainText())
+    }
+
+    @Test
+    fun `unknown block container with inline content becomes a paragraph`() {
+        val doc = HtmlPostParser.parse("""<figure><img src="https://images.example/a.jpg" alt="a"></figure>""")
+        val para = assertIs<PostBlock.Paragraph>(doc.blocks.single())
+        assertEquals(listOf<Inline>(Inline.Image(url = "https://images.example/a.jpg", alt = "a")), para.content)
+    }
+
+    @Test
     fun `bare inline content at top level becomes a paragraph`() {
         val doc = HtmlPostParser.parse("just <em>text</em> with no wrapper")
         val para = assertIs<PostBlock.Paragraph>(doc.blocks.single())

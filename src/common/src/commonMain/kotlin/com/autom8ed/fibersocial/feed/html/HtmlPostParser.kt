@@ -14,10 +14,20 @@ import com.fleeksoft.ksoup.nodes.TextNode
  */
 object HtmlPostParser {
 
-    /** Tags treated as block-level; anything else encountered at block position is inline. */
+    /** Tags with dedicated block handling in [parseBlock]. */
     private val BLOCK_TAGS = setOf(
         "p", "h1", "h2", "h3", "h4", "h5", "h6",
         "ul", "ol", "blockquote", "pre", "table", "hr", "div",
+    )
+
+    /**
+     * Tags with dedicated inline handling in [parseInlineNode]. An element at block
+     * position that is in neither set is treated as an unknown block container and
+     * unwrapped, so nested structure survives (e.g. paragraphs inside a `<section>`).
+     */
+    private val INLINE_TAGS = setOf(
+        "strong", "b", "em", "i", "del", "s", "strike", "small", "big",
+        "sub", "sup", "code", "a", "img", "br", "span",
     )
 
     /** Parses [bodyHtml] (the API's `body_html` field) into a structured document. */
@@ -42,11 +52,17 @@ object HtmlPostParser {
 
         for (node in container.childNodes()) {
             val element = node as? Element
-            if (element != null && element.tagName() in BLOCK_TAGS) {
-                flushParagraph()
-                blocks += parseBlock(element)
-            } else {
-                pendingInline += parseInlineNode(node)
+            when {
+                element != null && element.tagName() in BLOCK_TAGS -> {
+                    flushParagraph()
+                    blocks += parseBlock(element)
+                }
+                element != null && element.tagName() !in INLINE_TAGS -> {
+                    // Unknown container at block position: unwrap in place.
+                    flushParagraph()
+                    blocks += parseBlocks(element)
+                }
+                else -> pendingInline += parseInlineNode(node)
             }
         }
         flushParagraph()
@@ -141,7 +157,11 @@ object HtmlPostParser {
             "a" -> listOf(Inline.Link(href = node.attr("href"), children = parseInlineChildren(node)))
             "img" -> listOf(Inline.Image(url = node.attr("src"), alt = node.attr("alt")))
             "br" -> listOf(Inline.HardBreak)
+            // Purely presentational wrapper; unwrap without noise.
+            "span" -> parseInlineChildren(node)
             else -> {
+                // Once per parse of an affected post (parses are remember-cached by
+                // callers); flags Ravelry renderer drift worth adding support for.
                 println("FiberSocial: HtmlPostParser unwrapping unknown inline tag <$tag>")
                 parseInlineChildren(node)
             }
