@@ -163,7 +163,8 @@ private fun VoteRow(post: Post, onVote: (VoteType) -> Unit) {
 
 @Composable
 private fun VoteButton(emoji: String, count: Int, voted: Boolean, onClick: () -> Unit) {
-    val background = if (voted) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
+    val background = if (voted) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant
+    val contentColor = if (voted) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
@@ -175,7 +176,7 @@ private fun VoteButton(emoji: String, count: Int, voted: Boolean, onClick: () ->
         Text(text = emoji, style = MaterialTheme.typography.labelMedium)
         if (count > 0) {
             Spacer(Modifier.width(4.dp))
-            Text(text = count.toString(), style = MaterialTheme.typography.labelSmall)
+            Text(text = count.toString(), style = MaterialTheme.typography.labelSmall, color = contentColor)
         }
     }
 }
