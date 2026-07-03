@@ -1,6 +1,7 @@
 package com.autom8ed.fibersocial.feed
 
 import com.autom8ed.fibersocial.auth.SessionExpiredException
+import kotlinx.coroutines.CancellationException
 import com.autom8ed.fibersocial.feed.models.FeedItem
 import com.autom8ed.fibersocial.feed.models.Group
 import com.autom8ed.fibersocial.feed.models.Post
@@ -43,9 +44,13 @@ class FeedRepository(private val apiClient: RavelryApiClient) {
                 .map { topic ->
                     async {
                         val detail = apiClient.getTopicDetail(topic.id)
-                        // Only topics with replies have a "latest reply" distinct from the
-                        // opening post; skip the extra request otherwise.
-                        val latestReply = if (detail.postsCount > 1) latestPostOrNull(detail.id) else null
+                        // Only discussion cards render reply attribution (project/sticky
+                        // topics map to other card types that discard it), and only topics
+                        // with replies have a latest reply distinct from the opening post;
+                        // skip the extra request otherwise.
+                        val wantsLatestReply =
+                            detail.postsCount > 1 && detail.imagesCount == 0 && !detail.sticky
+                        val latestReply = if (wantsLatestReply) latestPostOrNull(detail.id) else null
                         detail.toFeedItem(groupId = group.id, groupName = group.name, latestReply = latestReply)
                     }
                 }
@@ -60,13 +65,17 @@ class FeedRepository(private val apiClient: RavelryApiClient) {
      */
     private suspend fun latestPostOrNull(topicId: Long): Post? = try {
         apiClient.getLatestPost(topicId)
+    } catch (e: CancellationException) {
+        throw e
     } catch (e: SessionExpiredException) {
         throw e
     } catch (e: Exception) {
+        println("FiberSocial: latestPostOrNull($topicId) failed: ${e.message}")
         null
     }
 
     private fun Topic.toFeedItem(groupId: Long, groupName: String, latestReply: Post? = null): FeedItem {
+        val attributableReply = latestReply?.takeIf { it.user != null }
         val author = createdByUser ?: RavelryUser(username = "unknown")
         val full = summary ?: ""
         val preview = full.take(200)
@@ -103,8 +112,10 @@ class FeedRepository(private val apiClient: RavelryApiClient) {
                 bodyPreview = preview,
                 bodySummary = full,
                 replyCount = postsCount,
-                latestReplyAuthor = latestReply?.user,
-                latestReplyPreview = latestReply?.let { htmlPreview(it.bodyHtml) },
+                // Author and preview stand or fall together: a reply whose user is
+                // missing must not show its text attributed to the opening poster.
+                latestReplyAuthor = attributableReply?.user,
+                latestReplyPreview = attributableReply?.let { htmlPreview(it.bodyHtml) },
             )
         }
     }

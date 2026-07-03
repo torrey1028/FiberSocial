@@ -181,11 +181,47 @@ class FeedRepositoryTest {
     }
 
     @Test
+    fun `getFeedItems skips latest-post fetch for project and sticky topics`() = runTest {
+        // Those map to card types that discard reply attribution — the extra
+        // request would be pure waste.
+        val requestedPaths = mutableListOf<String>()
+        val repo = repoWithRoute { path ->
+            requestedPaths += path
+            when {
+                path.contains("/forums/") -> topicsJson(100L)
+                path.contains("/topics/") -> topicDetailJson(100L, imagesCount = 3)
+                else -> error("Unexpected: $path")
+            }
+        }
+        assertIs<FeedItem.ProjectTopic>(repo.getFeedItems(listOf(group)).single())
+        assertEquals(emptyList(), requestedPaths.filter { it.contains("/posts.json") })
+    }
+
+    @Test
     fun `getFeedItems falls back to opening post when latest-post fetch fails`() = runTest {
         val repo = repoWithRoute { path ->
             when {
                 path.contains("/forums/") -> topicsJson(100L)
                 path.contains("/posts.json") -> error("Simulated posts failure")
+                path.contains("/topics/") -> topicDetailJson(100L)
+                else -> error("Unexpected: $path")
+            }
+        }
+        val item = repo.getFeedItems(listOf(group)).single() as FeedItem.DiscussionTopic
+        assertEquals(null, item.latestReplyAuthor)
+        assertEquals(null, item.latestReplyPreview)
+        assertEquals("yarnie", item.displayAuthor.username)
+    }
+
+    @Test
+    fun `getFeedItems ignores a latest reply whose user is missing`() = runTest {
+        // Author and preview must stand or fall together: a reply without a user
+        // must not show its text attributed to the opening poster.
+        val repo = repoWithRoute { path ->
+            when {
+                path.contains("/forums/") -> topicsJson(100L)
+                path.contains("/posts.json") ->
+                    """{"posts":[{"id":7,"body_html":"<p>orphan reply</p>","created_at":"2024-01-16T10:00:00Z"}]}"""
                 path.contains("/topics/") -> topicDetailJson(100L)
                 else -> error("Unexpected: $path")
             }
