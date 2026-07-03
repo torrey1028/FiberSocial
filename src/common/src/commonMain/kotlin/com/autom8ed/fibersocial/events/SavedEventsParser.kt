@@ -67,13 +67,11 @@ object SavedEventsParser {
         for (child in list.children()) {
             when {
                 child.hasClass("month") -> {
+                    // month and year move together: an invalid or unrecognized header
+                    // resets both, so a stale year can never pair with a later month.
                     val match = MONTH_HEADER.find(child.text())
-                    if (match == null) {
-                        month = 0
-                    } else {
-                        month = monthNumber(match.groupValues[1])
-                        year = match.groupValues[2].toInt()
-                    }
+                    month = if (match == null) 0 else monthNumber(match.groupValues[1])
+                    year = if (month == 0) 0 else match!!.groupValues[2].toInt()
                 }
                 child.hasClass("event") -> {
                     val link = child.selectFirst("div.details a.title") ?: continue
