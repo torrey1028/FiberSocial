@@ -147,7 +147,8 @@ class TopicDetailViewModelTest {
             if (path.contains("vote")) {
                 voteResponseJson("love", 0, userVoted = false)
             } else {
-                """{"posts":[{"id":1,"body_html":"<p>Reply</p>","user":{"username":"user1"},"vote_totals":{"love":1},"user_votes":["love"]}]}"""
+                """{"posts":[{"id":1,"body_html":"<p>Reply</p>","user":{"username":"user1"}}],
+                    "vote_totals":{"1":{"love":1}},"user_votes":{"1":["love"]}}"""
             }
         }, this)
         vm.load(42L)
@@ -170,7 +171,8 @@ class TopicDetailViewModelTest {
             if (path.contains("vote")) {
                 voteResponseJson("funny", 1, userVoted = true)
             } else {
-                """{"posts":[{"id":1,"body_html":"<p>Reply</p>","user":{"username":"user1"},"vote_totals":{"love":1},"user_votes":["love"]}]}"""
+                """{"posts":[{"id":1,"body_html":"<p>Reply</p>","user":{"username":"user1"}}],
+                    "vote_totals":{"1":{"love":1}},"user_votes":{"1":["love"]}}"""
             }
         }, this)
         vm.load(42L)
