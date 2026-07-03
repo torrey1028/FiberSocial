@@ -2,8 +2,10 @@ package com.autom8ed.fibersocial.feed
 
 import com.autom8ed.fibersocial.auth.SessionExpiredException
 import com.autom8ed.fibersocial.auth.TokenStorage
+import com.autom8ed.fibersocial.events.EventAttendee
 import com.autom8ed.fibersocial.events.EventDetail
 import com.autom8ed.fibersocial.events.EventPageParser
+import com.autom8ed.fibersocial.events.EventPeopleParser
 import com.autom8ed.fibersocial.events.EventSummary
 import com.autom8ed.fibersocial.events.GroupEventsParser
 import com.autom8ed.fibersocial.feed.models.Group
@@ -190,6 +192,25 @@ class RavelryApiClient(
         val detail = EventPageParser.parse(html)
         println("FiberSocial: getEvent($eventPermalink) -> ${detail?.title ?: "NOT AN EVENT PAGE"}")
         return detail
+    }
+
+    /**
+     * Returns the people attending an event, in the order the people page lists them.
+     *
+     * Ravelry has no events API, so this scrapes
+     * `www.ravelry.com/events/{permalink}/people` with the session cookie (see
+     * [EventPeopleParser]). An event with no attendees yields an empty list.
+     *
+     * @throws SessionExpiredException if the session cookie is rejected (401/403, or a
+     *   redirect off the events path — Ravelry sends expired sessions to the login page).
+     * @throws IllegalStateException on any other non-2xx response.
+     */
+    suspend fun getEventAttendees(eventPermalink: String): List<EventAttendee> {
+        val html = scrapeHtml("https://www.ravelry.com/events/$eventPermalink/people", "/events/",
+            "Event people page for $eventPermalink")
+        val attendees = EventPeopleParser.parse(html)
+        println("FiberSocial: getEventAttendees($eventPermalink) -> ${attendees.size} attendees")
+        return attendees
     }
 
     /**

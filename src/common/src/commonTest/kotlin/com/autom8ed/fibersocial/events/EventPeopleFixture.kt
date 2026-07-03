@@ -1,0 +1,52 @@
+package com.autom8ed.fibersocial.events
+
+/**
+ * Golden fixture: trimmed capture of a real event people page (Sunday Circle at Postdoc
+ * Brewing, 2026-07-03, taken from a HAR so the URLs are the live ones, not save-page
+ * rewrites). One attendee without an avatar — the img src is Ravelry's site-relative
+ * blank-skein placeholder. Canonical copy: `docs/samples/event_people.html` — keep the
+ * two in sync.
+ */
+internal val EVENT_PEOPLE_HTML = """
+<!DOCTYPE html>
+<!-- Trimmed capture of https://www.ravelry.com/events/sunday-circle-at-postdoc-brewing-10/people
+     (2026-07-03, from HAR). Page chrome removed; attendee_form and event__user_cards verbatim.
+     The lone attendee has no avatar — src is the site-relative blank-skein placeholder. -->
+<html>
+<head><title>Ravelry: Event - Sunday Circle at Postdoc Brewing</title></head>
+<body>
+<div class="page_title">
+<div class="page_title__supertitle">
+<a href="https://www.ravelry.com/events">events</a>
+</div>
+Sunday Circle at Postdoc Brewing
+</div>
+<form action="https://www.ravelry.com/events/sunday-circle-at-postdoc-brewing-10/people" class="short" id="attendee_form" method="get" style="margin-bottom: 1em;">
+<label>People to show</label>
+<select id="people_field" name="people" onchange="${'$'}('attendee_form').submit();"><option     value="">All attendees</option>
+<option     value="friends-1">Friends only</option><optgroup label="Groups"><option     value="gid-1874">Eastside Spinners Group</option>
+<option     value="gid-50191">Kirkland Fiber Arts Circle</option>
+<option     value="gid-44">Lace Knitters</option>
+<option     value="gid-18376">Ravelry API</option>
+<option     value="gid-16262">Shibui Knits</option>
+<option     value="gid-606">The Testing Pool</option></optgroup></select>
+</form>
+<div class="event__user_cards">
+<div class="user_card">
+<div class="avatar c-avatar  avatar_bubble" id="user_Megannnnn" onmouseover="avatarMouseOver(this);" onmouseout="avatarMouseOut(this);"><a href="/people/Megannnnn"><img src="/images/assets/illustrations/color/svg/blank-skein-hebridean.svg?v=6"  height="100" width="100" title="Megannnnn's profile" class="avatar__image " /></a></div>
+<div class="details">
+<a href="https://www.ravelry.com/people/Megannnnn" class="login">Megannnnn</a>
+<ul>
+<li>
+
+
+</li>
+</ul>
+</div>
+</div>
+
+</div>
+
+</body>
+</html>
+"""

@@ -38,14 +38,24 @@ private val EVENT_PAGE_WITH_TOKEN = """
     <a id="attend_button"><span>save event</span></a>
 """ + MINIMAL_EVENT_PAGE
 
+private fun peoplePage(vararg usernames: String) = buildString {
+    append("""<div class="event__user_cards">""")
+    usernames.forEach { name ->
+        append("""<div class="user_card"><div class="details"><a class="login" href="/people/$name">$name</a></div></div>""")
+    }
+    append("</div>")
+}
+
 /**
- * Client whose GETs serve an event page and whose POSTs (attend/unattend) respond with
- * [postStatus]; POST URLs are recorded in [postedUrls].
+ * Client whose GETs serve an event page (or a people page for `…/people` paths) and
+ * whose POSTs (attend/unattend) respond with [postStatus]; POST URLs are recorded in
+ * [postedUrls].
  */
 private fun rsvpApiClient(
     postedUrls: MutableList<String>,
     postStatus: () -> HttpStatusCode = { HttpStatusCode.OK },
     pageHtml: () -> String = { EVENT_PAGE_WITH_TOKEN },
+    peopleHtml: () -> String = { peoplePage("Megannnnn") },
 ): RavelryApiClient {
     val engine = MockEngine { request ->
         if (request.method == HttpMethod.Post) {
@@ -53,7 +63,8 @@ private fun rsvpApiClient(
             respond("R.popover.close();", postStatus(),
                 headersOf("Content-Type", "text/javascript"))
         } else {
-            respond(pageHtml(), HttpStatusCode.OK,
+            val body = if (request.url.encodedPath.endsWith("/people")) peopleHtml() else pageHtml()
+            respond(body, HttpStatusCode.OK,
                 headersOf("Content-Type", ContentType.Text.Html.toString()))
         }
     }
@@ -242,6 +253,40 @@ class EventDetailViewModelToggleAttendanceTest {
         vm.toggleAttendance()
         awaitChildren(coroutineContext[Job]!!)
         assertIs<EventDetailState.Loading>(vm.state.value)
+    }
+
+    @Test
+    fun `load also fetches the attendee list`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = EventDetailViewModel(rsvpApiClient(mutableListOf()), this)
+        assertEquals(null, vm.attendees.value)
+        vm.load("cozy-meetup")
+        awaitChildren(coroutineContext[Job]!!)
+        assertEquals(listOf("Megannnnn"), vm.attendees.value?.map { it.username })
+    }
+
+    @Test
+    fun `a successful toggle refreshes the attendee list`() = runTest(UnconfinedTestDispatcher()) {
+        var people = peoplePage("Megannnnn")
+        val vm = EventDetailViewModel(
+            rsvpApiClient(mutableListOf(), peopleHtml = { people }),
+            this,
+        )
+        vm.load("cozy-meetup")
+        awaitChildren(coroutineContext[Job]!!)
+        assertEquals(1, vm.attendees.value?.size)
+
+        people = peoplePage("Megannnnn", "torrey1028")
+        vm.toggleAttendance()
+        awaitChildren(coroutineContext[Job]!!)
+        assertEquals(listOf("Megannnnn", "torrey1028"), vm.attendees.value?.map { it.username })
+    }
+
+    @Test
+    fun `a failed attendee scrape degrades to an empty list`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = EventDetailViewModel(errorApiClient(), this)
+        vm.load("cozy-meetup")
+        awaitChildren(coroutineContext[Job]!!)
+        assertEquals(emptyList(), vm.attendees.value)
     }
 
     @Test

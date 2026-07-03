@@ -39,8 +39,17 @@ class EventDetailViewModel(
     private val _state = MutableStateFlow<EventDetailState>(EventDetailState.Loading)
     private val _sessionExpired = Channel<Unit>(Channel.BUFFERED)
 
+    private val _attendees = MutableStateFlow<List<EventAttendee>?>(null)
+
     /** Observable event detail state. */
     val state: StateFlow<EventDetailState> = _state.asStateFlow()
+
+    /**
+     * People attending the loaded event, scraped from the people page in parallel with
+     * [load] and refreshed after a successful RSVP toggle. `null` while loading;
+     * attendees are decorative, so a failed scrape degrades to an empty list.
+     */
+    val attendees: StateFlow<List<EventAttendee>?> = _attendees.asStateFlow()
 
     /**
      * Emits [Unit] when a [SessionExpiredException] is caught. Each emission is consumed
@@ -57,6 +66,8 @@ class EventDetailViewModel(
         // Synchronously, not inside the coroutine: navigating to another event must not
         // flash the previous event's detail while the launch waits its turn.
         _state.value = EventDetailState.Loading
+        _attendees.value = null
+        scope.launch { refreshAttendees(eventPermalink) }
         scope.launch {
             println("FiberSocial: EventDetailViewModel.load($eventPermalink)")
             _state.value = try {
@@ -111,7 +122,28 @@ class EventDetailViewModel(
                 // state is still showing. If a newer load() or toggle has replaced it,
                 // reverting would clobber that newer state with a stale event.
                 _state.compareAndSet(optimistic, EventDetailState.Loaded(original))
+            } else {
+                // The user just joined or left; the people page is the source of truth.
+                refreshAttendees(permalink)
             }
+        }
+    }
+
+    private suspend fun refreshAttendees(eventPermalink: String) {
+        val result = try {
+            apiClient.getEventAttendees(eventPermalink)
+        } catch (e: SessionExpiredException) {
+            _sessionExpired.trySend(Unit)
+            emptyList()
+        } catch (e: Exception) {
+            println("FiberSocial: EventDetailViewModel attendees failed: ${e.message}")
+            emptyList()
+        }
+        // Publish only if this event is still the one on screen: an older fetch
+        // resolving after a newer load() must not overwrite the newer list (or
+        // fill in a list for an event the user already navigated away from).
+        if (loadedPermalink == eventPermalink) {
+            _attendees.value = result
         }
     }
 }

@@ -578,6 +578,33 @@ class RavelryApiClientTest {
     }
 
     @Test
+    fun `getEventAttendees scrapes the people page with the session cookie`() = runTest {
+        var requestedUrl = ""
+        var sentCookie: String? = null
+        val engine = MockEngine { request ->
+            requestedUrl = request.url.toString()
+            sentCookie = request.headers[HttpHeaders.Cookie]
+            respond(
+                """<div class="event__user_cards"><div class="user_card">
+                   <div class="details"><a class="login" href="/people/knitwit">knitwit</a></div>
+                   </div></div>""",
+                HttpStatusCode.OK,
+                headersOf("Content-Type", ContentType.Text.Html.toString()),
+            )
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val client = RavelryApiClient(httpClient, FakeFeedTokenStorage())
+
+        val attendees = client.getEventAttendees("cozy-meetup")
+
+        assertEquals("https://www.ravelry.com/events/cozy-meetup/people", requestedUrl)
+        assertEquals("sess=test", sentCookie)
+        assertEquals(listOf("knitwit"), attendees.map { it.username })
+    }
+
+    @Test
     fun `setEventAttendance false posts to unattend and reports rejection`() = runTest {
         var requestedUrl = ""
         val engine = MockEngine { request ->

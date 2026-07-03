@@ -13,6 +13,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -20,6 +22,7 @@ import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -32,7 +35,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
+import coil.compose.AsyncImage
 import com.autom8ed.fibersocial.feed.PostBody
 import com.autom8ed.fibersocial.feed.html.HtmlPostParser
 
@@ -46,6 +51,7 @@ import com.autom8ed.fibersocial.feed.html.HtmlPostParser
 @Composable
 fun EventDetailScreen(
     state: EventDetailState,
+    attendees: List<EventAttendee>?,
     onBack: () -> Unit,
     onToggleAttendance: () -> Unit,
 ) {
@@ -74,6 +80,7 @@ fun EventDetailScreen(
 
             is EventDetailState.Loaded -> EventDetailContent(
                 detail = state.detail,
+                attendees = attendees,
                 padding = padding,
                 onToggleAttendance = onToggleAttendance,
             )
@@ -84,6 +91,7 @@ fun EventDetailScreen(
 @Composable
 private fun EventDetailContent(
     detail: EventDetail,
+    attendees: List<EventAttendee>?,
     padding: PaddingValues,
     onToggleAttendance: () -> Unit,
 ) {
@@ -138,6 +146,47 @@ private fun EventDetailContent(
                 )
             }
         }
+
+        if (!attendees.isNullOrEmpty()) {
+            item(key = "going_header") {
+                Spacer(Modifier.height(16.dp))
+                HorizontalDivider()
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    text = "Going (${attendees.size})",
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                Spacer(Modifier.height(4.dp))
+            }
+            items(attendees, key = { it.username }) { attendee ->
+                AttendeeRow(attendee)
+            }
+        }
+    }
+}
+
+@Composable
+private fun AttendeeRow(attendee: EventAttendee) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 6.dp),
+    ) {
+        AsyncImage(
+            model = attendee.avatarUrl,
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
+                .size(36.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.surfaceVariant),
+        )
+        Spacer(Modifier.width(10.dp))
+        Text(
+            text = "@${attendee.username}",
+            style = MaterialTheme.typography.bodyMedium,
+        )
     }
 }
 
