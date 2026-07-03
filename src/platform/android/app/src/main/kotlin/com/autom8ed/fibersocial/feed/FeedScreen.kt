@@ -95,8 +95,10 @@ fun FeedScreen(viewModel: FeedAndroidViewModel) {
     }
 
     if (selectedEvent != null) {
+        val attendees by viewModel.eventDetail.attendees.collectAsState()
         EventDetailScreen(
             state = eventDetailState,
+            attendees = attendees,
             onBack = { selectedEvent = null },
             onToggleAttendance = { viewModel.eventDetail.toggleAttendance() },
         )

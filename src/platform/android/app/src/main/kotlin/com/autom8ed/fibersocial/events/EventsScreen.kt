@@ -1,5 +1,6 @@
 package com.autom8ed.fibersocial.events
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -53,6 +54,9 @@ fun EventsScreen(
     onBack: () -> Unit,
     onEventClick: (GroupEvent) -> Unit,
 ) {
+    // System back must mirror the top-bar back arrow instead of exiting the app
+    // (same contract as TopicDetailScreen; see issue #38 / PR #56).
+    BackHandler(onBack = onBack)
     Scaffold(
         topBar = {
             TopAppBar(

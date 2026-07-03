@@ -2,6 +2,7 @@ package com.autom8ed.fibersocial.events
 
 import com.autom8ed.fibersocial.auth.SessionExpiredException
 import com.autom8ed.fibersocial.feed.RavelryApiClient
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
@@ -39,8 +40,17 @@ class EventDetailViewModel(
     private val _state = MutableStateFlow<EventDetailState>(EventDetailState.Loading)
     private val _sessionExpired = Channel<Unit>(Channel.BUFFERED)
 
+    private val _attendees = MutableStateFlow<List<EventAttendee>?>(null)
+
     /** Observable event detail state. */
     val state: StateFlow<EventDetailState> = _state.asStateFlow()
+
+    /**
+     * People attending the loaded event, scraped from the people page in parallel with
+     * [load] and refreshed after a successful RSVP toggle. `null` while loading;
+     * attendees are decorative, so a failed scrape degrades to an empty list.
+     */
+    val attendees: StateFlow<List<EventAttendee>?> = _attendees.asStateFlow()
 
     /**
      * Emits [Unit] when a [SessionExpiredException] is caught. Each emission is consumed
@@ -57,6 +67,8 @@ class EventDetailViewModel(
         // Synchronously, not inside the coroutine: navigating to another event must not
         // flash the previous event's detail while the launch waits its turn.
         _state.value = EventDetailState.Loading
+        _attendees.value = null
+        scope.launch { refreshAttendees(eventPermalink) }
         scope.launch {
             println("FiberSocial: EventDetailViewModel.load($eventPermalink)")
             _state.value = try {
@@ -111,7 +123,37 @@ class EventDetailViewModel(
                 // state is still showing. If a newer load() or toggle has replaced it,
                 // reverting would clobber that newer state with a stale event.
                 _state.compareAndSet(optimistic, EventDetailState.Loaded(original))
+            } else {
+                // The user just joined or left; the people page is the source of truth.
+                refreshAttendees(permalink)
             }
         }
+    }
+
+    /** Monotonic token: only the newest attendees fetch may publish its result. */
+    private var attendeesFetchId = 0
+
+    private suspend fun refreshAttendees(eventPermalink: String) {
+        val fetchId = ++attendeesFetchId
+        val result: List<EventAttendee>? = try {
+            apiClient.getEventAttendees(eventPermalink)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // Attendees are decorative: every failure — including session expiry,
+            // whose signal the event-page fetch and the RSVP POST already own —
+            // degrades quietly instead of double-emitting sessionExpired or
+            // bouncing the user to login over a side list.
+            println("FiberSocial: EventDetailViewModel attendees failed: ${e.message}")
+            null
+        }
+        // Publish only if no newer load()/toggle refresh superseded this fetch and
+        // this event is still on screen: an older fetch resolving late (e.g. the
+        // load-time fetch finishing after a post-toggle refresh of the same event)
+        // must not overwrite the newer list.
+        if (fetchId != attendeesFetchId || loadedPermalink != eventPermalink) return
+        // A failed refresh keeps the last good list; degrade to empty only when
+        // nothing has loaded yet (the UI hides the section for null/empty).
+        _attendees.value = result ?: _attendees.value ?: emptyList()
     }
 }
