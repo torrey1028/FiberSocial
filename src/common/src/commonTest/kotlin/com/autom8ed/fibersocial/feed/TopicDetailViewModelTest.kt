@@ -433,6 +433,25 @@ class TopicDetailViewModelTest {
     }
 
     @Test
+    fun `deletePost failure with no exception message falls back to a default`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = TopicDetailViewModel(
+            routingApiClient { path ->
+                when {
+                    path.contains("/posts.json") -> postsJson(1L)
+                    Regex("/forum_posts/\\d+$").containsMatchIn(path) -> throw IllegalStateException()
+                    else -> TOKEN_PAGE_HTML
+                }
+            },
+            this,
+        )
+        vm.load(42L)
+        awaitChildren(coroutineContext[Job]!!)
+        vm.deletePost((vm.state.value as TopicDetailState.Loaded).posts.first())
+        awaitChildren(coroutineContext[Job]!!)
+        assertEquals(DeleteState.Error("Failed to delete post"), vm.deleteState.value)
+    }
+
+    @Test
     fun `deletePost session expiry signals sessionExpired`() = runTest(UnconfinedTestDispatcher()) {
         val vm = TopicDetailViewModel(sessionExpiredApiClient(), this)
         vm.deletePost(Post(id = 1L))
@@ -498,6 +517,24 @@ class TopicDetailViewModelTest {
         awaitChildren(coroutineContext[Job]!!)
         assertIs<EditState.Error>(vm.editState.value)
         assertEquals("Reply 1", (vm.state.value as TopicDetailState.Loaded).posts.first().body)
+    }
+
+    @Test
+    fun `editPost failure with no exception message falls back to a default`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = TopicDetailViewModel(
+            routingApiClient { path ->
+                when {
+                    path.contains("/forum_posts/") -> throw IllegalStateException()
+                    else -> postsJson(1L)
+                }
+            },
+            this,
+        )
+        vm.load(42L)
+        awaitChildren(coroutineContext[Job]!!)
+        vm.editPost((vm.state.value as TopicDetailState.Loaded).posts.first(), "new text")
+        awaitChildren(coroutineContext[Job]!!)
+        assertEquals(EditState.Error("Failed to save edit"), vm.editState.value)
     }
 
     @Test

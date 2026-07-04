@@ -871,10 +871,58 @@ class RavelryApiClientTest {
     }
 
     @Test
+    fun `deletePost fails on an unexpected informational status`() = runTest {
+        // The rejected-delete test above is >= 400 (fails the "in 300..399" upper bound);
+        // this is < 300 and non-2xx (fails its lower bound) — a distinct path through
+        // the success check even though both ultimately land in the same else branch.
+        val engine = MockEngine { request ->
+            if (request.method.value == "POST") {
+                respond(content = "", status = HttpStatusCode(100, "Continue"))
+            } else {
+                respond(
+                    content = TOKEN_PAGE_HTML,
+                    status = HttpStatusCode.OK,
+                    headers = headersOf("Content-Type", "text/html"),
+                )
+            }
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val result = runCatching { RavelryApiClient(httpClient, FakeFeedTokenStorage()).deletePost(555L) }
+        assertTrue(result.isFailure)
+    }
+
+    @Test
     fun `deletePost throws SessionExpiredException when the delete redirects to login`() = runTest {
         // Ktor doesn't follow redirects for POST: a 302 is how BOTH outcomes look.
         // A Location pointing at the login page means the session expired — treating
         // it as success would remove the post locally while it lives on at Ravelry.
+        // Bare "/login", not "/account/login" — that's a separate case (below), and the
+        // two must not collapse into testing only one of startsWith("/login")'s two sides.
+        val engine = MockEngine { request ->
+            if (request.method.value == "POST") {
+                respond("", HttpStatusCode.Found,
+                    headersOf(HttpHeaders.Location, "https://www.ravelry.com/login"))
+            } else {
+                respond(TOKEN_PAGE_HTML, HttpStatusCode.OK,
+                    headersOf("Content-Type", "text/html"))
+            }
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        assertFailsWith<SessionExpiredException> {
+            RavelryApiClient(httpClient, FakeFeedTokenStorage()).deletePost(555L)
+        }
+    }
+
+    @Test
+    fun `deletePost throws SessionExpiredException when the redirect is account slash login`() = runTest {
+        // Regression: the original version of this test used this exact Location but
+        // asserted it exercised startsWith("/login") — it actually only ever exercised
+        // startsWith("/account"), since "/account/login" starts with "/account", not
+        // "/login". Kept as its own case so both real-world redirect shapes stay covered.
         val engine = MockEngine { request ->
             if (request.method.value == "POST") {
                 respond("", HttpStatusCode.Found,
