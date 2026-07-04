@@ -1,6 +1,7 @@
 package com.autom8ed.fibersocial.feed
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -8,6 +9,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -15,22 +17,31 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.ClickableText
+import androidx.compose.foundation.text.InlineTextContent
+import androidx.compose.foundation.text.appendInlineContent
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.Typography
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.Placeholder
+import androidx.compose.ui.text.PlaceholderVerticalAlign
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
@@ -86,8 +97,10 @@ private fun BlockView(block: PostBlock) {
 }
 
 /**
- * A paragraph's inline content, with images lifted out as full-width blocks between the
- * text runs (Markdown images arrive inline, but read as standalone photos in a post).
+ * A paragraph's inline content, with full content photos lifted out as full-width blocks
+ * between the text runs (Markdown images arrive inline, but read as standalone photos in
+ * a post). Small inline "smiley" glyphs ([Inline.Image.isInlineEmoji]) are left in place
+ * and rendered at text size by [InlineText] instead.
  */
 @Composable
 private fun ParagraphView(content: List<Inline>) {
@@ -118,10 +131,9 @@ private fun InlineText(
         buildInlineText(content, linkColor, codeBackground)
     }
     val uriHandler = LocalUriHandler.current
-    ClickableText(
-        text = text,
-        style = style.copy(color = MaterialTheme.colorScheme.onSurface, textAlign = textAlign),
-    ) { offset ->
+    val resolvedStyle = style.copy(color = MaterialTheme.colorScheme.onSurface, textAlign = textAlign)
+
+    fun openLink(offset: Int) {
         text.getStringAnnotations(URL_ANNOTATION, offset, offset)
             .firstOrNull()
             ?.let { annotation ->
@@ -133,6 +145,46 @@ private fun InlineText(
                 }
             }
     }
+
+    val emoji = remember(content) { collectInlineEmoji(content) }
+    if (emoji.isEmpty()) {
+        // No inline emoji: keep the exact original rendering path.
+        ClickableText(text = text, style = resolvedStyle, onClick = ::openLink)
+        return
+    }
+
+    // Emoji glyphs are embedded in `text` as inline-content placeholders (see
+    // `appendInlines`), sized to roughly the surrounding line height; ClickableText has
+    // no inline-content support, so link taps are handled manually here instead.
+    val inlineContent = remember(emoji, resolvedStyle.fontSize) {
+        emoji.associate { image ->
+            image.url to InlineTextContent(
+                placeholder = Placeholder(
+                    width = resolvedStyle.fontSize,
+                    height = resolvedStyle.fontSize,
+                    placeholderVerticalAlign = PlaceholderVerticalAlign.TextCenter,
+                ),
+            ) {
+                AsyncImage(
+                    model = image.url,
+                    contentDescription = image.alt.ifEmpty { null },
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+        }
+    }
+    var layoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
+    Text(
+        text = text,
+        style = resolvedStyle,
+        inlineContent = inlineContent,
+        onTextLayout = { layoutResult = it },
+        modifier = Modifier.pointerInput(text) {
+            detectTapGestures { tapOffset ->
+                layoutResult?.getOffsetForPosition(tapOffset)?.let(::openLink)
+            }
+        },
+    )
 }
 
 @Composable
@@ -313,13 +365,20 @@ internal fun headingStyle(level: Int, typography: Typography): TextStyle {
     return base.copy(fontWeight = FontWeight.Bold)
 }
 
-/** A piece of a paragraph: either a run of text inlines or a lifted-out image. */
+/**
+ * A piece of a paragraph: either a run of text inlines (which may itself contain inline
+ * emoji images) or a lifted-out full content photo.
+ */
 internal sealed interface ParagraphSegment {
     data class TextRun(val content: List<Inline>) : ParagraphSegment
     data class Photo(val image: Inline.Image) : ParagraphSegment
 }
 
-/** Splits paragraph content around images so photos can render as full-width blocks. */
+/**
+ * Splits paragraph content around full content photos so they can render as full-width
+ * blocks. Small inline emoji ([Inline.Image.isInlineEmoji]) stay merged into the
+ * surrounding text run instead, so they render inline at text size.
+ */
 internal fun splitOnImages(content: List<Inline>): List<ParagraphSegment> {
     val segments = mutableListOf<ParagraphSegment>()
     val run = mutableListOf<Inline>()
@@ -330,7 +389,7 @@ internal fun splitOnImages(content: List<Inline>): List<ParagraphSegment> {
         }
     }
     content.forEach { inline ->
-        if (inline is Inline.Image) {
+        if (inline is Inline.Image && !inline.isInlineEmoji) {
             flushRun()
             segments += ParagraphSegment.Photo(inline)
         } else {
@@ -340,6 +399,22 @@ internal fun splitOnImages(content: List<Inline>): List<ParagraphSegment> {
     flushRun()
     return segments
 }
+
+/**
+ * Collects the inline emoji images present in [content], including inside styled spans
+ * and links, in document order. Used to build the `inlineContent` map [InlineText] passes
+ * to the underlying [Text] so each placeholder appended by `appendInlines` has a matching
+ * renderer.
+ */
+internal fun collectInlineEmoji(content: List<Inline>): List<Inline.Image> =
+    content.flatMap { inline ->
+        when (inline) {
+            is Inline.Image -> if (inline.isInlineEmoji) listOf(inline) else emptyList()
+            is Inline.Styled -> collectInlineEmoji(inline.children)
+            is Inline.Link -> collectInlineEmoji(inline.children)
+            else -> emptyList()
+        }
+    }
 
 /** Schemes a tapped link may open. Hrefs are user-generated, so anything else is inert. */
 private val ALLOWED_LINK_SCHEMES = setOf("http", "https", "mailto")
@@ -395,9 +470,13 @@ private fun androidx.compose.ui.text.AnnotatedString.Builder.appendInlines(
                 }
                 if (target != null) pop()
             }
-            // Images are lifted out at the paragraph level; ignore any that appear
-            // deeper (e.g. inside a link or table cell).
-            is Inline.Image -> Unit
+            // Inline emoji are rendered in place via an inline-content placeholder (see
+            // `collectInlineEmoji`/`InlineText`). Full content photos are lifted out at
+            // the paragraph level instead; ignore any that appear deeper here (e.g.
+            // inside a link or table cell).
+            is Inline.Image -> if (inline.isInlineEmoji) {
+                appendInlineContent(inline.url, inline.alt.ifEmpty { "emoji" })
+            }
         }
     }
 }

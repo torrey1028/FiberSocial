@@ -86,12 +86,45 @@ sealed interface Inline {
      */
     data class Link(val href: String, val children: List<Inline>) : Inline
 
-    /** An inline image (`<img>`). Markdown images arrive inside a paragraph. */
-    data class Image(val url: String, val alt: String) : Inline
+    /**
+     * An inline image (`<img>`). Markdown images arrive inside a paragraph.
+     *
+     * @property cssClass Raw `class` attribute value, verbatim from the source HTML
+     *   (empty if absent). Ravelry marks its small inline "smiley" glyphs with a class
+     *   containing `smiley`.
+     * @property width Explicit `width` attribute in pixels, if present.
+     * @property height Explicit `height` attribute in pixels, if present.
+     */
+    data class Image(
+        val url: String,
+        val alt: String,
+        val cssClass: String = "",
+        val width: Int? = null,
+        val height: Int? = null,
+    ) : Inline {
+        /**
+         * Whether this is one of Ravelry's small inline "smiley" glyphs rather than a
+         * full content photo — signaled by a `smiley` class, or by an explicit size no
+         * bigger than [INLINE_EMOJI_MAX_DIMENSION_PX] on both axes. Such images should
+         * render inline at roughly text size instead of as a full-width block.
+         */
+        val isInlineEmoji: Boolean
+            get() = cssClass.contains("smiley", ignoreCase = true) ||
+                (
+                    width != null && height != null &&
+                        width <= INLINE_EMOJI_MAX_DIMENSION_PX && height <= INLINE_EMOJI_MAX_DIMENSION_PX
+                    )
+    }
 
     /** An explicit line break within a paragraph (`<br>`). */
     data object HardBreak : Inline
 }
+
+/**
+ * Largest width/height (in px) an explicitly-sized image can have and still be treated as
+ * an inline emoji rather than a full content photo.
+ */
+private const val INLINE_EMOJI_MAX_DIMENSION_PX = 30
 
 /** Presentational styles a [Inline.Styled] span can carry. */
 enum class InlineStyle {

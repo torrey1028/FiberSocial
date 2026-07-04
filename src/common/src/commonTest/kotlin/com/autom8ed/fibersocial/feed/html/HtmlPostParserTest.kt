@@ -182,6 +182,83 @@ class HtmlPostParserInlineTest {
     }
 
     @Test
+    fun `a smiley class flags an image as inline emoji`() {
+        val content = singleParagraph(
+            """<p><img src="https://www.ravelry.com/images/smilies/smile.gif" class="smiley" alt=":)"></p>"""
+        )
+        val image = assertIs<Inline.Image>(content.single())
+        assertEquals("smiley", image.cssClass)
+        assertTrue(image.isInlineEmoji)
+    }
+
+    @Test
+    fun `small explicit dimensions flag an image as inline emoji`() {
+        val content = singleParagraph(
+            """<p><img src="https://images.example/icon.gif" alt="" width="15" height="15"></p>"""
+        )
+        val image = assertIs<Inline.Image>(content.single())
+        assertEquals(15, image.width)
+        assertEquals(15, image.height)
+        assertTrue(image.isInlineEmoji)
+    }
+
+    @Test
+    fun `pixel-suffixed dimensions still parse as inline emoji`() {
+        val content = singleParagraph(
+            """<p><img src="https://images.example/icon.gif" alt="" width="20px" height="20px"></p>"""
+        )
+        val image = assertIs<Inline.Image>(content.single())
+        assertEquals(20, image.width)
+        assertEquals(20, image.height)
+        assertTrue(image.isInlineEmoji)
+    }
+
+    @Test
+    fun `a normal content image is not flagged as inline emoji`() {
+        val content = singleParagraph(
+            """<p><img src="https://images.example/yarn.jpg" alt="a skein" width="640" height="480"></p>"""
+        )
+        val image = assertIs<Inline.Image>(content.single())
+        assertTrue(!image.isInlineEmoji)
+    }
+
+    @Test
+    fun `an image with only one dimension set is not flagged as inline emoji`() {
+        val content = singleParagraph(
+            """<p><img src="https://images.example/icon.gif" alt="" width="15"></p>"""
+        )
+        val image = assertIs<Inline.Image>(content.single())
+        assertEquals(15, image.width)
+        assertEquals(null, image.height)
+        assertTrue(!image.isInlineEmoji)
+    }
+
+    @Test
+    fun `an image with only one dimension over the threshold is not flagged as inline emoji`() {
+        val content = singleParagraph(
+            """<p><img src="https://images.example/icon.gif" alt="" width="15" height="500"></p>"""
+        )
+        val image = assertIs<Inline.Image>(content.single())
+        assertTrue(!image.isInlineEmoji)
+    }
+
+    @Test
+    fun `a non-numeric dimension attribute parses to a null width`() {
+        val content = singleParagraph(
+            """<p><img src="https://images.example/icon.gif" alt="" width="auto"></p>"""
+        )
+        val image = assertIs<Inline.Image>(content.single())
+        assertEquals(null, image.width)
+    }
+
+    @Test
+    fun `an image with no class or size is not flagged as inline emoji`() {
+        val content = singleParagraph("""<p><img src="https://images.example/yarn.jpg" alt="a skein"></p>""")
+        val image = assertIs<Inline.Image>(content.single())
+        assertTrue(!image.isInlineEmoji)
+    }
+
+    @Test
     fun `unknown inline tags degrade to their content`() {
         val content = singleParagraph("<p>a <span class=\"future\">kept</span> b</p>")
         assertEquals("a kept b", content.plainText())
