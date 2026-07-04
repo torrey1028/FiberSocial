@@ -23,9 +23,15 @@ const val AUTH_PREFS_NAME = "fibersocial_auth"
 const val NOTIFICATION_STATE_PREFS_NAME = "notification_state"
 const val NOTIFICATION_SETTINGS_PREFS_NAME = "notification_settings"
 
-/** Plain `SharedPreferences`-backed store — for non-sensitive data. */
+/**
+ * Plain `SharedPreferences`-backed store — for non-sensitive data.
+ *
+ * Uses [Context.getApplicationContext] regardless of what [context] is, so a store built
+ * from (and potentially `remember`-cached alongside) an Activity context never retains a
+ * reference to it — matching [encryptedKeyValueStore]'s existing convention.
+ */
 fun plainKeyValueStore(context: Context, name: String): KeyValueStore =
-    SharedPreferencesKeyValueStore(context.getSharedPreferences(name, Context.MODE_PRIVATE))
+    SharedPreferencesKeyValueStore(context.applicationContext.getSharedPreferences(name, Context.MODE_PRIVATE))
 
 /** `EncryptedSharedPreferences`-backed store — for secrets like OAuth tokens. */
 fun encryptedKeyValueStore(context: Context, name: String): KeyValueStore =
