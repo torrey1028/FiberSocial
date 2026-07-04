@@ -368,10 +368,12 @@ internal fun TopicDetailRoute(
     // ReplyState is transient — it flips Sent -> Idle again as soon as the composer
     // acknowledges it (see ReplyComposer/acknowledgeReplySent) — so whether a reply went
     // out has to be latched here rather than read directly off replyState at onBack time.
+    // Updated inline during composition, not via LaunchedEffect: an effect only runs in a
+    // later apply-changes phase, leaving a window where onBack (composed in the same pass
+    // that observed Sent) could read the not-yet-updated latch if back-navigation happens
+    // before that effect gets a chance to run.
     var repliedThisVisit by remember { mutableStateOf(false) }
-    LaunchedEffect(replyState) {
-        repliedThisVisit = trackReplySent(repliedThisVisit, replyState)
-    }
+    repliedThisVisit = trackReplySent(repliedThisVisit, replyState)
     TopicDetailScreen(
         topic = topic,
         postsState = postsState,
