@@ -187,14 +187,17 @@ object HtmlPostParser {
      * Ravelry smallest-first, so taking the first keeps this simple without needing to
      * parse and compare `w`/`x` descriptors. Finally, protocol-relative URLs
      * (`//host/img.jpg`) are normalized to `https:` since Coil/OkHttp require an explicit
-     * scheme to resolve a request.
+     * scheme to resolve a request. If none of `src`/`data-src`/`srcset` holds a usable
+     * URL, this returns an empty string rather than the known-unusable `src` — a blank
+     * URL degrades cleanly (no image), whereas re-passing e.g. a `data:` placeholder to
+     * Coil would waste effort trying to load it.
      */
     private fun imageUrl(img: Element): String {
         val src = img.attr("src")
         val resolved = when {
             isUsableUrl(src) -> src
             isUsableUrl(img.attr("data-src")) -> img.attr("data-src")
-            else -> firstSrcsetCandidate(img.attr("srcset")) ?: src
+            else -> firstSrcsetCandidate(img.attr("srcset")).orEmpty()
         }
         return normalizeProtocolRelative(resolved)
     }
@@ -207,7 +210,9 @@ object HtmlPostParser {
         srcset.split(",")
             .map { it.trim() }
             .firstOrNull { it.isNotEmpty() }
-            ?.substringBefore(' ')
+            // The URL/descriptor separator is whitespace per the srcset grammar, not
+            // necessarily a literal space (HTML source can wrap on tabs/newlines too).
+            ?.let { WHITESPACE_RUN.split(it, limit = 2).first() }
 
     /** Coil/OkHttp need an explicit scheme; Ravelry sometimes emits `//host/...` URLs. */
     private fun normalizeProtocolRelative(url: String): String =

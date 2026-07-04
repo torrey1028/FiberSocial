@@ -226,6 +226,26 @@ class HtmlPostParserInlineTest {
     }
 
     @Test
+    fun `images with only a data URI placeholder fall back to an empty url, not the placeholder`() {
+        // Regression: the fallback used to be `?: src`, returning the known-unusable
+        // placeholder itself when data-src/srcset held nothing usable either.
+        val content = singleParagraph(
+            """<p><img src="data:image/gif;base64,AAAA" alt="none"></p>"""
+        )
+        assertEquals(Inline.Image(url = "", alt = "none"), content.single())
+    }
+
+    @Test
+    fun `srcset candidates separated by tabs or newlines still resolve to a bare url`() {
+        // Regression: substringBefore(' ') only split on a literal space; the srcset
+        // grammar allows any whitespace between a candidate's url and its descriptor.
+        val content = singleParagraph(
+            "<p><img srcset=\"https://images.example/small.jpg\t480w\" alt=\"set\"></p>"
+        )
+        assertEquals("https://images.example/small.jpg", (content.single() as Inline.Image).url)
+    }
+
+    @Test
     fun `protocol-relative image urls are normalized to https`() {
         val content = singleParagraph("""<p><img src="//images.example/yarn.jpg" alt="a skein"></p>""")
         assertEquals("https://images.example/yarn.jpg", (content.single() as Inline.Image).url)
