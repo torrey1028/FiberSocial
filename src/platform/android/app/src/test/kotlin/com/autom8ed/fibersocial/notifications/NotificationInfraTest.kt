@@ -44,14 +44,14 @@ class AndroidNotificationStoresTest {
     }
 
     @Test
-    fun `settings store defaults to 6 hours and round-trips`() = runTest {
+    fun `settings store defaults to the default cadence and round-trips`() = runTest {
         val prefs = context.getSharedPreferences("test_settings", Context.MODE_PRIVATE)
         prefs.edit().clear().commit()
         val store = AndroidNotificationSettingsStore(prefs)
-        assertEquals(NotificationSettings.DEFAULT_POLL_INTERVAL_HOURS, store.load().pollIntervalHours)
+        assertEquals(NotificationSettings.DEFAULT_POLL_CADENCE, store.load().effectivePollCadence)
 
-        store.save(NotificationSettings(pollIntervalHours = 12))
-        assertEquals(12, store.load().pollIntervalHours)
+        store.save(NotificationSettings(pollCadence = PollCadence.ONCE_A_DAY))
+        assertEquals(PollCadence.ONCE_A_DAY, store.load().effectivePollCadence)
     }
 }
 

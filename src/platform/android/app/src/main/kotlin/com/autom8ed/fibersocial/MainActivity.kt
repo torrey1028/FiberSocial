@@ -87,7 +87,7 @@ class MainActivity : ComponentActivity() {
                             feedVm.load()
                             EventSyncWorker.schedulePeriodic(
                                 this@MainActivity,
-                                AndroidNotificationSettingsStore(this@MainActivity).load().pollIntervalHours,
+                                AndroidNotificationSettingsStore(this@MainActivity).load().effectivePollCadence,
                             )
                         }
                         // On session expiry: show WebView login before clearing auth so there's no

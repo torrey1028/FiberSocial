@@ -34,7 +34,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import com.autom8ed.fibersocial.feed.models.RavelryUser
-import com.autom8ed.fibersocial.notifications.NotificationSettings
+import com.autom8ed.fibersocial.notifications.PollCadence
+import com.autom8ed.fibersocial.notifications.pollCadenceLabel
 import com.autom8ed.fibersocial.ui.UserAvatar
 
 /**
@@ -42,10 +43,9 @@ import com.autom8ed.fibersocial.ui.UserAvatar
  * drawer (issue #9). Shows the signed-in account, the event-notification
  * poll cadence, and lets the user sign out.
  *
- * @param pollIntervalHours Current background-sync interval; null while loading
- *   (the row is hidden until known to avoid flashing a wrong value).
- * @param onPollIntervalSelected Invoked with the chosen interval, one of
- *   [NotificationSettings.POLL_INTERVAL_CHOICES].
+ * @param pollCadence Current background-sync cadence; null while loading (the row is
+ *   hidden until known to avoid flashing a wrong value).
+ * @param onPollCadenceSelected Invoked with the chosen cadence.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -53,8 +53,8 @@ fun SettingsScreen(
     user: RavelryUser?,
     onBack: () -> Unit,
     onSignOut: () -> Unit,
-    pollIntervalHours: Int? = null,
-    onPollIntervalSelected: (Int) -> Unit = {},
+    pollCadence: PollCadence? = null,
+    onPollCadenceSelected: (PollCadence) -> Unit = {},
 ) {
     BackHandler(onBack = onBack)
     Scaffold(
@@ -95,10 +95,10 @@ fun SettingsScreen(
                 }
             }
             HorizontalDivider()
-            if (pollIntervalHours != null) {
-                PollIntervalRow(
-                    pollIntervalHours = pollIntervalHours,
-                    onSelected = onPollIntervalSelected,
+            if (pollCadence != null) {
+                PollCadenceRow(
+                    pollCadence = pollCadence,
+                    onSelected = onPollCadenceSelected,
                 )
                 HorizontalDivider()
             }
@@ -131,9 +131,9 @@ fun SettingsScreen(
  * the supported choices.
  */
 @Composable
-private fun PollIntervalRow(
-    pollIntervalHours: Int,
-    onSelected: (Int) -> Unit,
+private fun PollCadenceRow(
+    pollCadence: PollCadence,
+    onSelected: (PollCadence) -> Unit,
 ) {
     var showDialog by rememberSaveable { mutableStateOf(false) }
     Row(
@@ -155,7 +155,7 @@ private fun PollIntervalRow(
                 style = MaterialTheme.typography.bodyLarge,
             )
             Text(
-                text = intervalLabel(pollIntervalHours),
+                text = pollCadenceLabel(pollCadence),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -168,7 +168,7 @@ private fun PollIntervalRow(
             title = { Text("Check for new events") },
             text = {
                 Column {
-                    NotificationSettings.POLL_INTERVAL_CHOICES.forEach { hours ->
+                    PollCadence.entries.forEach { cadence ->
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -176,18 +176,18 @@ private fun PollIntervalRow(
                                     role = Role.RadioButton,
                                     onClick = {
                                         showDialog = false
-                                        onSelected(hours)
+                                        onSelected(cadence)
                                     },
                                 )
                                 .padding(vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             RadioButton(
-                                selected = hours == pollIntervalHours,
+                                selected = cadence == pollCadence,
                                 onClick = null,
                             )
                             Spacer(Modifier.width(8.dp))
-                            Text(intervalLabel(hours))
+                            Text(pollCadenceLabel(cadence))
                         }
                     }
                 }
