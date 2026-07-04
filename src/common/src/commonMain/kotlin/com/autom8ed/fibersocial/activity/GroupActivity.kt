@@ -28,7 +28,8 @@ enum class GroupActivityType(internal val iconKey: String) {
  *   when the markup carries none. Stable across refreshes, so usable for dedup.
  * @property typeKey Raw icon key (`o-icon--<key>`) so callers can distinguish activity
  *   types that aren't modeled in [GroupActivityType] yet.
- * @property targetUrl Absolute URL the entry links to — a project page for
+ * @property targetUrl Raw href the entry links to, exactly as found in the markup (absolute
+ *   on real pages, but the parser does not require it) — a project page for
  *   [GroupActivityType.PROJECT_PHOTO], a forum post for [GroupActivityType.MAGIC_LINK].
  * @property thumbnailUrl Small cropped photo shown on the entry, when present.
  * @property ageText Relative age exactly as the site renders it, e.g. "about 18 hours ago".

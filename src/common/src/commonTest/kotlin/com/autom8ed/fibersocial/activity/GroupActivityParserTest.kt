@@ -6,7 +6,9 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class GroupActivityParserGoldenTest {
-    private val page = GroupActivityParser.parse(GROUP_ACTIVITY_HTML)
+    companion object {
+        private val page = GroupActivityParser.parse(GROUP_ACTIVITY_HTML)
+    }
 
     @Test
     fun `parses all entries from the container in page order`() {
