@@ -8,10 +8,15 @@ so the metrics and tolerance cannot drift between them.
 Usage: compare_coverage.py LABEL REPORT_XML [BASELINE_XML]
 
 Prints INSTRUCTION/BRANCH percentages; with a baseline, marks each metric
-OK/REGRESSION using a 0.1% rounding tolerance. On regression it also prints
-exactly what to fix: how many more units must be covered to pass, and a
-method-level diff of where coverage got worse relative to the baseline —
-so the gap can be closed without re-running coverage locally.
+OK/REGRESSION. Below HIGH_COVERAGE_THRESHOLD, only a 0.1% rounding
+tolerance is allowed. Once baseline coverage is above that threshold,
+PRs may regress it by up to (but not including) 1 point — past that
+threshold we're into diminishing returns on squeezing out more coverage,
+so a small regression there isn't worth blocking a PR over. On regression
+it also prints exactly what to fix: how many more units must be covered
+to pass, and a method-level diff of where coverage got worse relative to
+the baseline — so the gap can be closed without re-running coverage
+locally.
 
 Exit codes: 0 = ok (or no baseline to compare), 1 = regression,
 2 = could not run (missing/corrupt report) — callers must not report 2 as
@@ -22,8 +27,16 @@ import sys
 import xml.etree.ElementTree as ET
 
 METRICS = ("INSTRUCTION", "BRANCH")
-TOLERANCE = 0.001  # 0.1 % rounding tolerance
+ROUNDING_TOLERANCE = 0.001  # 0.1 % rounding tolerance, always applied
+HIGH_COVERAGE_THRESHOLD = 0.85
+HIGH_COVERAGE_REGRESSION_ALLOWANCE = 0.01  # < 1 point regression allowed above the threshold
 MAX_DIFF_ROWS = 25
+
+
+def allowed_drop(baseline):
+    if baseline > HIGH_COVERAGE_THRESHOLD:
+        return HIGH_COVERAGE_REGRESSION_ALLOWANCE
+    return ROUNDING_TOLERANCE
 
 
 def total_counts(path):
@@ -106,7 +119,8 @@ def main():
         c_cov, c_mis = current.get(t, (0, 0))
         b = b_cov / (b_cov + b_mis) if b_cov + b_mis else 0
         c = c_cov / (c_cov + c_mis) if c_cov + c_mis else 0
-        ok = c >= b - TOLERANCE
+        drop = allowed_drop(b)
+        ok = c > b - drop if b > HIGH_COVERAGE_THRESHOLD else c >= b - drop
         print(
             f"{label} {t}: {c:.3%} ({c_cov}/{c_cov + c_mis}) vs baseline "
             f"{b:.3%} ({b_cov}/{b_cov + b_mis})  {'OK' if ok else 'REGRESSION'}"
@@ -114,7 +128,8 @@ def main():
         if not ok:
             # Smallest n with (c_cov + n) / total >= floor.
             total = c_cov + c_mis
-            need = max(1, math.ceil((b - TOLERANCE) * total) - c_cov)
+            floor = b - drop
+            need = max(1, math.ceil(floor * total) - c_cov)
             unit = "branches" if t == "BRANCH" else "instructions"
             print(f"  -> cover at least {need} more {unit} to pass")
             failed.append(t)
