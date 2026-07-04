@@ -201,6 +201,50 @@ class SplitOnImagesTest {
             segments,
         )
     }
+
+    @Test
+    fun `a photo wrapped in a link is lifted out carrying the link target`() {
+        // Ravelry wraps every post photo in a link to its project page (issue #102).
+        val link = Inline.Link(href = "/projects/u/shawl", children = listOf(image))
+        assertEquals(
+            listOf<ParagraphSegment>(ParagraphSegment.Photo(image, linkHref = "/projects/u/shawl")),
+            splitOnImages(listOf(link)),
+        )
+    }
+
+    @Test
+    fun `text sharing a link with a photo stays a linked text run`() {
+        val link = Inline.Link(href = "/p", children = listOf(Inline.Text("caption "), image))
+        assertEquals(
+            listOf(
+                ParagraphSegment.TextRun(listOf(Inline.Link("/p", listOf(Inline.Text("caption "))))),
+                ParagraphSegment.Photo(image, linkHref = "/p"),
+            ),
+            splitOnImages(listOf(link)),
+        )
+    }
+
+    @Test
+    fun `an emoji inside a link stays in the linked text run`() {
+        val link = Inline.Link(href = "/p", children = listOf(Inline.Text("hi "), emoji))
+        assertEquals(
+            listOf<ParagraphSegment>(ParagraphSegment.TextRun(listOf(link))),
+            splitOnImages(listOf(link)),
+        )
+    }
+
+    @Test
+    fun `a link with two photos lifts both with the same target`() {
+        val second = Inline.Image(url = "https://images.example/b.jpg", alt = "b")
+        val link = Inline.Link(href = "/p", children = listOf(image, second))
+        assertEquals(
+            listOf<ParagraphSegment>(
+                ParagraphSegment.Photo(image, linkHref = "/p"),
+                ParagraphSegment.Photo(second, linkHref = "/p"),
+            ),
+            splitOnImages(listOf(link)),
+        )
+    }
 }
 
 class CollectInlineEmojiTest {

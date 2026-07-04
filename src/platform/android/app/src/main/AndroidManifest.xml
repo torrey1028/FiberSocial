@@ -20,6 +20,7 @@
     </queries>
 
     <application
+        android:name=".FiberSocialApplication"
         android:label="FiberSocial"
         android:theme="@style/Theme.FiberSocial">
         <activity

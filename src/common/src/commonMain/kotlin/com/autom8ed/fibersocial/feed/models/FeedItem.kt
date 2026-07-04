@@ -15,8 +15,11 @@ package com.autom8ed.fibersocial.feed.models
  * @property lastPostAt ISO-8601 timestamp of the most recent reply, used for feed sorting.
  * @property author User who created the opening post.
  * @property title Topic title.
- * @property bodyPreview Truncated plain-text excerpt of the opening post (max 200 chars).
- * @property bodySummary Full plain-text content of the opening post.
+ * @property bodyPreview Truncated plain-text excerpt of the author-written topic summary
+ *   (max 200 chars).
+ * @property bodySummary The author-written topic summary as raw Markdown source.
+ * @property bodySummaryHtml Ravelry's HTML rendering of the topic summary; preferred over
+ *   [bodySummary] when present (see [Topic.summaryHtml]). Empty when unavailable.
  * @property replyCount Total number of posts in the thread.
  * @property sticky Whether a moderator pinned this topic to the top of the forum. Sticky
  *   cards always attribute to the opening post ([latestReplyAuthor]/[latestReplyPreview]
@@ -36,6 +39,7 @@ data class FeedItem(
     val title: String,
     val bodyPreview: String,
     val bodySummary: String,
+    val bodySummaryHtml: String = "",
     val replyCount: Int,
     val sticky: Boolean = false,
     val latestReplyAuthor: RavelryUser? = null,

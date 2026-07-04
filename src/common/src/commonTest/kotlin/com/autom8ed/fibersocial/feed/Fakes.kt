@@ -109,6 +109,7 @@ fun topicDetailJson(
     repliedAt: String? = "2024-01-${(id % 28 + 1).toString().padStart(2, '0')}",
     summary: String? = "Summary for topic $id",
     postsCount: Int = 2,
+    summaryHtml: String? = null,
 ) = """{
   "topic":{
     "id":$id,"title":"Topic $id",
@@ -117,7 +118,8 @@ fun topicDetailJson(
     "forum_posts_count":$postsCount,
     "replied_at":${if (repliedAt != null) "\"$repliedAt\"" else "null"},
     "created_by_user":{"username":"yarnie"},
-    "summary":${if (summary != null) "\"$summary\"" else "null"}
+    "summary":${if (summary != null) "\"$summary\"" else "null"},
+    "summary_html":${if (summaryHtml != null) "\"$summaryHtml\"" else "null"}
   }
 }"""
 
