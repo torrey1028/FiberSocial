@@ -2,6 +2,7 @@ package com.autom8ed.fibersocial.feed.models
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertNotEquals
@@ -129,6 +130,22 @@ class TopicTest {
         assertEquals(true, t.sticky)
         assertEquals(42, t.postsCount)
     }
+
+    @Test
+    fun `direct construction falls back to default parameter values`() {
+        // Unlike the JSON-deserialization tests above, this constructs a Topic straight
+        // from Kotlin, omitting every optional param.
+        val t = Topic(id = 300L, title = "Direct construction")
+        assertEquals(0L, t.forumId)
+        assertEquals(0, t.postsCount)
+        assertEquals(0, t.imagesCount)
+        assertNull(t.repliedAt)
+        assertNull(t.createdAt)
+        assertEquals(false, t.sticky)
+        assertEquals(false, t.archived)
+        assertNull(t.createdByUser)
+        assertNull(t.summary)
+    }
 }
 
 class FeedItemTest {
@@ -153,6 +170,8 @@ class FeedItemTest {
     @Test
     fun `exposes body preview and full summary`() {
         val item = item()
+        assertEquals("Yarn substitution help?", item.title)
+        assertEquals(7, item.replyCount)
         assertEquals("Can I sub DK for worsted?", item.bodyPreview)
         assertEquals("Can I sub DK for worsted? I have this beautiful skein...", item.bodySummary)
     }
@@ -161,6 +180,18 @@ class FeedItemTest {
     fun `sticky defaults to false`() {
         assertFalse(item().sticky)
         assertTrue(item(sticky = true).sticky)
+    }
+
+    @Test
+    fun `sticky item with latest-reply attribution is rejected`() {
+        // A pinned topic always attributes to the opening post — the two fields
+        // are mutually exclusive by construction, not just by convention.
+        assertFailsWith<IllegalArgumentException> {
+            item(sticky = true, latestReplyAuthor = author)
+        }
+        assertFailsWith<IllegalArgumentException> {
+            item(sticky = true, latestReplyPreview = "Newest reply")
+        }
     }
 
     @Test
