@@ -13,8 +13,9 @@
 # for you. Run it when that's safe, then reconnect your device.
 set -e
 
-if ! grep -qi microsoft /proc/version 2>/dev/null; then
-    echo "This doesn't look like WSL2 - aborting to avoid touching an unrelated system."
+if ! grep -qi wsl2 /proc/version 2>/dev/null; then
+    echo "This doesn't look like WSL2 (systemd/udev only apply there) - aborting."
+    echo "WSL1 reports \"Microsoft\" in /proc/version too but has no udev to fix."
     exit 1
 fi
 
@@ -38,10 +39,22 @@ WSLCONF
     echo "    Added."
 fi
 
+echo "==> Ensuring the plugdev group exists and includes $USER..."
+if ! getent group plugdev > /dev/null; then
+    sudo groupadd plugdev
+    echo "    Created plugdev."
+fi
+if id -nG "$USER" | grep -qw plugdev; then
+    echo "    $USER is already a member."
+else
+    sudo usermod -aG plugdev "$USER"
+    echo "    Added $USER - takes effect on next login (or run: newgrp plugdev)."
+fi
+
 echo "==> Installing Android udev rule at $UDEV_RULE..."
 sudo tee "$UDEV_RULE" > /dev/null <<'UDEVRULES'
 # Google (Pixel) devices - allow plugdev group RW access for adb
-SUBSYSTEM=="usb", ATTR{idVendor}=="18d1", MODE="0666", GROUP="plugdev"
+SUBSYSTEM=="usb", ATTR{idVendor}=="18d1", MODE="0660", GROUP="plugdev"
 UDEVRULES
 echo "    Installed."
 
