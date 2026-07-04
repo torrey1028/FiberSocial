@@ -140,6 +140,15 @@ object HtmlPostParser {
 
     private val TEXT_ALIGN = Regex("text-align\\s*:\\s*(left|center|right)", RegexOption.IGNORE_CASE)
 
+    /** Parses a pixel-ish HTML size attribute (e.g. `"20"`, `"20px"`) to its integer value. */
+    private fun parsePixelAttr(value: String): Int? {
+        val match = PIXEL_VALUE.matchEntire(value) ?: return null
+        return match.groupValues[1].toIntOrNull()
+    }
+
+    // Anchored to the whole value so "1.5" or "auto15" don't parse as pixel sizes.
+    private val PIXEL_VALUE = Regex("(\\d+)(?:px)?")
+
     private fun parseInlineChildren(element: Element): List<Inline> =
         element.childNodes().flatMap { parseInlineNode(it) }
 
@@ -159,7 +168,15 @@ object HtmlPostParser {
             "sup" -> styled(InlineStyle.SUPERSCRIPT, node)
             "code" -> listOf(Inline.Code(node.text()))
             "a" -> listOf(Inline.Link(href = node.attr("href"), children = parseInlineChildren(node)))
-            "img" -> listOf(Inline.Image(url = node.attr("src"), alt = node.attr("alt")))
+            "img" -> listOf(
+                Inline.Image(
+                    url = node.attr("src"),
+                    alt = node.attr("alt"),
+                    cssClass = node.attr("class"),
+                    width = parsePixelAttr(node.attr("width")),
+                    height = parsePixelAttr(node.attr("height")),
+                )
+            )
             "br" -> listOf(Inline.HardBreak)
             // Purely presentational wrapper; unwrap without noise.
             "span" -> parseInlineChildren(node)
