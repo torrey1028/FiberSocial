@@ -911,6 +911,29 @@ class RavelryApiClientTest {
     }
 
     @Test
+    fun `deletePost succeeds when the delete redirects back to the topic`() = runTest {
+        // The "ok" 200 in the fetch/post test above isn't actually what Ravelry sends on a
+        // real successful delete — per this method's own comment, Ktor doesn't follow
+        // redirects for POST, so a genuine success also surfaces as a 3xx. This covers
+        // that half of `response.status.isSuccess() || response.status.value in 300..399`,
+        // distinct from a login/account redirect (session expiry) or a 2xx body.
+        val engine = MockEngine { request ->
+            if (request.method.value == "POST") {
+                respond("", HttpStatusCode.Found,
+                    headersOf(HttpHeaders.Location, "https://www.ravelry.com/discuss/some-group/1234"))
+            } else {
+                respond(TOKEN_PAGE_HTML, HttpStatusCode.OK,
+                    headersOf("Content-Type", "text/html"))
+            }
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        // Must not throw.
+        RavelryApiClient(httpClient, FakeFeedTokenStorage()).deletePost(555L)
+    }
+
+    @Test
     fun `deletePost reuses the cached csrf token across deletes`() = runTest {
         var tokenPageFetches = 0
         val engine = MockEngine { request ->
