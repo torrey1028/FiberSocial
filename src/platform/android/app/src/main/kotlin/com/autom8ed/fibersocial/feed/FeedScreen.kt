@@ -67,6 +67,7 @@ import com.autom8ed.fibersocial.notifications.AndroidNotificationSettingsStore
 import com.autom8ed.fibersocial.notifications.EventSyncWorker
 import com.autom8ed.fibersocial.notifications.NotificationSettings
 import com.autom8ed.fibersocial.settings.SettingsScreen
+import com.autom8ed.fibersocial.ui.PullToRefreshBox
 import com.autom8ed.fibersocial.ui.UserAvatar
 import kotlinx.coroutines.launch
 
@@ -170,6 +171,7 @@ fun FeedScreen(
             // the next natural reload (issue #88). Skipped when the user merely browsed
             // and backed out, to avoid an unnecessary network call/spinner flash.
             onRefreshFeed = { viewModel.feed.refresh() },
+            onRefresh = { viewModel.topicDetail.load(topic.id) },
         )
         return
     }
@@ -211,12 +213,17 @@ fun FeedScreen(
     }
 
     if (selectedEventPermalink != null) {
+        // Captured once for the same reason as `topic` above: onRefresh runs later,
+        // when another handler may already have nulled selectedEventPermalink.
+        val permalink = selectedEventPermalink!!
         val attendees by viewModel.eventDetail.attendees.collectAsState()
         EventDetailScreen(
+            eventPermalink = permalink,
             state = eventDetailState,
             attendees = attendees,
             onBack = { selectedEventPermalink = null },
             onToggleAttendance = { viewModel.eventDetail.toggleAttendance() },
+            onRefresh = { viewModel.eventDetail.load(permalink) },
         )
         return
     }
@@ -230,6 +237,7 @@ fun FeedScreen(
                 viewModel.eventDetail.load(groupEvent.event.permalink)
                 selectedEventPermalink = groupEvent.event.permalink
             },
+            onRefresh = { viewModel.events.load(groups) },
         )
         return
     }
@@ -315,22 +323,32 @@ fun FeedScreen(
                     Text(message, color = MaterialTheme.colorScheme.error)
                 }
 
-                is FeedState.Loaded -> FeedList(
-                    items = s.items,
+                is FeedState.Loaded -> PullToRefreshBox(
+                    refreshing = false,
+                    onRefresh = { viewModel.feed.refresh() },
                     modifier = Modifier.padding(padding),
-                    onTopicClick = { topic ->
-                        viewModel.topicDetail.load(topic.id)
-                        selectedTopic = topic
-                    },
-                )
-                is FeedState.Refreshing -> FeedList(
-                    items = s.stale.items,
+                ) {
+                    FeedList(
+                        items = s.items,
+                        onTopicClick = { topic ->
+                            viewModel.topicDetail.load(topic.id)
+                            selectedTopic = topic
+                        },
+                    )
+                }
+                is FeedState.Refreshing -> PullToRefreshBox(
+                    refreshing = true,
+                    onRefresh = { viewModel.feed.refresh() },
                     modifier = Modifier.padding(padding),
-                    onTopicClick = { topic ->
-                        viewModel.topicDetail.load(topic.id)
-                        selectedTopic = topic
-                    },
-                )
+                ) {
+                    FeedList(
+                        items = s.stale.items,
+                        onTopicClick = { topic ->
+                            viewModel.topicDetail.load(topic.id)
+                            selectedTopic = topic
+                        },
+                    )
+                }
             }
         }
     }
@@ -364,6 +382,7 @@ internal fun TopicDetailRoute(
     onReplySent: () -> Unit,
     onBack: () -> Unit,
     onRefreshFeed: () -> Unit,
+    onRefresh: () -> Unit,
 ) {
     // ReplyState is transient — it flips Sent -> Idle again as soon as the composer
     // acknowledges it (see ReplyComposer/acknowledgeReplySent) — so whether a reply went
@@ -385,6 +404,7 @@ internal fun TopicDetailRoute(
         replyState = replyState,
         onSendReply = onSendReply,
         onReplySent = onReplySent,
+        onRefresh = onRefresh,
     )
 }
 

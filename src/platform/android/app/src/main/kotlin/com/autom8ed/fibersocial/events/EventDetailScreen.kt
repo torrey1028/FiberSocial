@@ -34,7 +34,11 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
@@ -43,6 +47,7 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import com.autom8ed.fibersocial.ui.Avatar
+import com.autom8ed.fibersocial.ui.PullToRefreshBox
 import com.autom8ed.fibersocial.feed.PostBody
 import com.autom8ed.fibersocial.feed.html.HtmlPostParser
 
@@ -55,14 +60,35 @@ import com.autom8ed.fibersocial.feed.html.HtmlPostParser
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EventDetailScreen(
+    eventPermalink: String,
     state: EventDetailState,
     attendees: List<EventAttendee>?,
     onBack: () -> Unit,
     onToggleAttendance: () -> Unit,
+    onRefresh: () -> Unit = {},
 ) {
     // System back must mirror the top-bar back arrow instead of exiting the app
     // (same contract as TopicDetailScreen; see issue #38 / PR #56).
     BackHandler(onBack = onBack)
+
+    // Pull-to-refresh calls onRefresh(), which re-triggers load(eventPermalink); that
+    // synchronously resets both state and attendees, briefly reporting Loading/null
+    // again. Falling back to the last good snapshots while isRefreshing is in flight
+    // keeps the event on screen under the compact pull spinner instead of replacing it
+    // with the full-screen loading indicator.
+    var isRefreshing by remember(eventPermalink) { mutableStateOf(false) }
+    var lastLoaded by remember(eventPermalink) { mutableStateOf<EventDetailState.Loaded?>(null) }
+    var lastAttendees by remember(eventPermalink) { mutableStateOf<List<EventAttendee>?>(null) }
+    LaunchedEffect(state) {
+        if (state is EventDetailState.Loaded) lastLoaded = state
+        if (state !is EventDetailState.Loading) isRefreshing = false
+    }
+    LaunchedEffect(attendees) {
+        if (attendees != null) lastAttendees = attendees
+    }
+    val displayState = if (state is EventDetailState.Loading && lastLoaded != null) lastLoaded!! else state
+    val displayAttendees = attendees ?: lastAttendees
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -75,7 +101,7 @@ fun EventDetailScreen(
             )
         },
     ) { padding ->
-        when (state) {
+        when (displayState) {
             is EventDetailState.Loading -> Box(
                 modifier = Modifier.fillMaxSize().padding(padding),
                 contentAlignment = Alignment.Center,
@@ -84,14 +110,19 @@ fun EventDetailScreen(
             is EventDetailState.Error -> Box(
                 modifier = Modifier.fillMaxSize().padding(padding),
                 contentAlignment = Alignment.Center,
-            ) { Text(state.message, color = MaterialTheme.colorScheme.error) }
+            ) { Text(displayState.message, color = MaterialTheme.colorScheme.error) }
 
-            is EventDetailState.Loaded -> EventDetailContent(
-                detail = state.detail,
-                attendees = attendees,
-                padding = padding,
-                onToggleAttendance = onToggleAttendance,
-            )
+            is EventDetailState.Loaded -> PullToRefreshBox(
+                refreshing = isRefreshing,
+                onRefresh = { isRefreshing = true; onRefresh() },
+                modifier = Modifier.padding(padding),
+            ) {
+                EventDetailContent(
+                    detail = displayState.detail,
+                    attendees = displayAttendees,
+                    onToggleAttendance = onToggleAttendance,
+                )
+            }
         }
     }
 }
@@ -100,11 +131,10 @@ fun EventDetailScreen(
 private fun EventDetailContent(
     detail: EventDetail,
     attendees: List<EventAttendee>?,
-    padding: PaddingValues,
     onToggleAttendance: () -> Unit,
 ) {
     LazyColumn(
-        modifier = Modifier.fillMaxSize().padding(padding),
+        modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
     ) {
         item(key = "header") {

@@ -69,6 +69,7 @@ class TopicDetailRouteTest {
                 onReplySent = { replyState = ReplyState.Idle },
                 onBack = { backCount++ },
                 onRefreshFeed = { refreshCount++ },
+                onRefresh = {},
             )
         }
 
@@ -102,6 +103,7 @@ class TopicDetailRouteTest {
                 onReplySent = {},
                 onBack = { backCount++ },
                 onRefreshFeed = { refreshCount++ },
+                onRefresh = {},
             )
         }
 
@@ -129,6 +131,7 @@ class TopicDetailRouteTest {
                 onReplySent = {},
                 onBack = { backCount++ },
                 onRefreshFeed = { refreshCount++ },
+                onRefresh = {},
             )
         }
 

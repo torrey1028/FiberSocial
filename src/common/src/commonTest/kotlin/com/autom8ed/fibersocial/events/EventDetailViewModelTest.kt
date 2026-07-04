@@ -381,6 +381,50 @@ class EventDetailViewModelToggleAttendanceTest {
     }
 
     @Test
+    fun `a failed refresh via reload of the same event keeps the last good attendee list`() = runTest(UnconfinedTestDispatcher()) {
+        // Regression: load() used to null out attendees unconditionally before the
+        // refresh even started, so refreshAttendees()'s own "keep the last good list"
+        // fallback always read null and degraded to empty — exactly what pull-to-refresh
+        // triggers (a second load() of the same event), silently emptying the list.
+        var failPeople = false
+        val vm = EventDetailViewModel(
+            rsvpApiClient(mutableListOf(), peopleHtml = {
+                if (failPeople) error("transient network error") else peoplePage("Megannnnn")
+            }),
+            this,
+        )
+        vm.load("cozy-meetup")
+        awaitChildren(coroutineContext[Job]!!)
+        assertEquals(1, vm.attendees.value?.size)
+
+        failPeople = true
+        vm.load("cozy-meetup")
+        awaitChildren(coroutineContext[Job]!!)
+        assertEquals(listOf("Megannnnn"), vm.attendees.value?.map { it.username })
+    }
+
+    @Test
+    fun `loading a different event does not carry over the previous event's attendee list on failure`() = runTest(UnconfinedTestDispatcher()) {
+        var currentEvent = "cozy-meetup"
+        val vm = EventDetailViewModel(
+            rsvpApiClient(mutableListOf(), peopleHtml = {
+                if (currentEvent == "cozy-meetup") peoplePage("Megannnnn") else error("transient network error")
+            }),
+            this,
+        )
+        vm.load("cozy-meetup")
+        awaitChildren(coroutineContext[Job]!!)
+        assertEquals(1, vm.attendees.value?.size)
+
+        currentEvent = "other-event"
+        vm.load("other-event")
+        awaitChildren(coroutineContext[Job]!!)
+        // The new event's own attendee fetch failed — this must not resolve to
+        // "cozy-meetup"'s people just because that's what _attendees.value held before.
+        assertTrue(vm.attendees.value.isNullOrEmpty())
+    }
+
+    @Test
     fun `a stale attendee fetch does not overwrite a newer one`() = runTest(UnconfinedTestDispatcher()) {
         // Park the load-time people fetch (a pre-toggle snapshot) until released,
         // so it resolves only after the post-toggle refresh. firstFetchStarted
