@@ -1,5 +1,5 @@
-import java.io.ByteArrayOutputStream
 import java.util.Properties
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
     id("com.android.application")
@@ -8,12 +8,8 @@ plugins {
 }
 
 fun gitVersionName(): String {
-    val hash = ByteArrayOutputStream().also { out ->
-        exec { commandLine("git", "rev-parse", "--short", "HEAD"); standardOutput = out }
-    }.toString().trim()
-    val dirty = ByteArrayOutputStream().also { out ->
-        exec { commandLine("git", "status", "--porcelain"); standardOutput = out }
-    }.toString().trim().isNotEmpty()
+    val hash = providers.exec { commandLine("git", "rev-parse", "--short", "HEAD") }.standardOutput.asText.get().trim()
+    val dirty = providers.exec { commandLine("git", "status", "--porcelain") }.standardOutput.asText.get().trim().isNotEmpty()
     return if (dirty) "1.0.$hash.dirty" else "1.0.$hash"
 }
 
@@ -47,10 +43,6 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
-    }
-
     buildFeatures {
         compose = true
         buildConfig = true
@@ -60,6 +52,12 @@ android {
         unitTests {
             isIncludeAndroidResources = true
         }
+    }
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget.set(JvmTarget.JVM_17)
     }
 }
 
@@ -80,7 +78,7 @@ dependencies {
     implementation("io.ktor:ktor-client-android:2.3.12")
     implementation("io.ktor:ktor-client-content-negotiation:2.3.12")
     implementation("io.ktor:ktor-serialization-kotlinx-json:2.3.12")
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.1")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
     implementation("io.coil-kt:coil-compose:2.7.0")
     implementation("androidx.work:work-runtime-ktx:2.9.1")
     testImplementation(kotlin("test"))
