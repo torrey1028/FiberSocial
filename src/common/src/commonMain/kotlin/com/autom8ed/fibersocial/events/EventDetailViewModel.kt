@@ -80,11 +80,18 @@ class EventDetailViewModel(
 
     /** Scrapes the event page for [eventPermalink], replacing any previous state. */
     fun load(eventPermalink: String) {
+        // A reload of the SAME event (e.g. pull-to-refresh) must not wipe the attendee
+        // list up front: refreshAttendees()'s own "keep the last good list on failure"
+        // fallback reads _attendees.value, and if this already nulled it out, a failed
+        // refresh would degrade to an empty list instead of preserving what's on screen.
+        // Navigating to a DIFFERENT event still clears it immediately, so the previous
+        // event's people never flash while the new one's fetch is in flight.
+        val isSameEvent = loadedPermalink == eventPermalink
         loadedPermalink = eventPermalink
         // Synchronously, not inside the coroutine: navigating to another event must not
         // flash the previous event's detail while the launch waits its turn.
         _state.value = EventDetailState.Loading
-        _attendees.value = null
+        if (!isSameEvent) _attendees.value = null
         scope.launch { refreshAttendees(eventPermalink) }
         scope.launch {
             println("FiberSocial: EventDetailViewModel.load($eventPermalink)")
