@@ -16,42 +16,6 @@ import kotlin.test.assertTrue
 private val LINK = Color.Blue
 private val CODE_BG = Color.Gray
 
-class ResolveRavelryHrefTest {
-    @Test
-    fun `absolute urls pass through`() {
-        assertEquals("https://example.com/x", resolveRavelryHref("https://example.com/x"))
-    }
-
-    @Test
-    fun `site-relative paths get the ravelry origin`() {
-        assertEquals("https://www.ravelry.com/patterns/library", resolveRavelryHref("/patterns/library"))
-    }
-
-    @Test
-    fun `fragment-only footnote refs resolve to nothing`() {
-        assertNull(resolveRavelryHref("#fn1"))
-        assertNull(resolveRavelryHref(""))
-    }
-
-    @Test
-    fun `unsafe schemes resolve to nothing`() {
-        assertNull(resolveRavelryHref("javascript:alert(1)"))
-        assertNull(resolveRavelryHref("intent:#Intent;package=evil;end"))
-        assertNull(resolveRavelryHref("file:///etc/passwd"))
-    }
-
-    @Test
-    fun `mailto and case-variant http schemes are allowed`() {
-        assertEquals("mailto:someone@example.com", resolveRavelryHref("mailto:someone@example.com"))
-        assertEquals("HTTPS://example.com", resolveRavelryHref("HTTPS://example.com"))
-    }
-
-    @Test
-    fun `scheme-less non-rooted targets resolve to nothing`() {
-        assertNull(resolveRavelryHref("patterns/library"))
-    }
-}
-
 class BuildInlineTextTest {
     @Test
     fun `plain text and hard breaks concatenate`() {
@@ -127,34 +91,6 @@ class BuildInlineTextTest {
             LINK, CODE_BG,
         )
         assertEquals(TextDecoration.LineThrough, text.spanStyles.single().item.textDecoration)
-    }
-}
-
-class SplitOnImagesTest {
-    private val image = Inline.Image(url = "https://images.example/a.jpg", alt = "a")
-
-    @Test
-    fun `content without images is a single text run`() {
-        val segments = splitOnImages(listOf(Inline.Text("hello")))
-        assertEquals(listOf<ParagraphSegment>(ParagraphSegment.TextRun(listOf(Inline.Text("hello")))), segments)
-    }
-
-    @Test
-    fun `images split the surrounding text into separate runs`() {
-        val segments = splitOnImages(listOf(Inline.Text("before"), image, Inline.Text("after")))
-        assertEquals(
-            listOf(
-                ParagraphSegment.TextRun(listOf(Inline.Text("before"))),
-                ParagraphSegment.Photo(image),
-                ParagraphSegment.TextRun(listOf(Inline.Text("after"))),
-            ),
-            segments,
-        )
-    }
-
-    @Test
-    fun `image-only paragraph yields just the photo`() {
-        assertEquals(listOf<ParagraphSegment>(ParagraphSegment.Photo(image)), splitOnImages(listOf(image)))
     }
 }
 

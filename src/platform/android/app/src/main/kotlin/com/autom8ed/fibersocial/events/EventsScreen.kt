@@ -36,12 +36,6 @@ import androidx.compose.ui.unit.dp
 import com.autom8ed.fibersocial.feed.models.Group
 import kotlinx.datetime.LocalDateTime
 
-/** Three-letter month labels for the event date chip, indexed by month number - 1. */
-private val MONTH_ABBREVIATIONS = listOf(
-    "JAN", "FEB", "MAR", "APR", "MAY", "JUN",
-    "JUL", "AUG", "SEP", "OCT", "NOV", "DEC",
-)
-
 /**
  * Screen listing one group's upcoming events, soonest first. Opened from the calendar
  * badge on the group's drawer row (only shown when the group has events).

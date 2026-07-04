@@ -126,10 +126,6 @@ fun SettingsScreen(
 }
 
 
-/** Human label for a poll interval choice. */
-private fun intervalLabel(hours: Int): String =
-    if (hours == 1) "Every hour" else "Every $hours hours"
-
 /**
  * "Check for new events" row: shows the current cadence and opens a radio dialog with
  * the supported choices.
