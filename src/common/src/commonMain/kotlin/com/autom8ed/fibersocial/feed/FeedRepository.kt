@@ -114,17 +114,13 @@ class FeedRepository(private val apiClient: RavelryApiClient) {
      * Plain-text excerpt of an HTML (or HTML-ish) body, used for both the opening-post
      * preview and the latest-reply preview so raw tags/entities never reach the feed UI.
      *
-     * A second parse pass runs if the first still looks tag-shaped: entity-escaped markup
-     * (e.g. `&lt;b&gt;`) survives the first pass as a literal `<b>` once Ksoup decodes the
-     * entity while extracting [text] — still a leak, just one entity-decoding step removed.
+     * Deliberately a single parse pass: re-parsing the already-decoded text to catch
+     * entity-escaped markup (e.g. `&lt;b&gt;`) was tried and reverted — it can't be
+     * distinguished from legitimate text that uses entities to display literal angle
+     * brackets (e.g. `"5&lt;total&gt;10"`), and re-parsing that corrupts it (verified:
+     * `Ksoup.parse("5<total>10").text()` returns `"510"`, silently dropping "total").
+     * A cosmetic leak of decoded tag text is a smaller problem than silent data loss.
      */
-    private fun htmlPreview(bodyHtml: String): String {
-        val once = Ksoup.parse(bodyHtml).text()
-        val stripped = if (TAG_LIKE.containsMatchIn(once)) Ksoup.parse(once).text() else once
-        return stripped.take(200)
-    }
-
-    private companion object {
-        private val TAG_LIKE = Regex("</?[a-zA-Z][^<>]*>")
-    }
+    private fun htmlPreview(bodyHtml: String): String =
+        Ksoup.parse(bodyHtml).text().take(200)
 }

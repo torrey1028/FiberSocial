@@ -322,10 +322,12 @@ class FeedRepositoryTest {
     }
 
     @Test
-    fun `getFeedItems strips entity-escaped tags from bodyPreview`() = runTest {
-        // Ksoup decodes entities while extracting text(), so "&lt;b&gt;" surviving a single
-        // pass turns into a literal "<b>" — still tag-shaped, still a leak (#104).
-        val items = singleTopicRepo(summary = "&lt;b&gt;bold&lt;/b&gt; text").getFeedItems(listOf(group))
-        assertEquals("bold text", items.single().bodyPreview)
+    fun `getFeedItems leaves entity-escaped literal angle brackets alone`() = runTest {
+        // Re-parsing already-decoded text to catch entity-escaped tags was tried and
+        // reverted: it can't tell "&lt;b&gt;" (escaped markup) apart from "&lt;total&gt;"
+        // (a literal comparison someone typed), and re-parsing the latter as HTML
+        // corrupts it. A single pass at least renders entities correctly either way.
+        val items = singleTopicRepo(summary = "5&lt;total&gt;10").getFeedItems(listOf(group))
+        assertEquals("5<total>10", items.single().bodyPreview)
     }
 }
