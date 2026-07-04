@@ -13,19 +13,13 @@ import androidx.work.Constraints
 import com.autom8ed.fibersocial.BuildConfig
 import kotlinx.coroutines.CancellationException
 import com.autom8ed.fibersocial.auth.AndroidTokenStorage
-import com.autom8ed.fibersocial.auth.AuthRepository
-import com.autom8ed.fibersocial.auth.RavelryOAuthClient
 import com.autom8ed.fibersocial.auth.SessionExpiredException
-import com.autom8ed.fibersocial.feed.RavelryApiClient
-import io.ktor.client.HttpClient
-import io.ktor.client.engine.android.Android
-import io.ktor.client.plugins.HttpTimeout
-import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
-import io.ktor.serialization.kotlinx.json.json
+import com.autom8ed.fibersocial.net.ravelryApiClient
+import com.autom8ed.fibersocial.net.ravelryAuthRepository
+import com.autom8ed.fibersocial.net.ravelryHttpClient
 import java.util.concurrent.TimeUnit
 import kotlinx.datetime.Clock
 import kotlinx.datetime.TimeZone
-import kotlinx.serialization.json.Json
 
 /**
  * Periodic background sync for event notifications: scrapes the user's groups and
@@ -39,33 +33,20 @@ class EventSyncWorker(
 
     override suspend fun doWork(): Result {
         println("FiberSocial: EventSyncWorker starting (attempt $runAttemptCount)")
-        val httpClient = HttpClient(Android) {
-            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
-            install(HttpTimeout) {
-                requestTimeoutMillis = 30_000
-                connectTimeoutMillis = 10_000
-                socketTimeoutMillis = 30_000
-            }
-        }
+        val httpClient = ravelryHttpClient()
         return try {
             val tokenStorage = AndroidTokenStorage(applicationContext)
             if (tokenStorage.load() == null) {
                 println("FiberSocial: EventSyncWorker skipping — not logged in")
                 return Result.success()
             }
-            val authRepository = AuthRepository(
-                RavelryOAuthClient(
-                    httpClient = httpClient,
-                    clientId = BuildConfig.RAVELRY_CLIENT_ID,
-                    clientSecret = BuildConfig.RAVELRY_CLIENT_SECRET,
-                ),
-                tokenStorage,
-            )
-            val apiClient = RavelryApiClient(
+            val authRepository = ravelryAuthRepository(
                 httpClient = httpClient,
                 tokenStorage = tokenStorage,
-                refreshToken = { authRepository.refreshToken() },
+                clientId = BuildConfig.RAVELRY_CLIENT_ID,
+                clientSecret = BuildConfig.RAVELRY_CLIENT_SECRET,
             )
+            val apiClient = ravelryApiClient(httpClient, tokenStorage, authRepository)
             val runner = EventSyncRunner(apiClient, AndroidNotificationStateStore(applicationContext))
             val plan = runner.sync(Clock.System.now(), TimeZone.currentSystemDefault())
             apply(plan)
