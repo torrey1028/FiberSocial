@@ -205,7 +205,17 @@ object HtmlPostParser {
     /** A blank string or a `data:` placeholder URI isn't a real, loadable image URL. */
     private fun isUsableUrl(url: String): Boolean = url.isNotBlank() && !url.startsWith("data:")
 
-    /** Extracts the URL of the first candidate in a `srcset` attribute, if any. */
+    /**
+     * Extracts the URL of the first candidate in a `srcset` attribute, if any.
+     *
+     * Deliberately doesn't filter candidates through [isUsableUrl]: splitting on a bare
+     * `,` (rather than a spec-correct srcset tokenizer) means a `data:` URI candidate,
+     * which always itself contains a comma, would get chopped into bogus fragments by
+     * this same split — filtering post-hoc on those fragments produces wrong results
+     * (verified: it silently resolves to the base64 payload's tail, not the fallback).
+     * A real srcset candidate is never itself a lazy-load placeholder in practice — only
+     * `src` is — so this is an accepted, deliberately narrow gap, not a spec-correct parse.
+     */
     private fun firstSrcsetCandidate(srcset: String): String? =
         srcset.split(",")
             .map { it.trim() }

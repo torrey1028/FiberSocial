@@ -219,6 +219,7 @@ class HtmlPostParserInlineTest {
         assertEquals("https://images.example/small.jpg", (content.single() as Inline.Image).url)
     }
 
+
     @Test
     fun `images with no usable src, data-src, or srcset fall back to an empty url`() {
         val content = singleParagraph("""<p><img alt="none"></p>""")
