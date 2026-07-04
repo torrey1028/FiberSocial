@@ -849,9 +849,12 @@ class RavelryApiClientTest {
 
     @Test
     fun `deletePost fails on rejected delete`() = runTest {
+        // Not a 403 — that's now classified as ForbiddenException (see the dedicated
+        // test below). This covers the generic rejection branch: an unexpected non-2xx/
+        // non-3xx status that isn't a permission denial either.
         val engine = MockEngine { request ->
             if (request.method.value == "POST") {
-                respond(content = "nope", status = HttpStatusCode.Forbidden)
+                respond(content = "nope", status = HttpStatusCode.InternalServerError)
             } else {
                 respond(
                     content = TOKEN_PAGE_HTML,
