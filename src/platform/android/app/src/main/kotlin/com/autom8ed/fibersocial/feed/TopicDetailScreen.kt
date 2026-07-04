@@ -54,6 +54,7 @@ import com.autom8ed.fibersocial.feed.models.RavelryUser
 import com.autom8ed.fibersocial.feed.models.VoteType
 import com.autom8ed.fibersocial.feed.models.hasVoted
 import com.autom8ed.fibersocial.feed.models.voteCount
+import com.autom8ed.fibersocial.ui.PullToRefreshBox
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TopicDetailScreen(
@@ -64,10 +65,28 @@ fun TopicDetailScreen(
     replyState: ReplyState = ReplyState.Idle,
     onSendReply: (String) -> Unit = {},
     onReplySent: () -> Unit = {},
+    onRefresh: () -> Unit = {},
 ) {
     // The system back button must mirror the top-bar back arrow instead of
     // finishing the activity (issue #38).
     BackHandler(onBack = onBack)
+
+    // Pull-to-refresh calls onRefresh(), which re-triggers load(topic.id); that briefly
+    // reports TopicDetailState.Loading again. Falling back to the last Loaded snapshot
+    // while isRefreshing is in flight keeps the reply thread on screen under the compact
+    // pull spinner instead of replacing it with the mid-list loading indicator.
+    var isRefreshing by remember(topic.id) { mutableStateOf(false) }
+    var lastLoaded by remember(topic.id) { mutableStateOf<TopicDetailState.Loaded?>(null) }
+    LaunchedEffect(postsState) {
+        if (postsState is TopicDetailState.Loaded) lastLoaded = postsState
+        if (postsState !is TopicDetailState.Loading) isRefreshing = false
+    }
+    val displayState = if (postsState is TopicDetailState.Loading && lastLoaded != null) {
+        lastLoaded!!
+    } else {
+        postsState
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -87,57 +106,61 @@ fun TopicDetailScreen(
             )
         },
     ) { padding ->
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding),
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(0.dp),
+        PullToRefreshBox(
+            refreshing = isRefreshing,
+            onRefresh = { isRefreshing = true; onRefresh() },
+            modifier = Modifier.padding(padding),
         ) {
-            item(key = "header") {
-                Text(topic.title, style = MaterialTheme.typography.titleLarge)
-                Spacer(Modifier.height(12.dp))
-                AuthorRow(user = topic.author, timestamp = topic.lastPostAt)
-                Spacer(Modifier.height(16.dp))
-                HorizontalDivider()
-                Spacer(Modifier.height(16.dp))
-                if (topic.bodySummary.isNotBlank()) {
-                    PostBody(document = remember(topic.bodySummary) { HtmlPostParser.parse(topic.bodySummary) })
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(0.dp),
+            ) {
+                item(key = "header") {
+                    Text(topic.title, style = MaterialTheme.typography.titleLarge)
+                    Spacer(Modifier.height(12.dp))
+                    AuthorRow(user = topic.author, timestamp = topic.lastPostAt)
                     Spacer(Modifier.height(16.dp))
-                }
-                HorizontalDivider()
-                Spacer(Modifier.height(16.dp))
-                Text(
-                    text = "💬 ${topic.replyCount} ${if (topic.replyCount == 1) "reply" else "replies"}",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Spacer(Modifier.height(8.dp))
-            }
-
-            when (postsState) {
-                is TopicDetailState.Loading -> item(key = "loading") {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 32.dp),
-                        contentAlignment = Alignment.Center,
-                    ) { CircularProgressIndicator() }
-                }
-                is TopicDetailState.Error -> item(key = "error") {
-                    Text(
-                        text = "Couldn't load replies. Check your connection and try again.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.padding(vertical = 16.dp),
-                    )
-                }
-                is TopicDetailState.Loaded -> items(
-                    postsState.posts,
-                    key = { it.id },
-                ) { post ->
-                    ReplyItem(post = post, onVote = { type -> onVote(post, type) })
                     HorizontalDivider()
+                    Spacer(Modifier.height(16.dp))
+                    if (topic.bodySummary.isNotBlank()) {
+                        PostBody(document = remember(topic.bodySummary) { HtmlPostParser.parse(topic.bodySummary) })
+                        Spacer(Modifier.height(16.dp))
+                    }
+                    HorizontalDivider()
+                    Spacer(Modifier.height(16.dp))
+                    Text(
+                        text = "💬 ${topic.replyCount} ${if (topic.replyCount == 1) "reply" else "replies"}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                }
+
+                when (displayState) {
+                    is TopicDetailState.Loading -> item(key = "loading") {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 32.dp),
+                            contentAlignment = Alignment.Center,
+                        ) { CircularProgressIndicator() }
+                    }
+                    is TopicDetailState.Error -> item(key = "error") {
+                        Text(
+                            text = "Couldn't load replies. Check your connection and try again.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.padding(vertical = 16.dp),
+                        )
+                    }
+                    is TopicDetailState.Loaded -> items(
+                        displayState.posts,
+                        key = { it.id },
+                    ) { post ->
+                        ReplyItem(post = post, onVote = { type -> onVote(post, type) })
+                        HorizontalDivider()
+                    }
                 }
             }
         }

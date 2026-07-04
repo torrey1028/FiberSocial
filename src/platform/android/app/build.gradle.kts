@@ -69,6 +69,9 @@ dependencies {
     implementation(composeBom)
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.material3:material3")
+    // Only for the experimental pullRefresh API (see ui/PullToRefresh.kt) — this
+    // project's Material3 version predates the stable PullToRefreshBox.
+    implementation("androidx.compose.material:material")
     implementation("androidx.activity:activity-compose:1.9.0")
     implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.8.1")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.1")
@@ -102,6 +105,10 @@ tasks.withType<Test>().configureEach {
             "**/SettingsScreenTest*",
             "**/GroupDrawerTest*",
             "**/ReplyComposerTest*",
+            "**/PullToRefreshBoxTest*",
+            "**/TopicDetailScreenPullToRefreshTest*",
+            "**/EventsScreenPullToRefreshTest*",
+            "**/EventDetailScreenPullToRefreshTest*",
         )
     }
 }

@@ -29,11 +29,17 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import com.autom8ed.fibersocial.feed.models.Group
+import com.autom8ed.fibersocial.ui.PullToRefreshBox
 import kotlinx.datetime.LocalDateTime
 
 /** Three-letter month labels for the event date chip, indexed by month number - 1. */
@@ -53,10 +59,24 @@ fun EventsScreen(
     group: Group,
     onBack: () -> Unit,
     onEventClick: (GroupEvent) -> Unit,
+    onRefresh: () -> Unit = {},
 ) {
     // System back must mirror the top-bar back arrow instead of exiting the app
     // (same contract as TopicDetailScreen; see issue #38 / PR #56).
     BackHandler(onBack = onBack)
+
+    // Pull-to-refresh calls onRefresh(), which re-triggers a full load(); that briefly
+    // reports EventsState.Loading again. Falling back to the last Loaded snapshot while
+    // isRefreshing is in flight keeps the list on screen under the compact pull spinner
+    // instead of replacing it with the full-screen loading indicator.
+    var isRefreshing by remember(group.id) { mutableStateOf(false) }
+    var lastLoaded by remember(group.id) { mutableStateOf<EventsState.Loaded?>(null) }
+    LaunchedEffect(state) {
+        if (state is EventsState.Loaded) lastLoaded = state
+        if (state !is EventsState.Loading) isRefreshing = false
+    }
+    val displayState = if (state is EventsState.Loading && lastLoaded != null) lastLoaded!! else state
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -69,7 +89,7 @@ fun EventsScreen(
             )
         },
     ) { padding ->
-        when (state) {
+        when (displayState) {
             is EventsState.Loading -> Box(
                 modifier = Modifier.fillMaxSize().padding(padding),
                 contentAlignment = Alignment.Center,
@@ -85,11 +105,15 @@ fun EventsScreen(
                 )
             }
 
-            is EventsState.Loaded -> {
-                val events = state.events.filter { it.group.id == group.id }
+            is EventsState.Loaded -> PullToRefreshBox(
+                refreshing = isRefreshing,
+                onRefresh = { isRefreshing = true; onRefresh() },
+                modifier = Modifier.padding(padding),
+            ) {
+                val events = displayState.events.filter { it.group.id == group.id }
                 if (events.isEmpty()) {
                     Box(
-                        modifier = Modifier.fillMaxSize().padding(padding),
+                        modifier = Modifier.fillMaxSize(),
                         contentAlignment = Alignment.Center,
                     ) {
                         Text(
@@ -99,7 +123,7 @@ fun EventsScreen(
                     }
                 } else {
                     LazyColumn(
-                        modifier = Modifier.fillMaxSize().padding(padding),
+                        modifier = Modifier.fillMaxSize(),
                         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
