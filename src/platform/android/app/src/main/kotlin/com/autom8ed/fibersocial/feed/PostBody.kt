@@ -156,12 +156,16 @@ private fun InlineText(
     // Emoji glyphs are embedded in `text` as inline-content placeholders (see
     // `appendInlines`), sized to roughly the surrounding line height; ClickableText has
     // no inline-content support, so link taps are handled manually here instead.
-    val inlineContent = remember(emoji, resolvedStyle.fontSize) {
+    val inlineContent = remember(emoji) {
         emoji.associate { image ->
             image.url to InlineTextContent(
                 placeholder = Placeholder(
-                    width = resolvedStyle.fontSize,
-                    height = resolvedStyle.fontSize,
+                    // em, not resolvedStyle.fontSize: a fixed Sp value wouldn't scale with
+                    // a span-level style at the placeholder's actual position (<small>,
+                    // <big>, super/subscript all set fontSize via SpanStyle, not the base
+                    // TextStyle) and would be undefined if fontSize were ever unspecified.
+                    width = 1.em,
+                    height = 1.em,
                     placeholderVerticalAlign = PlaceholderVerticalAlign.TextCenter,
                 ),
             ) {

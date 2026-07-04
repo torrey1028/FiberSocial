@@ -262,6 +262,21 @@ class HtmlPostParserInlineTest {
     }
 
     @Test
+    fun `a decimal or embedded digit run does not parse as a pixel size`() {
+        // Regression: an unanchored digit-run match would read "1.5" as 1 and "auto15"
+        // as 15, silently treating malformed/non-pixel values as pixel dimensions.
+        val decimal = singleParagraph(
+            """<p><img src="https://images.example/icon.gif" alt="" width="1.5"></p>"""
+        )
+        assertEquals(null, assertIs<Inline.Image>(decimal.single()).width)
+
+        val embedded = singleParagraph(
+            """<p><img src="https://images.example/icon.gif" alt="" width="auto15"></p>"""
+        )
+        assertEquals(null, assertIs<Inline.Image>(embedded.single()).width)
+    }
+
+    @Test
     fun `an image with no class or size is not flagged as inline emoji`() {
         val content = singleParagraph("""<p><img src="https://images.example/yarn.jpg" alt="a skein"></p>""")
         val image = assertIs<Inline.Image>(content.single())

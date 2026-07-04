@@ -142,11 +142,12 @@ object HtmlPostParser {
 
     /** Parses a pixel-ish HTML size attribute (e.g. `"20"`, `"20px"`) to its integer value. */
     private fun parsePixelAttr(value: String): Int? {
-        val match = PIXEL_VALUE.find(value) ?: return null
-        return match.value.toIntOrNull()
+        val match = PIXEL_VALUE.matchEntire(value) ?: return null
+        return match.groupValues[1].toIntOrNull()
     }
 
-    private val PIXEL_VALUE = Regex("\\d+")
+    // Anchored to the whole value so "1.5" or "auto15" don't parse as pixel sizes.
+    private val PIXEL_VALUE = Regex("(\\d+)(?:px)?")
 
     private fun parseInlineChildren(element: Element): List<Inline> =
         element.childNodes().flatMap { parseInlineNode(it) }
