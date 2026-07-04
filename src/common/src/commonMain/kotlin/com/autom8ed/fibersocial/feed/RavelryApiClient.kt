@@ -29,6 +29,7 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.Parameters
 import io.ktor.http.isSuccess
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -485,6 +486,40 @@ class RavelryApiClient(
     }
 
     /**
+     * Creates a new topic, with [body] as its opening post, in a forum.
+     *
+     * @param forumId Forum to create the topic in ([Group.forumId]).
+     * @param title Topic title. Ravelry caps titles at 250 characters.
+     * @param body Plain-text content of the opening post.
+     * @return The newly created topic as returned by Ravelry.
+     */
+    suspend fun createTopic(forumId: Long, title: String, body: String): Topic {
+        val raw = authenticatedRequest {
+            httpClient.post("$BASE_URL/topics/create.json") {
+                header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
+                // Form body, not query parameters — same reasoning as postReply.
+                setBody(
+                    FormDataContent(
+                        Parameters.build {
+                            append("forum_id", forumId.toString())
+                            append("title", title)
+                            append("body", body)
+                        },
+                    ),
+                )
+            }
+        }
+        return try {
+            lenientJson.decodeFromString<TopicCreateResponse>(raw).topic
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            println("FiberSocial: createTopic(forumId=$forumId) unexpected response: ${raw.take(200)}")
+            error("Unexpected Ravelry response — check the forum before retrying, the topic may have been created.")
+        }
+    }
+
+    /**
      * Returns the full detail for a single topic, including [Topic.createdByUser] and [Topic.summary].
      *
      * @param topicId Ravelry topic ID.
@@ -504,6 +539,7 @@ class RavelryApiClient(
         @SerialName("user_votes") val userVotes: Map<String, List<String>> = emptyMap(),
     )
     @Serializable private data class ReplyResponse(@SerialName("forum_post") val forumPost: Post)
+    @Serializable private data class TopicCreateResponse(val topic: Topic)
     @Serializable private data class CurrentUserResponse(val user: RavelryUser)
     @Serializable private data class GroupsSearchResponse(val groups: List<Group> = emptyList())
     @Serializable private data class TopicsResponse(

@@ -127,6 +127,15 @@ fun latestPostJson(
     bodyHtml: String = "<p>Latest <b>reply</b> text</p>",
 ) = """{"posts":[{"id":$id,"body_html":"$bodyHtml","created_at":"2024-01-16T10:00:00Z","user":{"username":"$username","small_photo_url":"https://example.com/r.jpg"}}]}"""
 
+fun topicCreateResponseJson(
+    id: Long = 7001L,
+    title: String = "My new topic",
+    username: String = "yarnie",
+) = """{"topic":{"id":$id,"title":"$title","forum_id":123,"forum_posts_count":1,
+    "created_at":"2026-07-03T10:00:00Z","created_by_user":{"username":"$username"},
+    "summary":"Opening post"},
+    "forum_post":{"id":9001,"body_html":"<p>Opening post</p>","created_at":"2026-07-03T10:00:00Z","user":{"username":"$username"}}}"""
+
 fun replyResponseJson(
     id: Long = 99L,
     username: String = "yarnie",
