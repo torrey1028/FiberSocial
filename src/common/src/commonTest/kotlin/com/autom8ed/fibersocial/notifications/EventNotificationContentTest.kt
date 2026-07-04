@@ -19,7 +19,10 @@ class EventNotificationContentTest {
     }
 
     @Test
-    fun `both reminder kinds for the same event share an id`() {
+    fun `reminderNotificationId depends only on permalink, so both reminder kinds share an id`() {
+        // reminderNotificationId takes no ReminderKind — DAY_BEFORE and SOON reminders for
+        // the same event necessarily land on the same id by construction, not by an
+        // explicit kind check. This pins that determinism.
         val permalink = "cozy-meetup"
         assertEquals(
             EventNotificationContent.reminderNotificationId(permalink),
