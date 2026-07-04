@@ -2,6 +2,7 @@ package com.autom8ed.fibersocial.feed
 
 import com.autom8ed.fibersocial.auth.SessionExpiredException
 import com.autom8ed.fibersocial.feed.models.Topic
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
@@ -74,6 +75,8 @@ class NewTopicViewModel(
                 val topic = apiClient.createTopic(forumId, trimmedTitle, trimmedBody)
                 println("FiberSocial: NewTopicViewModel created topic ${topic.id}")
                 _state.value = NewTopicState.Created(topic)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: SessionExpiredException) {
                 println("FiberSocial: NewTopicViewModel.create session expired")
                 _state.value = NewTopicState.Idle

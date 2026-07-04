@@ -191,7 +191,7 @@ fun FeedScreen(
                     lastPostAt = topic.repliedAt ?: topic.createdAt,
                     // The create response includes created_by_user; the signed-in user
                     // is the same person if it ever doesn't.
-                    author = topic.createdByUser ?: loaded?.user ?: RavelryUser(username = ""),
+                    author = topic.createdByUser ?: loaded?.user ?: RavelryUser(username = "unknown"),
                     title = topic.title,
                     bodyPreview = topic.summary.orEmpty(),
                     bodySummary = topic.summary.orEmpty(),

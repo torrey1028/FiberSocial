@@ -29,6 +29,7 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.Parameters
 import io.ktor.http.isSuccess
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -510,6 +511,8 @@ class RavelryApiClient(
         }
         return try {
             lenientJson.decodeFromString<TopicCreateResponse>(raw).topic
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             println("FiberSocial: createTopic(forumId=$forumId) unexpected response: ${raw.take(200)}")
             error("Unexpected Ravelry response — check the forum before retrying, the topic may have been created.")

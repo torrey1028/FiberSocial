@@ -63,8 +63,11 @@ fun NewTopicScreen(
 
     LaunchedEffect(state) {
         if (state is NewTopicState.Created) {
-            // group can't be null here: Post is only enabled with a group chosen.
-            group?.let { onCreated(state.topic, it) }
+            // group is remembered, not saveable — an activity recreation between
+            // posting and this effect firing can reset it to initialGroup (possibly
+            // null). Recover it from the created topic's forumId in that case.
+            val created = group ?: groups.firstOrNull { it.forumId == state.topic.forumId }
+            created?.let { onCreated(state.topic, it) }
         }
     }
 
