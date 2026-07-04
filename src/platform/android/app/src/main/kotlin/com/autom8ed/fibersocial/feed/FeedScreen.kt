@@ -21,6 +21,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -32,7 +33,6 @@ import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.DrawerState
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.rememberDrawerState
@@ -50,6 +50,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.autom8ed.fibersocial.BuildConfig
 import com.autom8ed.fibersocial.debug.DebugPanel
@@ -220,21 +221,12 @@ fun FeedScreen(
         },
     ) {
         Scaffold(
-            topBar = {
-                TopAppBar(
-                    title = { Text(title) },
-                    navigationIcon = {
-                        IconButton(onClick = { scope.launch { drawerState.open() } }) {
-                            Icon(Icons.Default.Menu, contentDescription = "Select group")
-                        }
-                    },
-                    actions = {
-                        if (BuildConfig.DEBUG) {
-                            IconButton(onClick = { showDebugPanel = true }) {
-                                Icon(Icons.Default.Build, contentDescription = "Debug panel")
-                            }
-                        }
-                    },
+            bottomBar = {
+                FeedBottomBar(
+                    title = title,
+                    onMenuClick = { scope.launch { drawerState.open() } },
+                    showDebugAction = BuildConfig.DEBUG,
+                    onDebugClick = { showDebugPanel = true },
                 )
             },
         ) { padding ->
@@ -283,6 +275,41 @@ fun FeedScreen(
             onRunEventSync = { EventSyncWorker.runOnce(context) },
             onDismiss = { showDebugPanel = false },
         )
+    }
+}
+
+/**
+ * Bottom app bar hosting the group-selector hamburger and the current group's
+ * name (issue #79): keeping both within thumb reach at the bottom of the
+ * screen, rather than the top app bar, is friendlier on large phones. The
+ * debug-only "Build" action rides along in the same trailing position it
+ * previously held in the top bar.
+ */
+@Composable
+internal fun FeedBottomBar(
+    title: String,
+    onMenuClick: () -> Unit,
+    showDebugAction: Boolean,
+    onDebugClick: () -> Unit,
+) {
+    BottomAppBar {
+        IconButton(onClick = onMenuClick) {
+            Icon(Icons.Default.Menu, contentDescription = "Select group")
+        }
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleMedium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier
+                .weight(1f)
+                .padding(start = 8.dp),
+        )
+        if (showDebugAction) {
+            IconButton(onClick = onDebugClick) {
+                Icon(Icons.Default.Build, contentDescription = "Debug panel")
+            }
+        }
     }
 }
 
