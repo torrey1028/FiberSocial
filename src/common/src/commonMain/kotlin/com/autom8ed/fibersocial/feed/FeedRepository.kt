@@ -84,10 +84,14 @@ class FeedRepository(private val apiClient: RavelryApiClient) {
         val attributableReply = latestReply?.takeIf { it.user != null }
         val author = createdByUser ?: RavelryUser(username = "unknown")
         val full = summary ?: ""
-        // Ravelry's `summary` field is documented as plain text but isn't reliably so in
-        // practice (raw HTML/entities have been observed) — strip it the same way as
-        // htmlPreview() so markup never leaks into the feed card (issue #104).
-        val preview = htmlPreview(full)
+        // Ravelry's `summary` field is documented as plain text but is actually a
+        // truncated excerpt of the *raw Markdown source*, confirmed against a live post
+        // whose preview showed "**bold**" and "[label][ref]" leaking straight through
+        // (issue #104) — passing it through htmlPreview() alone did nothing, since
+        // there's no HTML for Ksoup to strip. Strip Markdown syntax first (over the full,
+        // untruncated text, so a closing token past the 200-char window still matches),
+        // then run the result through htmlPreview() for entity decoding and truncation.
+        val preview = htmlPreview(stripMarkdownSyntax(full))
         // Whether posts carry images does not affect the card: a topic with a photo in
         // it is still a discussion (issue #77 — the old image-first ProjectTopic mapping
         // silently dropped nearly half of a real group's topics from the feed). Images
@@ -123,4 +127,42 @@ class FeedRepository(private val apiClient: RavelryApiClient) {
      */
     private fun htmlPreview(bodyHtml: String): String =
         Ksoup.parse(bodyHtml).text().take(200)
+
+    /**
+     * Strips common Markdown syntax down to its visible text, for [Topic.summary] excerpts
+     * that turn out to be raw Markdown source rather than HTML (see caller). This is a
+     * stripper, not a renderer: emphasis markers are dropped rather than reproduced as
+     * bold/italic, and links/images collapse to their label text.
+     *
+     * Order matters: reference-style link *definitions* (whole lines like `[1]: url`) are
+     * dropped first since they carry no visible content of their own; links/images resolve
+     * to their label before emphasis stripping runs, so a bold link label still gets
+     * cleaned; emphasis runs last since a label can itself contain `**`.
+     *
+     * [Topic.summary] is Ravelry's own excerpt, truncated server-side — confirmed on-device
+     * that this sometimes cuts a post off before its closing `**` ever arrives, leaving an
+     * unpaired opening marker no regex can validly match as emphasis. [MARKDOWN_STRAY_MARKER]
+     * is a final unconditional cleanup pass for exactly that case: any emphasis-looking
+     * punctuation left over after paired stripping can't be rendered as formatting anyway
+     * (its pair was never received), so it's dropped as visual noise rather than shown raw.
+     */
+    private fun stripMarkdownSyntax(text: String): String {
+        var result = MARKDOWN_REFERENCE_DEFINITION.replace(text, "")
+        result = MARKDOWN_LINK_OR_IMAGE.replace(result) { match ->
+            match.groupValues[1].ifEmpty { match.groupValues[2] }
+        }
+        result = MARKDOWN_INLINE_CODE.replace(result) { it.groupValues[1] }
+        result = MARKDOWN_HEADING.replace(result, "")
+        result = MARKDOWN_EMPHASIS.replace(result) { it.groupValues[2] }
+        return MARKDOWN_STRAY_MARKER.replace(result, "")
+    }
+
+    companion object {
+        private val MARKDOWN_REFERENCE_DEFINITION = Regex("""(?m)^\s*\[[^]]+]:\s*\S.*$""")
+        private val MARKDOWN_LINK_OR_IMAGE = Regex("""!?\[([^]]*)]\([^)]*\)|!?\[([^]]*)]\[[^]]*]""")
+        private val MARKDOWN_INLINE_CODE = Regex("""`([^`]*)`""")
+        private val MARKDOWN_HEADING = Regex("""(?m)^#{1,6}\s*""")
+        private val MARKDOWN_EMPHASIS = Regex("""(\*\*\*|___|\*\*|__|\*|_|~~)(.+?)\1""")
+        private val MARKDOWN_STRAY_MARKER = Regex("""\*{1,3}|_{1,3}|~~""")
+    }
 }

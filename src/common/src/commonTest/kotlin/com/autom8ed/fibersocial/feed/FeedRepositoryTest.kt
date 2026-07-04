@@ -102,6 +102,56 @@ class FeedRepositoryTest {
     }
 
     @Test
+    fun `getFeedItems strips markdown bold from bodyPreview`() = runTest {
+        // Captured live from a real group: Ravelry's summary field is a raw Markdown
+        // excerpt, not HTML — the earlier htmlPreview()-only fix left "**...**" untouched.
+        val items = singleTopicRepo(
+            summary = "**Post in this thread if you need your test threads' title changed.** Some detail.",
+        ).getFeedItems(listOf(group))
+        val item = items.single()
+        assertEquals(
+            "Post in this thread if you need your test threads' title changed. Some detail.",
+            item.bodyPreview,
+        )
+    }
+
+    @Test
+    fun `getFeedItems strips markdown reference-style image syntax from bodyPreview`() = runTest {
+        // Captured live: "[image title][1]" with the reference definition further down
+        // in the (untruncated) body. Uses \n (not a raw newline) so the naive JSON
+        // fixture builder in Fakes.kt doesn't need real multi-line/quote escaping.
+        val items = singleTopicRepo(
+            summary = "[image title][1] and more text.\\n\\n[1]: https://example.com/photo.jpg",
+        ).getFeedItems(listOf(group))
+        val item = items.single()
+        assertEquals("image title and more text.", item.bodyPreview)
+    }
+
+    @Test
+    fun `getFeedItems strips markdown inline link and code from bodyPreview`() = runTest {
+        val items = singleTopicRepo(
+            summary = "See [the pattern](https://example.com/p) and run `gauge swatch` first.",
+        ).getFeedItems(listOf(group))
+        val item = items.single()
+        assertEquals("See the pattern and run gauge swatch first.", item.bodyPreview)
+    }
+
+    @Test
+    fun `getFeedItems strips an unterminated bold marker left by Ravelry's own server-side truncation`() = runTest {
+        // Captured live: Ravelry truncates topic.summary server-side, sometimes before the
+        // closing "**" is ever sent — so no regex can pair-match it as real emphasis. It
+        // must still be dropped as noise rather than shown raw.
+        val items = singleTopicRepo(
+            summary = "**Please use this thread to promote YOUR lace patterns. This is a NO CHAT thread!!",
+        ).getFeedItems(listOf(group))
+        val item = items.single()
+        assertEquals(
+            "Please use this thread to promote YOUR lace patterns. This is a NO CHAT thread!!",
+            item.bodyPreview,
+        )
+    }
+
+    @Test
     fun `getFeedItems uses empty string for both preview and summary when summary is null`() = runTest {
         val items = singleTopicRepo(summary = null).getFeedItems(listOf(group))
         val item = items.single()
