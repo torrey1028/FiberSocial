@@ -2,7 +2,6 @@ package com.autom8ed.fibersocial.notifications
 
 import android.app.AlarmManager
 import android.content.Context
-import kotlinx.coroutines.test.runTest
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -10,50 +9,7 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import kotlin.test.assertEquals
-import kotlin.test.assertNull
 import kotlin.test.assertTrue
-
-@RunWith(RobolectricTestRunner::class)
-@Config(sdk = [33])
-class AndroidNotificationStoresTest {
-
-    private val context = RuntimeEnvironment.getApplication()
-
-    @Test
-    fun `state store round-trips and starts null`() = runTest {
-        val prefs = context.getSharedPreferences("test_state", Context.MODE_PRIVATE)
-        prefs.edit().clear().commit()
-        val store = AndroidNotificationStateStore(prefs)
-        assertNull(store.load())
-
-        val state = NotificationState(
-            knownEvents = mapOf("cozy-meetup" to 123L),
-            scheduledReminders = listOf(
-                ScheduledReminder("cozy-meetup", "Cozy Meetup", 456L, ReminderKind.SOON),
-            ),
-        )
-        store.save(state)
-        assertEquals(state, store.load())
-    }
-
-    @Test
-    fun `corrupt state degrades to null`() = runTest {
-        val prefs = context.getSharedPreferences("test_state2", Context.MODE_PRIVATE)
-        prefs.edit().putString("state", "not json").commit()
-        assertNull(AndroidNotificationStateStore(prefs).load())
-    }
-
-    @Test
-    fun `settings store defaults to 6 hours and round-trips`() = runTest {
-        val prefs = context.getSharedPreferences("test_settings", Context.MODE_PRIVATE)
-        prefs.edit().clear().commit()
-        val store = AndroidNotificationSettingsStore(prefs)
-        assertEquals(NotificationSettings.DEFAULT_POLL_INTERVAL_HOURS, store.load().pollIntervalHours)
-
-        store.save(NotificationSettings(pollIntervalHours = 12))
-        assertEquals(12, store.load().pollIntervalHours)
-    }
-}
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [33])

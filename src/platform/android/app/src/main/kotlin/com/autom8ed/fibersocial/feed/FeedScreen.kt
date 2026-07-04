@@ -63,10 +63,12 @@ import com.autom8ed.fibersocial.feed.models.Group
 import com.autom8ed.fibersocial.feed.models.Post
 import com.autom8ed.fibersocial.feed.models.RavelryUser
 import com.autom8ed.fibersocial.feed.models.VoteType
-import com.autom8ed.fibersocial.notifications.AndroidNotificationSettingsStore
 import com.autom8ed.fibersocial.notifications.EventSyncWorker
+import com.autom8ed.fibersocial.notifications.KeyValueNotificationSettingsStore
 import com.autom8ed.fibersocial.notifications.NotificationSettings
 import com.autom8ed.fibersocial.settings.SettingsScreen
+import com.autom8ed.fibersocial.storage.NOTIFICATION_SETTINGS_PREFS_NAME
+import com.autom8ed.fibersocial.storage.plainKeyValueStore
 import com.autom8ed.fibersocial.ui.PullToRefreshBox
 import com.autom8ed.fibersocial.ui.UserAvatar
 import kotlinx.coroutines.launch
@@ -130,7 +132,9 @@ fun FeedScreen(
 
     if (showSettings) {
         val context = LocalContext.current
-        val settingsStore = remember { AndroidNotificationSettingsStore(context) }
+        val settingsStore = remember {
+            KeyValueNotificationSettingsStore(plainKeyValueStore(context, NOTIFICATION_SETTINGS_PREFS_NAME))
+        }
         var pollIntervalHours by remember { mutableStateOf<Int?>(null) }
         // effective: a stale/corrupt persisted value renders as the clamped default
         // rather than an off-menu cadence the dialog can't represent.

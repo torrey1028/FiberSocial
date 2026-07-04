@@ -12,11 +12,15 @@ import androidx.work.WorkerParameters
 import androidx.work.Constraints
 import com.autom8ed.fibersocial.BuildConfig
 import kotlinx.coroutines.CancellationException
-import com.autom8ed.fibersocial.auth.AndroidTokenStorage
 import com.autom8ed.fibersocial.auth.AuthRepository
+import com.autom8ed.fibersocial.auth.KeyValueTokenStorage
 import com.autom8ed.fibersocial.auth.RavelryOAuthClient
 import com.autom8ed.fibersocial.auth.SessionExpiredException
 import com.autom8ed.fibersocial.feed.RavelryApiClient
+import com.autom8ed.fibersocial.storage.AUTH_PREFS_NAME
+import com.autom8ed.fibersocial.storage.NOTIFICATION_STATE_PREFS_NAME
+import com.autom8ed.fibersocial.storage.encryptedKeyValueStore
+import com.autom8ed.fibersocial.storage.plainKeyValueStore
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.android.Android
 import io.ktor.client.plugins.HttpTimeout
@@ -48,7 +52,7 @@ class EventSyncWorker(
             }
         }
         return try {
-            val tokenStorage = AndroidTokenStorage(applicationContext)
+            val tokenStorage = KeyValueTokenStorage(encryptedKeyValueStore(applicationContext, AUTH_PREFS_NAME))
             if (tokenStorage.load() == null) {
                 println("FiberSocial: EventSyncWorker skipping — not logged in")
                 return Result.success()
@@ -66,7 +70,10 @@ class EventSyncWorker(
                 tokenStorage = tokenStorage,
                 refreshToken = { authRepository.refreshToken() },
             )
-            val runner = EventSyncRunner(apiClient, AndroidNotificationStateStore(applicationContext))
+            val runner = EventSyncRunner(
+                apiClient,
+                KeyValueNotificationStateStore(plainKeyValueStore(applicationContext, NOTIFICATION_STATE_PREFS_NAME)),
+            )
             val plan = runner.sync(Clock.System.now(), TimeZone.currentSystemDefault())
             apply(plan)
             Result.success()
