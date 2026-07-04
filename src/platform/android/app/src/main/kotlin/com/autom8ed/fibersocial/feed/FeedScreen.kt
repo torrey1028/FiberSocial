@@ -184,7 +184,7 @@ fun FeedScreen(
                 // Land the author inside their new topic, and refresh so the feed
                 // shows it once they navigate back.
                 viewModel.topicDetail.load(topic.id)
-                selectedTopic = FeedItem.DiscussionTopic(
+                selectedTopic = FeedItem(
                     id = topic.id,
                     groupId = group.id,
                     groupName = group.name,
