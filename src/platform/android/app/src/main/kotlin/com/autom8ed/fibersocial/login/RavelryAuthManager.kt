@@ -10,6 +10,12 @@ class RavelryAuthManager {
 
     companion object {
         const val REDIRECT_URI = "fibersocial://auth/callback"
+
+        // Ravelry grants a read-only token when no scope is requested, which 403s every
+        // write (reply/edit/delete). `forum-write` grants forum posting; `offline` is
+        // required to receive a refresh token (without it Ravelry often omits one, forcing
+        // frequent re-login). Space-separated per the OAuth spec.
+        const val SCOPE = "forum-write offline"
     }
 
     private var codeVerifier: String? = null
@@ -27,6 +33,7 @@ class RavelryAuthManager {
             .appendQueryParameter("code_challenge", challenge)
             .appendQueryParameter("code_challenge_method", "S256")
             .appendQueryParameter("state", stateVal)
+            .appendQueryParameter("scope", SCOPE)
             .build().toString()
     }
 
