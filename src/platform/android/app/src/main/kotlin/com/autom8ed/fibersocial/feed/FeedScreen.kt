@@ -60,7 +60,9 @@ import com.autom8ed.fibersocial.events.EventsScreen
 import com.autom8ed.fibersocial.events.EventsState
 import com.autom8ed.fibersocial.feed.models.FeedItem
 import com.autom8ed.fibersocial.feed.models.Group
+import com.autom8ed.fibersocial.feed.models.Post
 import com.autom8ed.fibersocial.feed.models.RavelryUser
+import com.autom8ed.fibersocial.feed.models.VoteType
 import com.autom8ed.fibersocial.notifications.AndroidNotificationSettingsStore
 import com.autom8ed.fibersocial.notifications.EventSyncWorker
 import com.autom8ed.fibersocial.notifications.NotificationSettings
@@ -155,14 +157,19 @@ fun FeedScreen(
         // have nulled selectedTopic in the same frame — a !! there would crash.
         val topic = selectedTopic!!
         val replyState by viewModel.topicDetail.replyState.collectAsState()
-        TopicDetailScreen(
+        TopicDetailRoute(
             topic = topic,
             postsState = topicDetailState,
-            onBack = { selectedTopic = null },
-            onVote = { post, type -> viewModel.topicDetail.toggleVote(post, type) },
             replyState = replyState,
+            onVote = { post, type -> viewModel.topicDetail.toggleVote(post, type) },
             onSendReply = { body -> viewModel.topicDetail.sendReply(topic.id, body) },
             onReplySent = { viewModel.topicDetail.acknowledgeReplySent() },
+            onBack = { selectedTopic = null },
+            // A reply bumps its topic to the top of the website's feed; refresh here so
+            // the app catches up instead of showing stale ordering/last-reply data until
+            // the next natural reload (issue #88). Skipped when the user merely browsed
+            // and backed out, to avoid an unnecessary network call/spinner flash.
+            onRefreshFeed = { viewModel.feed.refresh() },
         )
         return
     }
@@ -337,6 +344,57 @@ fun FeedScreen(
         )
     }
 }
+
+/**
+ * Wraps [TopicDetailScreen] with tracking of whether a reply was successfully sent during
+ * this visit to the topic. If so, navigating back also invokes [onRefreshFeed] so the feed
+ * catches up with the new latest-reply/bump-to-top the website would show (issue #88).
+ *
+ * The refresh is skipped when the user only browsed the thread and backed out without
+ * replying, so a plain back-navigation doesn't trigger an unnecessary network call/spinner
+ * flash on the feed.
+ */
+@Composable
+internal fun TopicDetailRoute(
+    topic: FeedItem,
+    postsState: TopicDetailState,
+    replyState: ReplyState,
+    onVote: (Post, VoteType) -> Unit,
+    onSendReply: (String) -> Unit,
+    onReplySent: () -> Unit,
+    onBack: () -> Unit,
+    onRefreshFeed: () -> Unit,
+) {
+    // ReplyState is transient — it flips Sent -> Idle again as soon as the composer
+    // acknowledges it (see ReplyComposer/acknowledgeReplySent) — so whether a reply went
+    // out has to be latched here rather than read directly off replyState at onBack time.
+    // Updated inline during composition, not via LaunchedEffect: an effect only runs in a
+    // later apply-changes phase, leaving a window where onBack (composed in the same pass
+    // that observed Sent) could read the not-yet-updated latch if back-navigation happens
+    // before that effect gets a chance to run.
+    var repliedThisVisit by remember { mutableStateOf(false) }
+    repliedThisVisit = trackReplySent(repliedThisVisit, replyState)
+    TopicDetailScreen(
+        topic = topic,
+        postsState = postsState,
+        onBack = {
+            if (repliedThisVisit) onRefreshFeed()
+            onBack()
+        },
+        onVote = onVote,
+        replyState = replyState,
+        onSendReply = onSendReply,
+        onReplySent = onReplySent,
+    )
+}
+
+/**
+ * Pure decision function backing [TopicDetailRoute]'s latch: once a reply has been sent
+ * during a visit, it stays "true" regardless of later [replyState] transitions (e.g. the
+ * Sent -> Idle flip that follows acknowledgement) until the composable is torn down.
+ */
+internal fun trackReplySent(repliedThisVisit: Boolean, replyState: ReplyState): Boolean =
+    repliedThisVisit || replyState is ReplyState.Sent
 
 @Composable
 internal fun GroupDrawer(
