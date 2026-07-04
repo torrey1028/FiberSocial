@@ -7,6 +7,7 @@ import com.autom8ed.fibersocial.BuildConfig
 import com.autom8ed.fibersocial.auth.AndroidTokenStorage
 import com.autom8ed.fibersocial.auth.AuthRepository
 import com.autom8ed.fibersocial.auth.AuthViewModel
+import com.autom8ed.fibersocial.auth.RavelryAuthManager
 import com.autom8ed.fibersocial.auth.RavelryOAuthClient
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.android.Android
