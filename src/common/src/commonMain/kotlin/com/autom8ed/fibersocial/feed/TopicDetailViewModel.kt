@@ -131,10 +131,18 @@ class TopicDetailViewModel(
     fun load(topicId: Long) {
         // The ViewModel is reused across topics: a new topic invalidates any leftover
         // composer state AND any in-flight send's right to touch state (topicGeneration).
-        topicGeneration++
-        _replyState.value = ReplyState.Idle
-        _editState.value = EditState.Idle
-        _deleteState.value = DeleteState.Idle
+        // A reload of the SAME topic — pull-to-refresh — must not: sendReply/deletePost/
+        // editPost all capture topicGeneration before their network call and check it on
+        // the way back in, so bumping it here on every refresh silently dropped their
+        // outcome (success or failure) whenever a refresh landed while one was in flight.
+        val isSameTopic = topicId == loadedTopicId
+        loadedTopicId = topicId
+        if (!isSameTopic) {
+            topicGeneration++
+            _replyState.value = ReplyState.Idle
+            _editState.value = EditState.Idle
+            _deleteState.value = DeleteState.Idle
+        }
         scope.launch {
             println("FiberSocial: TopicDetailViewModel.load(topicId=$topicId)")
             _state.value = TopicDetailState.Loading
@@ -194,6 +202,9 @@ class TopicDetailViewModel(
 
     /** Monotonic token: a send from a previous topic may not touch the current one's state. */
     private var topicGeneration = 0
+
+    /** The topic [load] most recently targeted; distinguishes a new topic from a refresh. */
+    private var loadedTopicId: Long? = null
 
     /** Resets [replyState] from [ReplyState.Sent] back to [ReplyState.Idle] after the UI has reacted. */
     fun acknowledgeReplySent() {

@@ -891,8 +891,9 @@ class RavelryApiClientTest {
 
     @Test
     fun `deletePost throws SessionExpiredException when the redirect names account but not login`() = runTest {
-        // Covers the other half of the location.contains("/login") || contains("/account")
-        // check — Ravelry's own account-locked/logged-out redirects don't all say "login".
+        // Covers the other half of the redirectPath.startsWith("/login") ||
+        // startsWith("/account") check — Ravelry's own account-locked/logged-out
+        // redirects don't all say "login".
         val engine = MockEngine { request ->
             if (request.method.value == "POST") {
                 respond("", HttpStatusCode.Found,
@@ -906,6 +907,46 @@ class RavelryApiClientTest {
             install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
         }
         assertFailsWith<SessionExpiredException> {
+            RavelryApiClient(httpClient, FakeFeedTokenStorage()).deletePost(555L)
+        }
+    }
+
+    @Test
+    fun `deletePost succeeds when the redirect is to a group whose slug merely contains account or login`() = runTest {
+        // Regression: a raw location.contains("/login")/contains("/account") substring
+        // check would misfire on a real, successful-delete redirect whose path merely
+        // starts with a group named "login-fanatics" — a false session-expiry that
+        // would leave the (actually-deleted) post shown locally as still present.
+        val engine = MockEngine { request ->
+            if (request.method.value == "POST") {
+                respond("", HttpStatusCode.Found,
+                    headersOf(HttpHeaders.Location, "https://www.ravelry.com/groups/login-fanatics/discuss/1234"))
+            } else {
+                respond(TOKEN_PAGE_HTML, HttpStatusCode.OK,
+                    headersOf("Content-Type", "text/html"))
+            }
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        // Must not throw.
+        RavelryApiClient(httpClient, FakeFeedTokenStorage()).deletePost(555L)
+    }
+
+    @Test
+    fun `deletePost throws ForbiddenException on a 403, matching editPost's classification`() = runTest {
+        val engine = MockEngine { request ->
+            if (request.method.value == "POST") {
+                respond("nope", HttpStatusCode.Forbidden)
+            } else {
+                respond(TOKEN_PAGE_HTML, HttpStatusCode.OK,
+                    headersOf("Content-Type", "text/html"))
+            }
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        assertFailsWith<com.autom8ed.fibersocial.auth.ForbiddenException> {
             RavelryApiClient(httpClient, FakeFeedTokenStorage()).deletePost(555L)
         }
     }

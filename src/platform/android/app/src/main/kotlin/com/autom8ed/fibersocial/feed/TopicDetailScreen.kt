@@ -105,18 +105,6 @@ fun TopicDetailScreen(
             onDismiss = onDeleteErrorShown,
         )
     }
-    // The post currently being edited, if any. Drives the bottom edit bar (below) instead
-    // of a modal dialog so the text field and its confirm/cancel controls sit directly
-    // above the keyboard rather than being covered by it. Saveable as an ID so the bar
-    // (and its draft) survives rotation; resolving through the loaded posts also
-    // auto-dismisses it if the post vanishes.
-    var editingPostId by rememberSaveable { mutableStateOf<Long?>(null) }
-    // Hoisted: the bottomBar swaps ReplyComposer out for the EditBar, and a branch
-    // swap disposes composition state (rememberSaveable does not restore across
-    // leave/re-enter) — an in-progress reply draft must survive a quick edit.
-    var replyDraft by rememberSaveable { mutableStateOf("") }
-    val editingPost = (postsState as? TopicDetailState.Loaded)
-        ?.posts?.firstOrNull { it.id == editingPostId }
     // The system back button must mirror the top-bar back arrow instead of
     // finishing the activity (issue #38).
     BackHandler(onBack = onBack)
@@ -136,6 +124,21 @@ fun TopicDetailScreen(
     } else {
         postsState
     }
+
+    // The post currently being edited, if any. Drives the bottom edit bar (below) instead
+    // of a modal dialog so the text field and its confirm/cancel controls sit directly
+    // above the keyboard rather than being covered by it. Saveable as an ID so the bar
+    // (and its draft) survives rotation; resolving through the loaded posts also
+    // auto-dismisses it if the post vanishes. Reads displayState, not postsState — the
+    // pull-to-refresh fallback above exists precisely so a transient Loading during a
+    // refresh doesn't yank the loaded content (and here, the open edit bar) off screen.
+    var editingPostId by rememberSaveable { mutableStateOf<Long?>(null) }
+    // Hoisted: the bottomBar swaps ReplyComposer out for the EditBar, and a branch
+    // swap disposes composition state (rememberSaveable does not restore across
+    // leave/re-enter) — an in-progress reply draft must survive a quick edit.
+    var replyDraft by rememberSaveable { mutableStateOf("") }
+    val editingPost = (displayState as? TopicDetailState.Loaded)
+        ?.posts?.firstOrNull { it.id == editingPostId }
 
     Scaffold(
         topBar = {

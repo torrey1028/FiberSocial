@@ -37,12 +37,14 @@ data class Post(
      * is always editable by you — so showing the edit affordance immediately is
      * correct, and we never override an explicit `false` on an existing post.
      *
-     * KNOWN GAP: if a `null` post turns out to be genuinely non-editable, the edit
-     * request 403s. Today that 403 is misclassified as session expiry and bounces
-     * the user to login instead of showing an inline "can't edit" error. Tracked in
-     * issue #82 (which must cover this optimistic-edit path specifically). This is
-     * why `editable` is nullable rather than coerced to `false` — the tri-state is
-     * load-bearing for the edit-gating decision above.
+     * If a `null` post turns out to be genuinely non-editable, the edit request
+     * 403s; `RavelryApiClient.authenticatedRequest` classifies that as
+     * [com.autom8ed.fibersocial.auth.ForbiddenException] (issue #92), which
+     * `TopicDetailViewModel.editPost` surfaces as an inline `EditState.Error` rather
+     * than bouncing the user to login — so the optimism above costs at most one
+     * failed save attempt with a normal error message, not a spurious re-login.
+     * This is why `editable` is nullable rather than coerced to `false` — the
+     * tri-state is load-bearing for the edit-gating decision above.
      */
     val editable: Boolean? = null,
     @SerialName("created_at") val createdAt: String? = null,

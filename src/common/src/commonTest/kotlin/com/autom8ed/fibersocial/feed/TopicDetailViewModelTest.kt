@@ -823,6 +823,49 @@ class TopicDetailViewModelTest {
         }
 
     @Test
+    fun `a delete that completes during a same-topic reload still applies`() =
+        runTest(UnconfinedTestDispatcher()) {
+            // Regression: load() used to bump topicGeneration on every call, including a
+            // pull-to-refresh of the SAME topic — which silently discarded a delete/edit's
+            // outcome (the coroutine's captured generation no longer matched by the time
+            // it resolved), even though nothing about the topic actually changed.
+            val releaseDelete = CompletableDeferred<Unit>()
+            val engine = MockEngine { request ->
+                when {
+                    request.method == HttpMethod.Post && request.url.encodedPath.startsWith("/forum_posts/") -> {
+                        releaseDelete.await()
+                        respond("ok", HttpStatusCode.OK, headersOf("Content-Type", "text/html"))
+                    }
+                    // fetchAuthenticityToken() GETs the bare WWW_URL — Ktor reports that as
+                    // an empty encodedPath, not "/".
+                    request.url.encodedPath.isEmpty() ->
+                        respond(TOKEN_PAGE_HTML, HttpStatusCode.OK, headersOf("Content-Type", "text/html"))
+                    else ->
+                        respond(postsJson(7L), HttpStatusCode.OK,
+                            headersOf("Content-Type", ContentType.Application.Json.toString()))
+                }
+            }
+            val httpClient = HttpClient(engine) {
+                install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+            }
+            val vm = TopicDetailViewModel(RavelryApiClient(httpClient, FakeFeedTokenStorage()), this)
+            vm.load(1L)
+            vm.state.first { it is TopicDetailState.Loaded }
+            val victim = (vm.state.value as TopicDetailState.Loaded).posts.first()
+            vm.deletePost(victim)
+
+            // A pull-to-refresh of the SAME topic while the delete is still in flight.
+            vm.load(1L)
+            vm.state.first { it is TopicDetailState.Loaded }
+            releaseDelete.complete(Unit)
+            awaitChildren(coroutineContext[Job]!!)
+
+            assertIs<DeleteState.Idle>(vm.deleteState.value)
+            val posts = (vm.state.value as TopicDetailState.Loaded).posts
+            assertTrue(posts.none { it.id == victim.id })
+        }
+
+    @Test
     fun `an edit that outlives its topic touches neither the new thread nor the editor`() =
         runTest(UnconfinedTestDispatcher()) {
             val releaseEdit = CompletableDeferred<Unit>()

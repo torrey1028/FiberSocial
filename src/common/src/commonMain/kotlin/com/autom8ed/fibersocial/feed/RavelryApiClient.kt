@@ -30,6 +30,7 @@ import io.ktor.client.statement.request
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.Parameters
+import io.ktor.http.Url
 import io.ktor.http.isSuccess
 import io.ktor.http.parameters
 import kotlinx.coroutines.CancellationException
@@ -553,17 +554,24 @@ class RavelryApiClient(
         ) {
             header(HttpHeaders.Cookie, cookie)
         }
+        println("FiberSocial: deletePost($postId) -> ${response.status}")
         // Ktor doesn't follow redirects for POST, so the 3xx surfaces here directly.
         // A redirect is how BOTH outcomes look: success bounces back to the topic,
         // an expired session bounces to the login page — the Location header is the
         // only thing that tells them apart. Treating a login redirect as success
-        // would remove the post locally while it lives on at Ravelry.
-        val location = response.headers[HttpHeaders.Location].orEmpty()
+        // would remove the post locally while it lives on at Ravelry. Matched against
+        // the redirect's URL PATH, not a raw substring of the whole Location string —
+        // a real topic permalink containing "account"/"login" elsewhere (e.g. a group
+        // named "login-fanatics") must not false-positive as a session-expiry redirect.
+        val redirectPath = response.headers[HttpHeaders.Location]
+            ?.let { runCatching { Url(it).encodedPath }.getOrDefault(it) }
+            .orEmpty()
         when {
-            location.contains("/login") || location.contains("/account") -> {
+            redirectPath.startsWith("/login") || redirectPath.startsWith("/account") -> {
                 cachedAuthenticityToken = null
                 throw SessionExpiredException("Delete of post $postId redirected to login")
             }
+            response.status == HttpStatusCode.Forbidden -> throw ForbiddenException(forbiddenMessage(response))
             response.status.isSuccess() || response.status.value in 300..399 -> Unit
             else -> {
                 // The stale-token case rejects with 4xx; drop the cache so a retry

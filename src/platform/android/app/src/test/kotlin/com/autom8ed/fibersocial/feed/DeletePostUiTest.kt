@@ -1,6 +1,9 @@
 package com.autom8ed.fibersocial.feed
 
 import androidx.activity.ComponentActivity
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -86,6 +89,34 @@ class DeletePostUiTest {
         // After: the bottom bar becomes the edit bar with save/cancel controls and the body.
         compose.onNodeWithContentDescription("Save edit").assertIsDisplayed()
         compose.onNodeWithContentDescription("Cancel edit").assertIsDisplayed()
+        compose.onNodeWithText("original text").assertIsDisplayed()
+    }
+
+    @Test
+    fun `a pull-to-refresh mid-edit does not close the edit bar`() {
+        // Regression: editingPost used to resolve against the raw postsState instead of
+        // the pull-to-refresh fallback (displayState), so postsState briefly flipping to
+        // Loading during a refresh made the open post vanish from editingPost's lookup,
+        // silently swapping the edit bar back out for the reply composer mid-edit.
+        var postsState by mutableStateOf<TopicDetailState>(
+            TopicDetailState.Loaded(listOf(ownPost.copy(editable = true, body = "original text"))),
+        )
+        compose.setContent {
+            TopicDetailScreen(
+                topic = topic,
+                postsState = postsState,
+                onBack = {},
+                onVote = { _, _ -> },
+                currentUsername = "me",
+            )
+        }
+        compose.onNodeWithContentDescription("Edit post").performClick()
+        compose.onNodeWithContentDescription("Save edit").assertIsDisplayed()
+
+        // Pull-to-refresh: postsState briefly reports Loading again.
+        postsState = TopicDetailState.Loading
+
+        compose.onNodeWithContentDescription("Save edit").assertIsDisplayed()
         compose.onNodeWithText("original text").assertIsDisplayed()
     }
 
