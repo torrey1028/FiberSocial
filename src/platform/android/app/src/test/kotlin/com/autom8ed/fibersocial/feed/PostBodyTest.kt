@@ -131,7 +131,7 @@ class BuildInlineTextTest {
 
     @Test
     fun `inline emoji are appended as inline-content placeholders carrying their alt text`() {
-        val emoji = Inline.Image(url = "https://images.example/smile.gif", alt = ":)", cssClass = "smiley")
+        val emoji = Inline.Image(url = "https://images.example/smile.gif", alt = ":)", cssClass = "emo")
         val text = buildInlineText(listOf(Inline.Text("hi "), emoji), LINK, CODE_BG)
         // appendInlineContent renders the alt text until the real inline content is laid
         // out, so it shows up in the built string in place of the image.
@@ -148,7 +148,7 @@ class BuildInlineTextTest {
 
 class SplitOnImagesTest {
     private val image = Inline.Image(url = "https://images.example/a.jpg", alt = "a")
-    private val emoji = Inline.Image(url = "https://images.example/smile.gif", alt = ":)", cssClass = "smiley")
+    private val emoji = Inline.Image(url = "https://images.example/smile.gif", alt = ":)", cssClass = "emo")
 
     @Test
     fun `content without images is a single text run`() {
@@ -204,7 +204,7 @@ class SplitOnImagesTest {
 }
 
 class CollectInlineEmojiTest {
-    private val emoji = Inline.Image(url = "https://images.example/smile.gif", alt = ":)", cssClass = "smiley")
+    private val emoji = Inline.Image(url = "https://images.example/smile.gif", alt = ":)", cssClass = "emo")
     private val photo = Inline.Image(url = "https://images.example/photo.jpg", alt = "a photo")
 
     @Test
@@ -214,7 +214,7 @@ class CollectInlineEmojiTest {
 
     @Test
     fun `top-level emoji are collected in order`() {
-        val other = Inline.Image(url = "https://images.example/smile2.gif", alt = ":D", cssClass = "smiley")
+        val other = Inline.Image(url = "https://images.example/smile2.gif", alt = ":D", cssClass = "emo")
         assertEquals(listOf(emoji, other), collectInlineEmoji(listOf(emoji, Inline.Text(" "), other)))
     }
 

@@ -90,8 +90,9 @@ sealed interface Inline {
      * An inline image (`<img>`). Markdown images arrive inside a paragraph.
      *
      * @property cssClass Raw `class` attribute value, verbatim from the source HTML
-     *   (empty if absent). Ravelry marks its small inline "smiley" glyphs with a class
-     *   containing `smiley`.
+     *   (empty if absent). Ravelry marks its small inline emoji glyphs with a class
+     *   containing `emo` (confirmed against a live `<img class="emo" ...>` capture —
+     *   Ravelry does not set `width`/`height` on these, so the class is the only signal).
      * @property width Explicit `width` attribute in pixels, if present.
      * @property height Explicit `height` attribute in pixels, if present.
      */
@@ -103,13 +104,14 @@ sealed interface Inline {
         val height: Int? = null,
     ) : Inline {
         /**
-         * Whether this is one of Ravelry's small inline "smiley" glyphs rather than a
-         * full content photo — signaled by a `smiley` class, or by an explicit size no
-         * bigger than [INLINE_EMOJI_MAX_DIMENSION_PX] on both axes. Such images should
+         * Whether this is one of Ravelry's small inline emoji glyphs rather than a full
+         * content photo — signaled by an `emo` class, or by an explicit size no bigger
+         * than [INLINE_EMOJI_MAX_DIMENSION_PX] on both axes (kept as a fallback in case a
+         * future markup variant sizes emoji explicitly instead). Such images should
          * render inline at roughly text size instead of as a full-width block.
          */
         val isInlineEmoji: Boolean
-            get() = cssClass.contains("smiley", ignoreCase = true) ||
+            get() = cssClass.split(' ').any { it.equals("emo", ignoreCase = true) } ||
                 (
                     width != null && height != null &&
                         width <= INLINE_EMOJI_MAX_DIMENSION_PX && height <= INLINE_EMOJI_MAX_DIMENSION_PX

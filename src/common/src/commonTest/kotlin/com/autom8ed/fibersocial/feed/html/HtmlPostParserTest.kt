@@ -182,13 +182,23 @@ class HtmlPostParserInlineTest {
     }
 
     @Test
-    fun `a smiley class flags an image as inline emoji`() {
+    fun `an emo class flags an image as inline emoji`() {
+        // Real markup captured from a live Ravelry post: no width/height at all, just class="emo".
         val content = singleParagraph(
-            """<p><img src="https://www.ravelry.com/images/smilies/smile.gif" class="smiley" alt=":)"></p>"""
+            """<p><img alt="purple_heart" title=":purple_heart:" class="emo" src="https://style-cdn.ravelrycache.com/images/twemoji/1f49c.png"></p>"""
         )
         val image = assertIs<Inline.Image>(content.single())
-        assertEquals("smiley", image.cssClass)
+        assertEquals("emo", image.cssClass)
         assertTrue(image.isInlineEmoji)
+    }
+
+    @Test
+    fun `a class merely containing emo as a substring is not flagged as inline emoji`() {
+        val content = singleParagraph(
+            """<p><img src="https://images.example/yarn.jpg" alt="a skein" class="remote-thumb"></p>"""
+        )
+        val image = assertIs<Inline.Image>(content.single())
+        assertTrue(!image.isInlineEmoji)
     }
 
     @Test
