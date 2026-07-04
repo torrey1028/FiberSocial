@@ -8,6 +8,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
@@ -132,5 +133,21 @@ class NewTopicScreenTest {
         compose.onNodeWithText("Title").assertIsNotEnabled()
         compose.onNodeWithText("Your post").assertIsNotEnabled()
         compose.onNodeWithText("Post").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Back").assertIsNotEnabled()
+    }
+
+    @Test
+    fun `Idle state leaves the back button enabled`() {
+        compose.setContent {
+            NewTopicScreen(
+                groups = listOf(kalHub),
+                initialGroup = kalHub,
+                state = NewTopicState.Idle,
+                onBack = {},
+                onPost = { _, _, _ -> },
+                onCreated = { _, _ -> },
+            )
+        }
+        compose.onNodeWithContentDescription("Back").assertIsEnabled()
     }
 }

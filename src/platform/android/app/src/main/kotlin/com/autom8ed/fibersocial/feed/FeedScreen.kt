@@ -193,7 +193,7 @@ fun FeedScreen(
                     // is the same person if it ever doesn't.
                     author = topic.createdByUser ?: loaded?.user ?: RavelryUser(username = "unknown"),
                     title = topic.title,
-                    bodyPreview = topic.summary.orEmpty(),
+                    bodyPreview = topic.summary.orEmpty().take(200),
                     bodySummary = topic.summary.orEmpty(),
                     replyCount = topic.postsCount,
                 )

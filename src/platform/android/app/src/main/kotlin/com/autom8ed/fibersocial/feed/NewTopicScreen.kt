@@ -59,7 +59,12 @@ fun NewTopicScreen(
     var body by rememberSaveable { mutableStateOf("") }
     val sending = state is NewTopicState.Sending
 
-    BackHandler(onBack = onBack)
+    // Disabled while sending: leaving now would unmount this screen's collector on
+    // NewTopicViewModel.state, so a Created/Error result that lands after navigating
+    // away would never trigger onCreated or surface an error (reset() is a no-op
+    // mid-send, but that only protects the ViewModel's state — not whether anyone's
+    // still observing it).
+    BackHandler(enabled = !sending, onBack = onBack)
 
     LaunchedEffect(state) {
         if (state is NewTopicState.Created) {
@@ -76,7 +81,7 @@ fun NewTopicScreen(
             TopAppBar(
                 title = { Text("New topic") },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
+                    IconButton(onClick = onBack, enabled = !sending) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
