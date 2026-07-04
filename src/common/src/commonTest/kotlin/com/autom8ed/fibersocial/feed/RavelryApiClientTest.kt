@@ -890,6 +890,27 @@ class RavelryApiClientTest {
     }
 
     @Test
+    fun `deletePost throws SessionExpiredException when the redirect names account but not login`() = runTest {
+        // Covers the other half of the location.contains("/login") || contains("/account")
+        // check — Ravelry's own account-locked/logged-out redirects don't all say "login".
+        val engine = MockEngine { request ->
+            if (request.method.value == "POST") {
+                respond("", HttpStatusCode.Found,
+                    headersOf(HttpHeaders.Location, "https://www.ravelry.com/account"))
+            } else {
+                respond(TOKEN_PAGE_HTML, HttpStatusCode.OK,
+                    headersOf("Content-Type", "text/html"))
+            }
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        assertFailsWith<SessionExpiredException> {
+            RavelryApiClient(httpClient, FakeFeedTokenStorage()).deletePost(555L)
+        }
+    }
+
+    @Test
     fun `deletePost reuses the cached csrf token across deletes`() = runTest {
         var tokenPageFetches = 0
         val engine = MockEngine { request ->
@@ -960,6 +981,15 @@ class RavelryApiClientTest {
         assertEquals("edited body", capturedBody)
         assertEquals("edited body", post.body)
         assertEquals("<p>edited body</p>", post.bodyHtml)
+    }
+
+    @Test
+    fun `editPost raises a cautious error when the response is not the updated post`() = runTest {
+        // Same reasoning as postReply/createTopic: a 200 with a non-JSON body must not be
+        // treated as success, and the message must warn the edit may still have applied.
+        val client = routingApiClient { "<html>down for maintenance</html>" }
+        val failure = runCatching { client.editPost(7L, "edited body") }.exceptionOrNull()
+        assertTrue(failure!!.message!!.contains("the edit may have applied"))
     }
 
     @Test

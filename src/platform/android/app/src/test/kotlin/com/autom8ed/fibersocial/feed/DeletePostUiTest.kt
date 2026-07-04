@@ -28,7 +28,7 @@ class DeletePostUiTest {
     private val ownPost = Post(id = 1L, bodyHtml = "<p>mine</p>", user = RavelryUser(username = "me"))
     private val otherPost = Post(id = 2L, bodyHtml = "<p>theirs</p>", user = RavelryUser(username = "someone"))
 
-    private val topic = FeedItem.DiscussionTopic(
+    private val topic = FeedItem(
         id = 10L, groupId = 1L, groupName = "G", lastPostAt = null,
         author = RavelryUser(username = "someone"), title = "T",
         bodyPreview = "", bodySummary = "", replyCount = 2,
