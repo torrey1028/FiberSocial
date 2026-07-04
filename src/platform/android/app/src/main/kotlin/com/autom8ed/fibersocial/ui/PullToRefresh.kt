@@ -6,6 +6,7 @@ import androidx.compose.material.ExperimentalMaterialApi
 import androidx.compose.material.pullrefresh.PullRefreshIndicator
 import androidx.compose.material.pullrefresh.pullRefresh
 import androidx.compose.material.pullrefresh.rememberPullRefreshState
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -37,6 +38,12 @@ fun PullToRefreshBox(
             refreshing = refreshing,
             state = pullRefreshState,
             modifier = Modifier.align(Alignment.TopCenter),
+            // PullRefreshIndicator is Material2 (androidx.compose.material) and defaults to
+            // MaterialTheme.colors (M2) — this app only sets up M3 theming, so left at its
+            // defaults the indicator renders with unrelated, off-brand colors. Pass the M3
+            // scheme explicitly instead.
+            backgroundColor = MaterialTheme.colorScheme.surface,
+            contentColor = MaterialTheme.colorScheme.primary,
         )
     }
 }
