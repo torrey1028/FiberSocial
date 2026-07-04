@@ -182,6 +182,64 @@ class HtmlPostParserInlineTest {
     }
 
     @Test
+    fun `images fall back to data-src when src is missing`() {
+        val content = singleParagraph("""<p><img data-src="https://images.example/lazy.jpg" alt="lazy"></p>""")
+        assertEquals("https://images.example/lazy.jpg", (content.single() as Inline.Image).url)
+    }
+
+    @Test
+    fun `images fall back to data-src when src is blank`() {
+        val content = singleParagraph(
+            """<p><img src="" data-src="https://images.example/lazy.jpg" alt="lazy"></p>"""
+        )
+        assertEquals("https://images.example/lazy.jpg", (content.single() as Inline.Image).url)
+    }
+
+    @Test
+    fun `images fall back to data-src when src is a data URI placeholder`() {
+        val html = "<p><img src=\"data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==\"" +
+            " data-src=\"https://images.example/lazy.jpg\" alt=\"lazy\"></p>"
+        val content = singleParagraph(html)
+        assertEquals("https://images.example/lazy.jpg", (content.single() as Inline.Image).url)
+    }
+
+    @Test
+    fun `images fall back to the first srcset candidate when src and data-src are unusable`() {
+        val content = singleParagraph(
+            """<p><img srcset="https://images.example/small.jpg 480w, https://images.example/big.jpg 960w" alt="set"></p>"""
+        )
+        assertEquals("https://images.example/small.jpg", (content.single() as Inline.Image).url)
+    }
+
+    @Test
+    fun `images skip a blank leading srcset candidate and use the next one`() {
+        val content = singleParagraph(
+            """<p><img srcset=" , https://images.example/small.jpg 480w" alt="set"></p>"""
+        )
+        assertEquals("https://images.example/small.jpg", (content.single() as Inline.Image).url)
+    }
+
+    @Test
+    fun `images with no usable src, data-src, or srcset fall back to an empty url`() {
+        val content = singleParagraph("""<p><img alt="none"></p>""")
+        assertEquals(Inline.Image(url = "", alt = "none"), content.single())
+    }
+
+    @Test
+    fun `protocol-relative image urls are normalized to https`() {
+        val content = singleParagraph("""<p><img src="//images.example/yarn.jpg" alt="a skein"></p>""")
+        assertEquals("https://images.example/yarn.jpg", (content.single() as Inline.Image).url)
+    }
+
+    @Test
+    fun `protocol-relative data-src is normalized to https too`() {
+        val content = singleParagraph(
+            """<p><img data-src="//images.example/lazy.jpg" alt="lazy"></p>"""
+        )
+        assertEquals("https://images.example/lazy.jpg", (content.single() as Inline.Image).url)
+    }
+
+    @Test
     fun `unknown inline tags degrade to their content`() {
         val content = singleParagraph("<p>a <span class=\"future\">kept</span> b</p>")
         assertEquals("a kept b", content.plainText())

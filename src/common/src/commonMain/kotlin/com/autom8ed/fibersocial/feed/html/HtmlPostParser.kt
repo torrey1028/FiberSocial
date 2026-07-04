@@ -159,7 +159,7 @@ object HtmlPostParser {
             "sup" -> styled(InlineStyle.SUPERSCRIPT, node)
             "code" -> listOf(Inline.Code(node.text()))
             "a" -> listOf(Inline.Link(href = node.attr("href"), children = parseInlineChildren(node)))
-            "img" -> listOf(Inline.Image(url = node.attr("src"), alt = node.attr("alt")))
+            "img" -> listOf(Inline.Image(url = imageUrl(node), alt = node.attr("alt")))
             "br" -> listOf(Inline.HardBreak)
             // Purely presentational wrapper; unwrap without noise.
             "span" -> parseInlineChildren(node)
@@ -174,6 +174,44 @@ object HtmlPostParser {
 
     private fun styled(style: InlineStyle, element: Element): List<Inline> =
         listOf(Inline.Styled(style, parseInlineChildren(element)))
+
+    /**
+     * Resolves the best available URL from an `<img>` element.
+     *
+     * Ravelry's renderer sometimes lazy-loads images: it leaves `src` blank (or pointing
+     * at a `data:` placeholder) until client-side JS swaps in the real URL from
+     * `data-src`. This parser runs ahead of any JS, so it prefers `src` only when it's a
+     * usable, non-placeholder URL, and falls back to `data-src` otherwise. If neither
+     * holds a usable URL, the first candidate in `srcset` is used — entries there are
+     * comma-separated `url descriptor` pairs (e.g. `"a.jpg 480w, b.jpg 960w"`), listed by
+     * Ravelry smallest-first, so taking the first keeps this simple without needing to
+     * parse and compare `w`/`x` descriptors. Finally, protocol-relative URLs
+     * (`//host/img.jpg`) are normalized to `https:` since Coil/OkHttp require an explicit
+     * scheme to resolve a request.
+     */
+    private fun imageUrl(img: Element): String {
+        val src = img.attr("src")
+        val resolved = when {
+            isUsableUrl(src) -> src
+            isUsableUrl(img.attr("data-src")) -> img.attr("data-src")
+            else -> firstSrcsetCandidate(img.attr("srcset")) ?: src
+        }
+        return normalizeProtocolRelative(resolved)
+    }
+
+    /** A blank string or a `data:` placeholder URI isn't a real, loadable image URL. */
+    private fun isUsableUrl(url: String): Boolean = url.isNotBlank() && !url.startsWith("data:")
+
+    /** Extracts the URL of the first candidate in a `srcset` attribute, if any. */
+    private fun firstSrcsetCandidate(srcset: String): String? =
+        srcset.split(",")
+            .map { it.trim() }
+            .firstOrNull { it.isNotEmpty() }
+            ?.substringBefore(' ')
+
+    /** Coil/OkHttp need an explicit scheme; Ravelry sometimes emits `//host/...` URLs. */
+    private fun normalizeProtocolRelative(url: String): String =
+        if (url.startsWith("//")) "https:$url" else url
 
     /**
      * Collapses whitespace runs (including the newlines HTML source wraps at) to single
