@@ -320,4 +320,12 @@ class FeedRepositoryTest {
         assertEquals(200, item.latestReplyPreview?.length)
         assertEquals("y".repeat(200), item.latestReplyPreview)
     }
+
+    @Test
+    fun `getFeedItems strips entity-escaped tags from bodyPreview`() = runTest {
+        // Ksoup decodes entities while extracting text(), so "&lt;b&gt;" surviving a single
+        // pass turns into a literal "<b>" — still tag-shaped, still a leak (#104).
+        val items = singleTopicRepo(summary = "&lt;b&gt;bold&lt;/b&gt; text").getFeedItems(listOf(group))
+        assertEquals("bold text", items.single().bodyPreview)
+    }
 }
