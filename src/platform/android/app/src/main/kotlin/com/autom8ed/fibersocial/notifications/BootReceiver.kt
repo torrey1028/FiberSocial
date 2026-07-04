@@ -8,13 +8,14 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 /**
- * Reschedules pending reminders after a reboot — alarms don't survive one, but the
- * persisted [NotificationState] knows what should be scheduled.
+ * Reschedules pending reminders after a reboot or an app update — alarms aren't
+ * guaranteed to survive either (a package replacement clears them outright on some
+ * OEMs/versions), but the persisted [NotificationState] knows what should be scheduled.
  */
 class BootReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
+        if (intent.action !in RESCHEDULE_ACTIONS) return
         val pending = goAsync()
         CoroutineScope(Dispatchers.IO).launch {
             try {
@@ -32,5 +33,14 @@ class BootReceiver : BroadcastReceiver() {
                 pending.finish()
             }
         }
+    }
+
+    private companion object {
+        /**
+         * Both trigger the same "reschedule from persisted state" logic below: a
+         * reboot clears alarms unconditionally, and a package replacement clears
+         * them on some OEMs/versions (not guaranteed, but not guaranteed *not* to).
+         */
+        val RESCHEDULE_ACTIONS = setOf(Intent.ACTION_BOOT_COMPLETED, Intent.ACTION_MY_PACKAGE_REPLACED)
     }
 }
