@@ -15,6 +15,9 @@ import kotlinx.serialization.Serializable
  * @property forumId ID of the forum this topic belongs to. Zero in detail responses.
  * @property postsCount Total number of replies (including the opening post).
  * @property imagesCount Number of images attached across all posts in the topic.
+ *   Deliberately unused for feed classification (issue #77: branching on it silently
+ *   hid topics); retained as scrape-contract documentation and for a future
+ *   image-preview feature.
  * @property repliedAt ISO-8601 timestamp of the most recent reply.
  * @property createdAt ISO-8601 timestamp when the topic was first posted.
  * @property sticky Whether a moderator has pinned this topic to the top of the forum.

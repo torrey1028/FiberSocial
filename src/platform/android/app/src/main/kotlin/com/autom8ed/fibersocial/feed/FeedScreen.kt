@@ -78,7 +78,7 @@ fun FeedScreen(
     val topicDetailState by viewModel.topicDetail.state.collectAsState()
     val eventsState by viewModel.events.state.collectAsState()
     val eventDetailState by viewModel.eventDetail.state.collectAsState()
-    var selectedTopic by remember { mutableStateOf<FeedItem.DiscussionTopic?>(null) }
+    var selectedTopic by remember { mutableStateOf<FeedItem?>(null) }
     var selectedEventPermalink by remember { mutableStateOf<String?>(null) }
     var eventsGroup by remember { mutableStateOf<Group?>(null) }
     var showSettings by rememberSaveable { mutableStateOf(false) }
@@ -399,36 +399,19 @@ private fun GroupEventsBadge(count: Int, onClick: () -> Unit) {
 private fun FeedList(
     items: List<FeedItem>,
     modifier: Modifier = Modifier,
-    onTopicClick: (FeedItem.DiscussionTopic) -> Unit,
+    onTopicClick: (FeedItem) -> Unit,
 ) {
-    // Sticky topics render as pinned discussion cards; the repository already
-    // sorts them first. Project topics still lack a card type and are skipped.
-    val renderable = items.filter {
-        it is FeedItem.DiscussionTopic || it is FeedItem.AnnouncementTopic
-    }
     LazyColumn(
         modifier = modifier.fillMaxSize(),
         contentPadding = PaddingValues(vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        items(renderable, key = { it.id }) { item ->
-            when (item) {
-                is FeedItem.DiscussionTopic -> DiscussionTopicCard(
-                    item = item,
-                    onClick = { onTopicClick(item) },
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                )
-                is FeedItem.AnnouncementTopic -> {
-                    val asDiscussion = item.asDiscussionTopic()
-                    DiscussionTopicCard(
-                        item = asDiscussion,
-                        onClick = { onTopicClick(asDiscussion) },
-                        modifier = Modifier.padding(horizontal = 16.dp),
-                        pinned = true,
-                    )
-                }
-                else -> Unit
-            }
+        items(items, key = { it.id }) { item ->
+            TopicCard(
+                item = item,
+                onClick = { onTopicClick(item) },
+                modifier = Modifier.padding(horizontal = 16.dp),
+            )
         }
     }
 }

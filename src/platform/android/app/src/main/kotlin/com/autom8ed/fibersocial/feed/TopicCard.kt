@@ -43,18 +43,17 @@ internal fun relativeTime(dateString: String?): String {
 }
 
 @Composable
-fun DiscussionTopicCard(
-    item: FeedItem.DiscussionTopic,
+fun TopicCard(
+    item: FeedItem,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    pinned: Boolean = false,
 ) {
     ElevatedCard(
         onClick = onClick,
         modifier = modifier.fillMaxWidth(),
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
-            if (pinned) {
+            if (item.sticky) {
                 Text(
                     text = "📌 Pinned",
                     style = MaterialTheme.typography.labelSmall,

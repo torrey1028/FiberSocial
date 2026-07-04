@@ -57,7 +57,7 @@ import com.autom8ed.fibersocial.feed.models.voteCount
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TopicDetailScreen(
-    topic: FeedItem.DiscussionTopic,
+    topic: FeedItem,
     postsState: TopicDetailState,
     onBack: () -> Unit,
     onVote: (Post, VoteType) -> Unit,

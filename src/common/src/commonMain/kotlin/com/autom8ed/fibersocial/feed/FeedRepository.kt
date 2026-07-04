@@ -16,7 +16,7 @@ import kotlinx.coroutines.coroutineScope
  * Translates raw Ravelry API data into [FeedItem]s ready for display.
  *
  * Orchestrates the multi-step fetch: groups → topic lists → topic details (in parallel),
- * then maps each [Topic] to a typed [FeedItem] subclass based on its fields.
+ * then maps each [Topic] to a [FeedItem] (one card shape; `sticky` is a flag, not a type).
  *
  * @param apiClient Low-level Ravelry HTTP client.
  */
@@ -44,12 +44,13 @@ class FeedRepository(private val apiClient: RavelryApiClient) {
                 .map { topic ->
                     async {
                         val detail = apiClient.getTopicDetail(topic.id)
-                        // Only discussion cards render reply attribution (project/sticky
-                        // topics map to other card types that discard it), and only topics
-                        // with replies have a latest reply distinct from the opening post;
-                        // skip the extra request otherwise.
-                        val wantsLatestReply =
-                            detail.postsCount > 1 && detail.imagesCount == 0 && !detail.sticky
+                        // Sticky topics deliberately keep opening-post attribution (an
+                        // announcement is its opening post, not its latest comment — this
+                        // mirrors the website; FeedItem's init enforces it), and only
+                        // topics with replies have a latest reply distinct from the
+                        // opening post; skip the extra request otherwise. The !sticky
+                        // condition is load-bearing, not a leftover from the old card split.
+                        val wantsLatestReply = detail.postsCount > 1 && !detail.sticky
                         val latestReply = if (wantsLatestReply) latestPostOrNull(detail.id) else null
                         detail.toFeedItem(groupId = group.id, groupName = group.name, latestReply = latestReply)
                     }
@@ -58,7 +59,7 @@ class FeedRepository(private val apiClient: RavelryApiClient) {
         }.sortedWith(
             // Sticky topics are pinned to the top of a group's forum on the website;
             // mirror that here, then newest-reply-first within each band (issue #78).
-            compareByDescending<FeedItem> { it is FeedItem.AnnouncementTopic }
+            compareByDescending<FeedItem> { it.sticky }
                 .thenByDescending { it.lastPostAt },
         )
     }
@@ -84,45 +85,26 @@ class FeedRepository(private val apiClient: RavelryApiClient) {
         val author = createdByUser ?: RavelryUser(username = "unknown")
         val full = summary ?: ""
         val preview = full.take(200)
-        return when {
-            imagesCount > 0 -> FeedItem.ProjectTopic(
-                id = id,
-                groupId = groupId,
-                groupName = groupName,
-                lastPostAt = repliedAt,
-                author = author,
-                title = title,
-                imageCount = imagesCount,
-                imageUrls = emptyList(), // requires fetching posts; deferred to future phase
-                replyCount = postsCount,
-            )
-            sticky -> FeedItem.AnnouncementTopic(
-                id = id,
-                groupId = groupId,
-                groupName = groupName,
-                lastPostAt = repliedAt,
-                author = author,
-                title = title,
-                bodyPreview = preview,
-                bodySummary = full,
-                replyCount = postsCount,
-            )
-            else -> FeedItem.DiscussionTopic(
-                id = id,
-                groupId = groupId,
-                groupName = groupName,
-                lastPostAt = repliedAt,
-                author = author,
-                title = title,
-                bodyPreview = preview,
-                bodySummary = full,
-                replyCount = postsCount,
-                // Author and preview stand or fall together: a reply whose user is
-                // missing must not show its text attributed to the opening poster.
-                latestReplyAuthor = attributableReply?.user,
-                latestReplyPreview = attributableReply?.let { htmlPreview(it.bodyHtml) },
-            )
-        }
+        // Whether posts carry images does not affect the card: a topic with a photo in
+        // it is still a discussion (issue #77 — the old image-first ProjectTopic mapping
+        // silently dropped nearly half of a real group's topics from the feed). Images
+        // render in the topic detail view.
+        return FeedItem(
+            id = id,
+            groupId = groupId,
+            groupName = groupName,
+            lastPostAt = repliedAt,
+            author = author,
+            title = title,
+            bodyPreview = preview,
+            bodySummary = full,
+            replyCount = postsCount,
+            sticky = sticky,
+            // Author and preview stand or fall together: a reply whose user is
+            // missing must not show its text attributed to the opening poster.
+            latestReplyAuthor = attributableReply?.user,
+            latestReplyPreview = attributableReply?.let { htmlPreview(it.bodyHtml) },
+        )
     }
 
     /** Plain-text excerpt of a post's HTML body, matching the opening-post preview length. */
