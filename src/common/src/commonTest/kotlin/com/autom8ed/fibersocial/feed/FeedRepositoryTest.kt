@@ -86,6 +86,22 @@ class FeedRepositoryTest {
     }
 
     @Test
+    fun `getFeedItems strips html tags from bodyPreview`() = runTest {
+        // Ravelry's `summary` field is documented as plain text but isn't reliably so in
+        // practice — raw markup must be stripped before it reaches the feed card (#104).
+        val items = singleTopicRepo(summary = "<b>bold</b> text").getFeedItems(listOf(group))
+        val item = items.single()
+        assertEquals("bold text", item.bodyPreview)
+    }
+
+    @Test
+    fun `getFeedItems leaves plain-text bodyPreview unaffected`() = runTest {
+        val items = singleTopicRepo(summary = "Plain text summary").getFeedItems(listOf(group))
+        val item = items.single()
+        assertEquals("Plain text summary", item.bodyPreview)
+    }
+
+    @Test
     fun `getFeedItems uses empty string for both preview and summary when summary is null`() = runTest {
         val items = singleTopicRepo(summary = null).getFeedItems(listOf(group))
         val item = items.single()

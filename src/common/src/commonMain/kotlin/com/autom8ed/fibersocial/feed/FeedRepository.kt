@@ -84,7 +84,10 @@ class FeedRepository(private val apiClient: RavelryApiClient) {
         val attributableReply = latestReply?.takeIf { it.user != null }
         val author = createdByUser ?: RavelryUser(username = "unknown")
         val full = summary ?: ""
-        val preview = full.take(200)
+        // Ravelry's `summary` field is documented as plain text but isn't reliably so in
+        // practice (raw HTML/entities have been observed) — strip it the same way as
+        // htmlPreview() so markup never leaks into the feed card (issue #104).
+        val preview = htmlPreview(full)
         // Whether posts carry images does not affect the card: a topic with a photo in
         // it is still a discussion (issue #77 — the old image-first ProjectTopic mapping
         // silently dropped nearly half of a real group's topics from the feed). Images
@@ -107,7 +110,10 @@ class FeedRepository(private val apiClient: RavelryApiClient) {
         )
     }
 
-    /** Plain-text excerpt of a post's HTML body, matching the opening-post preview length. */
+    /**
+     * Plain-text excerpt of an HTML (or HTML-ish) body, used for both the opening-post
+     * preview and the latest-reply preview so raw tags/entities never reach the feed UI.
+     */
     private fun htmlPreview(bodyHtml: String): String =
         Ksoup.parse(bodyHtml).text().take(200)
 }
