@@ -66,29 +66,37 @@ class BootReceiverTest {
     @Test
     fun `BOOT_COMPLETED reschedules future reminders and skips past-due ones`() = runTest {
         val now = System.currentTimeMillis()
+        val futureFireAt = now + 60_000
         seedState(
-            ScheduledReminder("cozy-meetup", "Cozy Meetup", now + 60_000, ReminderKind.SOON),
+            ScheduledReminder("cozy-meetup", "Cozy Meetup", futureFireAt, ReminderKind.SOON),
             ScheduledReminder("past-event", "Past Event", now - 60_000, ReminderKind.SOON),
         )
 
         dispatch(Intent.ACTION_BOOT_COMPLETED)
         awaitScheduledCount(1)
 
-        assertEquals(1, shadowOf(alarmManager).scheduledAlarms.size)
+        val scheduled = shadowOf(alarmManager).scheduledAlarms
+        assertEquals(1, scheduled.size)
+        // Pins down which reminder got scheduled, not just how many did — a bug that
+        // rescheduled the past-due one instead would still leave the count at 1.
+        assertEquals(futureFireAt, scheduled.single().triggerAtMs)
     }
 
     @Test
     fun `MY_PACKAGE_REPLACED reschedules future reminders and skips past-due ones`() = runTest {
         val now = System.currentTimeMillis()
+        val futureFireAt = now + 60_000
         seedState(
-            ScheduledReminder("cozy-meetup", "Cozy Meetup", now + 60_000, ReminderKind.SOON),
+            ScheduledReminder("cozy-meetup", "Cozy Meetup", futureFireAt, ReminderKind.SOON),
             ScheduledReminder("past-event", "Past Event", now - 60_000, ReminderKind.SOON),
         )
 
         dispatch(Intent.ACTION_MY_PACKAGE_REPLACED)
         awaitScheduledCount(1)
 
-        assertEquals(1, shadowOf(alarmManager).scheduledAlarms.size)
+        val scheduled = shadowOf(alarmManager).scheduledAlarms
+        assertEquals(1, scheduled.size)
+        assertEquals(futureFireAt, scheduled.single().triggerAtMs)
     }
 
     @Test
