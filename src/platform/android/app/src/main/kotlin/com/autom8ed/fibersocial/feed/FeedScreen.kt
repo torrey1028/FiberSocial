@@ -356,7 +356,7 @@ fun FeedScreen(
  */
 @Composable
 internal fun TopicDetailRoute(
-    topic: FeedItem.DiscussionTopic,
+    topic: FeedItem,
     postsState: TopicDetailState,
     replyState: ReplyState,
     onVote: (Post, VoteType) -> Unit,
