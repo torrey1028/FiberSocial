@@ -1,5 +1,6 @@
 package com.autom8ed.fibersocial.events
 
+import io.ktor.http.encodeURLParameter
 import kotlinx.datetime.LocalDateTime
 
 /**
@@ -45,6 +46,22 @@ data class EventVenue(
     val cityState: String? = null,
     val country: String? = null,
 )
+
+/**
+ * A Google Maps search URL for this venue, or null when every field is absent/blank.
+ *
+ * Uses the universal `google.com/maps/search` URL rather than a `geo:` intent so it
+ * works on any platform: Android hands it to the Maps app when installed and falls
+ * back to the browser otherwise.
+ */
+fun EventVenue.mapsUrl(): String? {
+    val query = listOfNotNull(name, address, cityState, country)
+        .map { it.trim() }
+        .filter { it.isNotEmpty() }
+        .joinToString(", ")
+    if (query.isEmpty()) return null
+    return "https://www.google.com/maps/search/?api=1&query=${query.encodeURLParameter()}"
+}
 
 /**
  * A forum topic associated with an event.

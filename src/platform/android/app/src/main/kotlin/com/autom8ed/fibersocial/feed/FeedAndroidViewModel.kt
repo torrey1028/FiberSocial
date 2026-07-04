@@ -17,6 +17,7 @@ import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.merge
+import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 
 class FeedAndroidViewModel(app: Application) : AndroidViewModel(app) {
@@ -64,6 +65,16 @@ class FeedAndroidViewModel(app: Application) : AndroidViewModel(app) {
         events.sessionExpired,
         eventDetail.sessionExpired,
     )
+
+    init {
+        // Keep the events list's "N going" counts in step with RSVP changes made on
+        // the detail screen — the counts come from a one-time scrape (issue #74).
+        viewModelScope.launch {
+            eventDetail.attendanceChanged.collect { change ->
+                events.applyAttendanceChange(change.permalink, change.attending)
+            }
+        }
+    }
 
     fun load() = feed.load()
 
