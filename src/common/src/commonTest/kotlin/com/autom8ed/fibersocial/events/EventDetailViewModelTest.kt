@@ -404,19 +404,24 @@ class EventDetailViewModelToggleAttendanceTest {
     }
 
     @Test
-    fun `loading a different event clears the previous event's attendee list immediately`() = runTest(UnconfinedTestDispatcher()) {
+    fun `loading a different event does not carry over the previous event's attendee list on failure`() = runTest(UnconfinedTestDispatcher()) {
+        var currentEvent = "cozy-meetup"
         val vm = EventDetailViewModel(
-            rsvpApiClient(mutableListOf(), peopleHtml = { peoplePage("Megannnnn") }),
+            rsvpApiClient(mutableListOf(), peopleHtml = {
+                if (currentEvent == "cozy-meetup") peoplePage("Megannnnn") else error("transient network error")
+            }),
             this,
         )
         vm.load("cozy-meetup")
         awaitChildren(coroutineContext[Job]!!)
         assertEquals(1, vm.attendees.value?.size)
 
+        currentEvent = "other-event"
         vm.load("other-event")
-        // Cleared synchronously, before the new event's fetch resolves — the previous
-        // event's people must never flash while the new one is loading.
-        assertEquals(null, vm.attendees.value)
+        awaitChildren(coroutineContext[Job]!!)
+        // The new event's own attendee fetch failed — this must not resolve to
+        // "cozy-meetup"'s people just because that's what _attendees.value held before.
+        assertTrue(vm.attendees.value.isNullOrEmpty())
     }
 
     @Test
