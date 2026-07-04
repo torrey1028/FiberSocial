@@ -18,12 +18,18 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -44,12 +50,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.unit.dp
-import com.autom8ed.fibersocial.ui.Avatar
 import com.autom8ed.fibersocial.feed.html.HtmlPostParser
 import com.autom8ed.fibersocial.feed.models.FeedItem
 import com.autom8ed.fibersocial.feed.models.Post
+import com.autom8ed.fibersocial.ui.Avatar
 import com.autom8ed.fibersocial.feed.models.RavelryUser
 import com.autom8ed.fibersocial.feed.models.VoteType
 import com.autom8ed.fibersocial.feed.models.hasVoted
@@ -62,11 +69,42 @@ fun TopicDetailScreen(
     postsState: TopicDetailState,
     onBack: () -> Unit,
     onVote: (Post, VoteType) -> Unit,
+    currentUsername: String? = null,
+    deleteState: DeleteState = DeleteState.Idle,
+    onDeletePost: (Post) -> Unit = {},
+    onDeleteErrorShown: () -> Unit = {},
+    editState: EditState = EditState.Idle,
+    onEditPost: (Post, String) -> Unit = { _, _ -> },
+    onEditErrorShown: () -> Unit = {},
     replyState: ReplyState = ReplyState.Idle,
     onSendReply: (String) -> Unit = {},
     onReplySent: () -> Unit = {},
     onRefresh: () -> Unit = {},
 ) {
+    var pendingDelete by remember { mutableStateOf<Post?>(null) }
+    pendingDelete?.let { post ->
+        AlertDialog(
+            onDismissRequest = { pendingDelete = null },
+            title = { Text("Delete this post?") },
+            text = { Text("This removes your post from the topic for everyone. This can't be undone.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    onDeletePost(post)
+                    pendingDelete = null
+                }) { Text("Delete") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDelete = null }) { Text("Cancel") }
+            },
+        )
+    }
+    if (deleteState is DeleteState.Error) {
+        PostActionErrorDialog(
+            title = "Couldn't delete the post",
+            message = deleteState.message,
+            onDismiss = onDeleteErrorShown,
+        )
+    }
     // The system back button must mirror the top-bar back arrow instead of
     // finishing the activity (issue #38).
     BackHandler(onBack = onBack)
@@ -87,6 +125,21 @@ fun TopicDetailScreen(
         postsState
     }
 
+    // The post currently being edited, if any. Drives the bottom edit bar (below) instead
+    // of a modal dialog so the text field and its confirm/cancel controls sit directly
+    // above the keyboard rather than being covered by it. Saveable as an ID so the bar
+    // (and its draft) survives rotation; resolving through the loaded posts also
+    // auto-dismisses it if the post vanishes. Reads displayState, not postsState — the
+    // pull-to-refresh fallback above exists precisely so a transient Loading during a
+    // refresh doesn't yank the loaded content (and here, the open edit bar) off screen.
+    var editingPostId by rememberSaveable { mutableStateOf<Long?>(null) }
+    // Hoisted: the bottomBar swaps ReplyComposer out for the EditBar, and a branch
+    // swap disposes composition state (rememberSaveable does not restore across
+    // leave/re-enter) — an in-progress reply draft must survive a quick edit.
+    var replyDraft by rememberSaveable { mutableStateOf("") }
+    val editingPost = (displayState as? TopicDetailState.Loaded)
+        ?.posts?.firstOrNull { it.id == editingPostId }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -99,11 +152,26 @@ fun TopicDetailScreen(
             )
         },
         bottomBar = {
-            ReplyComposer(
-                replyState = replyState,
-                onSend = onSendReply,
-                onSent = onReplySent,
-            )
+            val editing = editingPost
+            if (editing != null) {
+                EditBar(
+                    post = editing,
+                    editState = editState,
+                    onSave = { newBody -> onEditPost(editing, newBody) },
+                    onClose = {
+                        onEditErrorShown()
+                        editingPostId = null
+                    },
+                )
+            } else {
+                ReplyComposer(
+                    text = replyDraft,
+                    onTextChange = { replyDraft = it },
+                    replyState = replyState,
+                    onSend = onSendReply,
+                    onSent = onReplySent,
+                )
+            }
         },
     ) { padding ->
         PullToRefreshBox(
@@ -158,7 +226,29 @@ fun TopicDetailScreen(
                         displayState.posts,
                         key = { it.id },
                     ) { post ->
-                        ReplyItem(post = post, onVote = { type -> onVote(post, type) })
+                        val mine = currentUsername != null && post.user?.username == currentUsername
+                        ReplyItem(
+                            post = post,
+                            onVote = { type -> onVote(post, type) },
+                            canDelete = mine,
+                            deleting = (deleteState as? DeleteState.Deleting)?.postId == post.id,
+                            onDelete = { pendingDelete = post },
+                            // Optimistic: show edit when Ravelry says editable OR hasn't decided
+                            // yet (null on a just-created post). Only an explicit false hides it.
+                            // See Post.editable and issue #82 for the non-editable-null 403 gap.
+                            canEdit = mine && post.editable != false,
+                            saving = (editState as? EditState.Saving)?.postId == post.id,
+                            // One delete at a time (the ViewModel enforces it): while a
+                            // delete is in flight, other posts' actions are disabled
+                            // instead of silently dropping taps.
+                            actionsEnabled = deleteState !is DeleteState.Deleting,
+                            onEdit = {
+                                // Opening (or switching) the bar consumes any stale error —
+                                // post A's failure must not render inside post B's bar.
+                                onEditErrorShown()
+                                editingPostId = post.id
+                            },
+                        )
                         HorizontalDivider()
                     }
                 }
@@ -168,9 +258,45 @@ fun TopicDetailScreen(
 }
 
 @Composable
-private fun ReplyItem(post: Post, onVote: (VoteType) -> Unit) {
+internal fun ReplyItem(
+    post: Post,
+    onVote: (VoteType) -> Unit,
+    canDelete: Boolean = false,
+    deleting: Boolean = false,
+    onDelete: () -> Unit = {},
+    canEdit: Boolean = false,
+    saving: Boolean = false,
+    actionsEnabled: Boolean = true,
+    onEdit: () -> Unit = {},
+) {
     Column(modifier = Modifier.padding(vertical = 12.dp)) {
-        AuthorRow(user = post.user, timestamp = post.createdAt)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(modifier = Modifier.weight(1f)) {
+                AuthorRow(user = post.user, timestamp = post.createdAt)
+            }
+            if (deleting || saving) {
+                CircularProgressIndicator(modifier = Modifier.size(24.dp))
+            } else {
+                if (canEdit) {
+                    IconButton(onClick = onEdit, enabled = actionsEnabled) {
+                        Icon(
+                            Icons.Default.Edit,
+                            contentDescription = "Edit post",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                if (canDelete) {
+                    IconButton(onClick = onDelete, enabled = actionsEnabled) {
+                        Icon(
+                            Icons.Default.Delete,
+                            contentDescription = "Delete post",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        }
         if (post.bodyHtml.isNotBlank()) {
             Spacer(Modifier.height(8.dp))
             PostBody(document = remember(post.bodyHtml) { HtmlPostParser.parse(post.bodyHtml) })
@@ -178,6 +304,97 @@ private fun ReplyItem(post: Post, onVote: (VoteType) -> Unit) {
         Spacer(Modifier.height(8.dp))
         VoteRow(post = post, onVote = onVote)
     }
+}
+
+/**
+ * Edit bar that replaces the reply composer in the bottom bar while a post is being
+ * edited, so its text field and confirm/cancel controls stay above the keyboard.
+ * Auto-closes once the save for this post succeeds; on failure it stays open with the
+ * edited text preserved and an inline error.
+ */
+@Composable
+private fun EditBar(
+    post: Post,
+    editState: EditState,
+    onSave: (String) -> Unit,
+    onClose: () -> Unit,
+) {
+    var text by rememberSaveable(post.id) { mutableStateOf(post.body) }
+    val saving = editState is EditState.Saving && editState.postId == post.id
+    val error = editState is EditState.Error
+    val focusRequester = remember { FocusRequester() }
+
+    // Close only when this post's save completes (Saving -> Idle). An Error keeps
+    // the bar open. Keyed by post: leftover true from post A's in-flight save would
+    // otherwise instantly close post B's freshly-opened bar (and A's later completion
+    // would close whatever bar is open).
+    val wasSaving = remember(post.id) { mutableStateOf(false) }
+    LaunchedEffect(saving, error) {
+        if (wasSaving.value && !saving && !error) onClose()
+        if (saving) wasSaving.value = true
+    }
+    LaunchedEffect(post.id) { runCatching { focusRequester.requestFocus() } }
+
+    Surface(tonalElevation = 3.dp) {
+        // imePadding: the bar requests focus on open, so the keyboard rises
+        // immediately — without this the bar sits behind the very keyboard it
+        // exists to stay above.
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .imePadding()
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+        ) {
+            if (error) {
+                Text(
+                    text = (editState as? EditState.Error)?.message
+                        ?.ifBlank { "Couldn't save your edit. Try again." }
+                        ?: "Couldn't save your edit. Try again.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(bottom = 4.dp),
+                )
+            }
+            Row(verticalAlignment = Alignment.Bottom) {
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    label = { Text("Editing") },
+                    enabled = !saving,
+                    modifier = Modifier.weight(1f).focusRequester(focusRequester),
+                    maxLines = 4,
+                )
+                Spacer(Modifier.width(4.dp))
+                if (saving) {
+                    CircularProgressIndicator(modifier = Modifier.size(32.dp).padding(4.dp))
+                } else {
+                    IconButton(onClick = onClose) {
+                        Icon(Icons.Default.Close, contentDescription = "Cancel edit")
+                    }
+                    IconButton(
+                        onClick = { onSave(text) },
+                        // Also gated on the global Saving state: the ViewModel runs one
+                        // edit at a time and would silently drop a second post's save.
+                        enabled = text.isNotBlank() && text.trim() != post.body.trim() &&
+                            editState !is EditState.Saving,
+                    ) {
+                        Icon(Icons.Default.Check, contentDescription = "Save edit")
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** One-shot modal for a failed post operation; shows the real failure reason. */
+@Composable
+private fun PostActionErrorDialog(title: String, message: String, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = { Text(message.ifBlank { "Check your connection and try again." }) },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("OK") } },
+    )
 }
 
 private val VOTE_TYPE_EMOJI: Map<VoteType, String> = mapOf(
@@ -253,13 +470,16 @@ internal fun ReplyComposer(
     replyState: ReplyState,
     onSend: (String) -> Unit,
     onSent: () -> Unit,
+    // Hoisted by the screen so the draft survives the composer being swapped out
+    // for the edit bar (a bottomBar branch swap disposes composition state).
+    text: String,
+    onTextChange: (String) -> Unit,
 ) {
-    var text by rememberSaveable { mutableStateOf("") }
     val sending = replyState is ReplyState.Sending
 
     LaunchedEffect(replyState) {
         if (replyState is ReplyState.Sent) {
-            text = ""
+            onTextChange("")
             onSent()
         }
     }
@@ -283,7 +503,7 @@ internal fun ReplyComposer(
             Row(verticalAlignment = Alignment.Bottom) {
                 OutlinedTextField(
                     value = text,
-                    onValueChange = { text = it },
+                    onValueChange = onTextChange,
                     placeholder = { Text("Write a reply…") },
                     enabled = !sending,
                     modifier = Modifier.weight(1f),

@@ -2,6 +2,7 @@ package com.autom8ed.fibersocial.feed
 
 import com.autom8ed.fibersocial.auth.ForbiddenException
 import com.autom8ed.fibersocial.auth.SessionExpiredException
+import com.fleeksoft.ksoup.Ksoup
 import com.autom8ed.fibersocial.auth.TokenStorage
 import com.autom8ed.fibersocial.events.EventAttendee
 import com.autom8ed.fibersocial.events.EventDetail
@@ -18,6 +19,7 @@ import com.autom8ed.fibersocial.feed.models.Topic
 import com.autom8ed.fibersocial.feed.models.VoteType
 import io.ktor.client.HttpClient
 import io.ktor.client.request.forms.FormDataContent
+import io.ktor.client.request.forms.submitForm
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
@@ -28,7 +30,9 @@ import io.ktor.client.statement.request
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.Parameters
+import io.ktor.http.Url
 import io.ktor.http.isSuccess
+import io.ktor.http.parameters
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -39,7 +43,14 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
 private const val BASE_URL = "https://api.ravelry.com"
-private val lenientJson = Json { ignoreUnknownKeys = true }
+private const val WWW_URL = "https://www.ravelry.com"
+// coerceInputValues: a defensive safety net for when Ravelry returns an explicit JSON null
+// for a field our model declares non-nullable-with-default. kotlinx.serialization applies a
+// field default only when the key is ABSENT — an explicit null otherwise throws — so this
+// coerces such nulls back to the default. (The known offender, forum_post.editable, is now
+// modelled as nullable because its null carries meaning; see Post.editable. This flag stays
+// on to guard the remaining non-null fields, e.g. a null body_html/body.)
+private val lenientJson = Json { ignoreUnknownKeys = true; coerceInputValues = true }
 
 // Ravelry has no API endpoint for "groups this user is a member of".
 // We scrape the memberships page on www.ravelry.com using the session cookie
@@ -478,7 +489,7 @@ class RavelryApiClient(
             }
         }
         return try {
-            lenientJson.decodeFromString<ReplyResponse>(raw).forumPost
+            lenientJson.decodeFromString<ForumPostResponse>(raw).forumPost
         } catch (e: Exception) {
             println("FiberSocial: postReply($topicId) unexpected response: ${raw.take(200)}")
             error("Unexpected Ravelry response — check the thread before retrying, the reply may have posted.")
@@ -520,6 +531,105 @@ class RavelryApiClient(
     }
 
     /**
+     * Deletes the current user's own forum post.
+     *
+     * The API exposes no delete endpoint for forum posts (only `forum_posts/update`), so
+     * this uses the website protocol: fetch the session-stable `authenticity_token` from
+     * `meta#authenticity-token`, then replay Ravelry's own delete request — Prototype.js
+     * `Ajax.Request('/forum_posts/ID', {method:'delete'})`, i.e. a POST with a Rails
+     * `_method=delete` override plus the CSRF token.
+     *
+     * @param postId Ravelry forum post ID; must belong to the signed-in user.
+     * @throws IllegalStateException if Ravelry rejects the deletion (non-2xx/3xx response).
+     */
+    suspend fun deletePost(postId: Long) {
+        val token = fetchAuthenticityToken()
+        val cookie = sessionCookie()
+        val response = httpClient.submitForm(
+            url = "$WWW_URL/forum_posts/$postId",
+            formParameters = parameters {
+                append("_method", "delete")
+                append("authenticity_token", token)
+            },
+        ) {
+            header(HttpHeaders.Cookie, cookie)
+        }
+        println("FiberSocial: deletePost($postId) -> ${response.status}")
+        // Ktor doesn't follow redirects for POST, so the 3xx surfaces here directly.
+        // A redirect is how BOTH outcomes look: success bounces back to the topic,
+        // an expired session bounces to the login page — the Location header is the
+        // only thing that tells them apart. Treating a login redirect as success
+        // would remove the post locally while it lives on at Ravelry. Matched against
+        // the redirect's URL PATH, not a raw substring of the whole Location string —
+        // a real topic permalink containing "account"/"login" elsewhere (e.g. a group
+        // named "login-fanatics") must not false-positive as a session-expiry redirect.
+        val redirectPath = response.headers[HttpHeaders.Location]
+            ?.let { runCatching { Url(it).encodedPath }.getOrDefault(it) }
+            .orEmpty()
+        when {
+            redirectPath.startsWith("/login") || redirectPath.startsWith("/account") -> {
+                cachedAuthenticityToken = null
+                throw SessionExpiredException("Delete of post $postId redirected to login")
+            }
+            response.status == HttpStatusCode.Forbidden -> throw ForbiddenException(forbiddenMessage(response))
+            response.status.isSuccess() || response.status.value in 300..399 -> Unit
+            else -> {
+                // The stale-token case rejects with 4xx; drop the cache so a retry
+                // re-scrapes a fresh one.
+                cachedAuthenticityToken = null
+                error("Delete rejected: HTTP ${response.status.value}")
+            }
+        }
+    }
+
+    /** Session-stable CSRF token, cached after the first scrape (see [fetchAuthenticityToken]). */
+    private var cachedAuthenticityToken: String? = null
+
+    /**
+     * Reads the session-stable CSRF token Ravelry embeds on every page as
+     * `<meta name="authenticity-token" content="...">`, cached per client so repeated
+     * deletes don't re-download the homepage. Extraction uses the same Ksoup selector
+     * as [EventPageParser]'s RSVP token scrape so the two can't drift.
+     */
+    private suspend fun fetchAuthenticityToken(): String {
+        cachedAuthenticityToken?.let { return it }
+        val html = httpClient.get(WWW_URL) {
+            header(HttpHeaders.Cookie, sessionCookie())
+            header(HttpHeaders.Accept, "text/html")
+        }.bodyAsText()
+        val token = Ksoup.parse(html)
+            .selectFirst("meta#authenticity-token, meta[name=authenticity-token], meta[name=csrf-token]")
+            ?.attr("content")
+        if (token.isNullOrEmpty()) error("No authenticity token found — re-login required")
+        cachedAuthenticityToken = token
+        return token
+    }
+
+    /**
+     * Edits the current user's own forum post via the documented `forum_posts/update` endpoint.
+     *
+     * @param postId Ravelry forum post ID; must be editable by the signed-in user.
+     * @param body New plain-text/markdown post body.
+     * @return The updated post as returned by Ravelry.
+     */
+    suspend fun editPost(postId: Long, body: String): Post {
+        val raw = authenticatedRequest {
+            httpClient.post("$BASE_URL/forum_posts/$postId.json") {
+                header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
+                // Form body for the same reasons as postReply: multi-KB free text
+                // breaks URL length limits and leaks into server logs.
+                setBody(FormDataContent(Parameters.build { append("body", body) }))
+            }
+        }
+        return try {
+            lenientJson.decodeFromString<ForumPostResponse>(raw).forumPost
+        } catch (e: Exception) {
+            println("FiberSocial: editPost($postId) unexpected response: ${raw.take(200)}")
+            error("Unexpected Ravelry response — check the thread before retrying, the edit may have applied.")
+        }
+    }
+
+    /**
      * Returns the full detail for a single topic, including [Topic.createdByUser] and [Topic.summary].
      *
      * @param topicId Ravelry topic ID.
@@ -538,7 +648,7 @@ class RavelryApiClient(
         @SerialName("vote_totals") val voteTotals: Map<String, Map<String, Int>> = emptyMap(),
         @SerialName("user_votes") val userVotes: Map<String, List<String>> = emptyMap(),
     )
-    @Serializable private data class ReplyResponse(@SerialName("forum_post") val forumPost: Post)
+    @Serializable private data class ForumPostResponse(@SerialName("forum_post") val forumPost: Post)
     @Serializable private data class TopicCreateResponse(val topic: Topic)
     @Serializable private data class CurrentUserResponse(val user: RavelryUser)
     @Serializable private data class GroupsSearchResponse(val groups: List<Group> = emptyList())

@@ -158,6 +158,13 @@ fun FeedScreen(
         // have nulled selectedTopic in the same frame — a !! there would crash.
         val topic = selectedTopic!!
         val replyState by viewModel.topicDetail.replyState.collectAsState()
+        val deleteState by viewModel.topicDetail.deleteState.collectAsState()
+        val editState by viewModel.topicDetail.editState.collectAsState()
+        val currentUsername = when (val s = state) {
+            is FeedState.Loaded -> s.user.username
+            is FeedState.Refreshing -> s.stale.user.username
+            else -> null
+        }
         TopicDetailRoute(
             topic = topic,
             postsState = topicDetailState,
@@ -172,6 +179,13 @@ fun FeedScreen(
             // and backed out, to avoid an unnecessary network call/spinner flash.
             onRefreshFeed = { viewModel.feed.refresh() },
             onRefresh = { viewModel.topicDetail.load(topic.id) },
+            currentUsername = currentUsername,
+            deleteState = deleteState,
+            onDeletePost = { post -> viewModel.topicDetail.deletePost(post) },
+            onDeleteErrorShown = { viewModel.topicDetail.acknowledgeDeleteError() },
+            editState = editState,
+            onEditPost = { post, newBody -> viewModel.topicDetail.editPost(post, newBody) },
+            onEditErrorShown = { viewModel.topicDetail.acknowledgeEditError() },
         )
         return
     }
@@ -383,6 +397,13 @@ internal fun TopicDetailRoute(
     onBack: () -> Unit,
     onRefreshFeed: () -> Unit,
     onRefresh: () -> Unit,
+    currentUsername: String? = null,
+    deleteState: DeleteState = DeleteState.Idle,
+    onDeletePost: (Post) -> Unit = {},
+    onDeleteErrorShown: () -> Unit = {},
+    editState: EditState = EditState.Idle,
+    onEditPost: (Post, String) -> Unit = { _, _ -> },
+    onEditErrorShown: () -> Unit = {},
 ) {
     // ReplyState is transient — it flips Sent -> Idle again as soon as the composer
     // acknowledges it (see ReplyComposer/acknowledgeReplySent) — so whether a reply went
@@ -405,6 +426,13 @@ internal fun TopicDetailRoute(
         onSendReply = onSendReply,
         onReplySent = onReplySent,
         onRefresh = onRefresh,
+        currentUsername = currentUsername,
+        deleteState = deleteState,
+        onDeletePost = onDeletePost,
+        onDeleteErrorShown = onDeleteErrorShown,
+        editState = editState,
+        onEditPost = onEditPost,
+        onEditErrorShown = onEditErrorShown,
     )
 }
 

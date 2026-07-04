@@ -93,7 +93,7 @@ fun topicsJson(vararg ids: Long) = """{"topics":[${
 }]}"""
 fun postsJson(vararg ids: Long) = """{"posts":[${
     ids.joinToString(",") { id ->
-        """{"id":$id,"body_html":"<p>Reply $id</p>","created_at":"2024-01-15T10:00:00Z","user":{"username":"user$id"}}"""
+        """{"id":$id,"body_html":"<p>Reply $id</p>","body":"Reply $id","editable":true,"created_at":"2024-01-15T10:00:00Z","user":{"username":"user$id"}}"""
     }
 }]}"""
 
@@ -141,3 +141,13 @@ fun replyResponseJson(
     username: String = "yarnie",
     bodyHtml: String = "<p>My new reply</p>",
 ) = """{"forum_post":{"id":$id,"body_html":"$bodyHtml","created_at":"2024-01-17T10:00:00Z","user":{"username":"$username"}}}"""
+
+const val TOKEN_PAGE_HTML = """<html><head>
+<meta id="authenticity-token" name="csrf-token" content="tok-abc123"/>
+</head><body>home</body></html>"""
+
+fun forumPostJson(
+    id: Long = 1L,
+    body: String = "edited body",
+    bodyHtml: String = "<p>edited body</p>",
+) = """{"forum_post":{"id":$id,"body":"$body","body_html":"$bodyHtml","editable":true,"user":{"username":"user$id"}}}"""

@@ -812,6 +812,313 @@ class RavelryApiClientTest {
         val failure = runCatching { client.createTopic(123L, "title", "body") }.exceptionOrNull()
         assertTrue(failure!!.message!!.contains("the topic may have been created"))
     }
+
+    @Test
+    fun `deletePost fetches csrf token then posts _method=delete override`() = runTest {
+        data class Captured(val method: String, val path: String, val form: io.ktor.http.Parameters?)
+        val requests = mutableListOf<Captured>()
+        val engine = MockEngine { request ->
+            val form = (request.body as? io.ktor.client.request.forms.FormDataContent)?.formData
+            requests += Captured(request.method.value, request.url.encodedPath, form)
+            // The token page is the GET; the second request is the delete POST.
+            val content = if (request.method.value == "POST") "ok" else TOKEN_PAGE_HTML
+            respond(
+                content = content,
+                status = HttpStatusCode.OK,
+                headers = headersOf("Content-Type", "text/html"),
+            )
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        RavelryApiClient(httpClient, FakeFeedTokenStorage()).deletePost(555L)
+        assertEquals(2, requests.size)
+        assertEquals("GET", requests[0].method)
+        assertEquals("POST", requests[1].method)
+        assertEquals("/forum_posts/555", requests[1].path)
+        assertEquals("delete", requests[1].form?.get("_method"))
+        assertEquals("tok-abc123", requests[1].form?.get("authenticity_token"))
+    }
+
+    @Test
+    fun `deletePost fails when no csrf token on page`() = runTest {
+        val client = routingApiClient { "<html><body>no token here</body></html>" }
+        val result = runCatching { client.deletePost(555L) }
+        assertTrue(result.isFailure)
+    }
+
+    @Test
+    fun `deletePost fails on rejected delete`() = runTest {
+        // Not a 403 — that's now classified as ForbiddenException (see the dedicated
+        // test below). This covers the generic rejection branch: an unexpected non-2xx/
+        // non-3xx status that isn't a permission denial either.
+        val engine = MockEngine { request ->
+            if (request.method.value == "POST") {
+                respond(content = "nope", status = HttpStatusCode.InternalServerError)
+            } else {
+                respond(
+                    content = TOKEN_PAGE_HTML,
+                    status = HttpStatusCode.OK,
+                    headers = headersOf("Content-Type", "text/html"),
+                )
+            }
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val result = runCatching { RavelryApiClient(httpClient, FakeFeedTokenStorage()).deletePost(555L) }
+        assertTrue(result.isFailure)
+    }
+
+    @Test
+    fun `deletePost fails on an unexpected informational status`() = runTest {
+        // The rejected-delete test above is >= 400 (fails the "in 300..399" upper bound);
+        // this is < 300 and non-2xx (fails its lower bound) — a distinct path through
+        // the success check even though both ultimately land in the same else branch.
+        val engine = MockEngine { request ->
+            if (request.method.value == "POST") {
+                respond(content = "", status = HttpStatusCode(100, "Continue"))
+            } else {
+                respond(
+                    content = TOKEN_PAGE_HTML,
+                    status = HttpStatusCode.OK,
+                    headers = headersOf("Content-Type", "text/html"),
+                )
+            }
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val result = runCatching { RavelryApiClient(httpClient, FakeFeedTokenStorage()).deletePost(555L) }
+        assertTrue(result.isFailure)
+    }
+
+    @Test
+    fun `deletePost throws SessionExpiredException when the delete redirects to login`() = runTest {
+        // Ktor doesn't follow redirects for POST: a 302 is how BOTH outcomes look.
+        // A Location pointing at the login page means the session expired — treating
+        // it as success would remove the post locally while it lives on at Ravelry.
+        // Bare "/login", not "/account/login" — that's a separate case (below), and the
+        // two must not collapse into testing only one of startsWith("/login")'s two sides.
+        val engine = MockEngine { request ->
+            if (request.method.value == "POST") {
+                respond("", HttpStatusCode.Found,
+                    headersOf(HttpHeaders.Location, "https://www.ravelry.com/login"))
+            } else {
+                respond(TOKEN_PAGE_HTML, HttpStatusCode.OK,
+                    headersOf("Content-Type", "text/html"))
+            }
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        assertFailsWith<SessionExpiredException> {
+            RavelryApiClient(httpClient, FakeFeedTokenStorage()).deletePost(555L)
+        }
+    }
+
+    @Test
+    fun `deletePost throws SessionExpiredException when the redirect is account slash login`() = runTest {
+        // Regression: the original version of this test used this exact Location but
+        // asserted it exercised startsWith("/login") — it actually only ever exercised
+        // startsWith("/account"), since "/account/login" starts with "/account", not
+        // "/login". Kept as its own case so both real-world redirect shapes stay covered.
+        val engine = MockEngine { request ->
+            if (request.method.value == "POST") {
+                respond("", HttpStatusCode.Found,
+                    headersOf(HttpHeaders.Location, "https://www.ravelry.com/account/login"))
+            } else {
+                respond(TOKEN_PAGE_HTML, HttpStatusCode.OK,
+                    headersOf("Content-Type", "text/html"))
+            }
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        assertFailsWith<SessionExpiredException> {
+            RavelryApiClient(httpClient, FakeFeedTokenStorage()).deletePost(555L)
+        }
+    }
+
+    @Test
+    fun `deletePost throws SessionExpiredException when the redirect names account but not login`() = runTest {
+        // Covers the other half of the redirectPath.startsWith("/login") ||
+        // startsWith("/account") check — Ravelry's own account-locked/logged-out
+        // redirects don't all say "login".
+        val engine = MockEngine { request ->
+            if (request.method.value == "POST") {
+                respond("", HttpStatusCode.Found,
+                    headersOf(HttpHeaders.Location, "https://www.ravelry.com/account"))
+            } else {
+                respond(TOKEN_PAGE_HTML, HttpStatusCode.OK,
+                    headersOf("Content-Type", "text/html"))
+            }
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        assertFailsWith<SessionExpiredException> {
+            RavelryApiClient(httpClient, FakeFeedTokenStorage()).deletePost(555L)
+        }
+    }
+
+    @Test
+    fun `deletePost succeeds when the redirect is to a group whose slug merely contains account or login`() = runTest {
+        // Regression: a raw location.contains("/login")/contains("/account") substring
+        // check would misfire on a real, successful-delete redirect whose path merely
+        // starts with a group named "login-fanatics" — a false session-expiry that
+        // would leave the (actually-deleted) post shown locally as still present.
+        val engine = MockEngine { request ->
+            if (request.method.value == "POST") {
+                respond("", HttpStatusCode.Found,
+                    headersOf(HttpHeaders.Location, "https://www.ravelry.com/groups/login-fanatics/discuss/1234"))
+            } else {
+                respond(TOKEN_PAGE_HTML, HttpStatusCode.OK,
+                    headersOf("Content-Type", "text/html"))
+            }
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        // Must not throw.
+        RavelryApiClient(httpClient, FakeFeedTokenStorage()).deletePost(555L)
+    }
+
+    @Test
+    fun `deletePost throws ForbiddenException on a 403, matching editPost's classification`() = runTest {
+        val engine = MockEngine { request ->
+            if (request.method.value == "POST") {
+                respond("nope", HttpStatusCode.Forbidden)
+            } else {
+                respond(TOKEN_PAGE_HTML, HttpStatusCode.OK,
+                    headersOf("Content-Type", "text/html"))
+            }
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        assertFailsWith<com.autom8ed.fibersocial.auth.ForbiddenException> {
+            RavelryApiClient(httpClient, FakeFeedTokenStorage()).deletePost(555L)
+        }
+    }
+
+    @Test
+    fun `deletePost succeeds when the delete redirects back to the topic`() = runTest {
+        // The "ok" 200 in the fetch/post test above isn't actually what Ravelry sends on a
+        // real successful delete — per this method's own comment, Ktor doesn't follow
+        // redirects for POST, so a genuine success also surfaces as a 3xx. This covers
+        // that half of `response.status.isSuccess() || response.status.value in 300..399`,
+        // distinct from a login/account redirect (session expiry) or a 2xx body.
+        val engine = MockEngine { request ->
+            if (request.method.value == "POST") {
+                respond("", HttpStatusCode.Found,
+                    headersOf(HttpHeaders.Location, "https://www.ravelry.com/discuss/some-group/1234"))
+            } else {
+                respond(TOKEN_PAGE_HTML, HttpStatusCode.OK,
+                    headersOf("Content-Type", "text/html"))
+            }
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        // Must not throw.
+        RavelryApiClient(httpClient, FakeFeedTokenStorage()).deletePost(555L)
+    }
+
+    @Test
+    fun `deletePost reuses the cached csrf token across deletes`() = runTest {
+        var tokenPageFetches = 0
+        val engine = MockEngine { request ->
+            if (request.method.value == "POST") {
+                respond("ok", HttpStatusCode.OK, headersOf("Content-Type", "text/html"))
+            } else {
+                tokenPageFetches++
+                respond(TOKEN_PAGE_HTML, HttpStatusCode.OK,
+                    headersOf("Content-Type", "text/html"))
+            }
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val client = RavelryApiClient(httpClient, FakeFeedTokenStorage())
+        client.deletePost(1L)
+        client.deletePost(2L)
+        // The token is session-stable; the homepage must not be re-downloaded per delete.
+        assertEquals(1, tokenPageFetches)
+    }
+
+    @Test
+    fun `csrf token extraction tolerates attribute order and the id-only form`() = runTest {
+        // Real Ravelry pages put content before id/name; extraction must not depend
+        // on attribute order (the old regex did).
+        val html = """<html><head>
+            <meta content="tok-xyz" id="authenticity-token" name="authenticity-token">
+            </head><body></body></html>"""
+        var sentToken: String? = null
+        val engine = MockEngine { request ->
+            if (request.method.value == "POST") {
+                sentToken = (request.body as io.ktor.client.request.forms.FormDataContent)
+                    .formData["authenticity_token"]
+                respond("ok", HttpStatusCode.OK, headersOf("Content-Type", "text/html"))
+            } else {
+                respond(html, HttpStatusCode.OK, headersOf("Content-Type", "text/html"))
+            }
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        RavelryApiClient(httpClient, FakeFeedTokenStorage()).deletePost(555L)
+        assertEquals("tok-xyz", sentToken)
+    }
+
+    @Test
+    fun `editPost posts body to forum_posts endpoint and returns updated post`() = runTest {
+        var capturedPath: String? = null
+        var capturedMethod: String? = null
+        var capturedBody: String? = null
+        val engine = MockEngine { request ->
+            capturedPath = request.url.encodedPath
+            capturedMethod = request.method.value
+            capturedBody = (request.body as io.ktor.client.request.forms.FormDataContent)
+                .formData["body"]
+            respond(
+                content = forumPostJson(id = 7L, body = "edited body", bodyHtml = "<p>edited body</p>"),
+                status = HttpStatusCode.OK,
+                headers = headersOf("Content-Type", ContentType.Application.Json.toString()),
+            )
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val post = RavelryApiClient(httpClient, FakeFeedTokenStorage()).editPost(7L, "edited body")
+        assertEquals("/forum_posts/7.json", capturedPath)
+        assertEquals("POST", capturedMethod)
+        assertEquals("edited body", capturedBody)
+        assertEquals("edited body", post.body)
+        assertEquals("<p>edited body</p>", post.bodyHtml)
+    }
+
+    @Test
+    fun `editPost raises a cautious error when the response is not the updated post`() = runTest {
+        // Same reasoning as postReply/createTopic: a 200 with a non-JSON body must not be
+        // treated as success, and the message must warn the edit may still have applied.
+        val client = routingApiClient { "<html>down for maintenance</html>" }
+        val failure = runCatching { client.editPost(7L, "edited body") }.exceptionOrNull()
+        assertTrue(failure!!.message!!.contains("the edit may have applied"))
+    }
+
+    @Test
+    fun `postReply parses a null editable field as null (unknown), not a failure`() = runTest {
+        // Ravelry returns "editable": null on a freshly created reply. Post.editable is
+        // nullable so this parses to null ("unknown"), which the edit UI treats optimistically
+        // as editable — see Post.editable / issue #82.
+        val client = routingApiClient {
+            """{"forum_post":{"id":5,"body_html":"<p>hi</p>","body":"hi","editable":null,"user":{"username":"me"}}}"""
+        }
+        val post = client.postReply(42L, "hi")
+        assertEquals(5L, post.id)
+        assertEquals(null, post.editable)
+    }
 }
 
 private fun htmlApiClient(engine: MockEngine): RavelryApiClient {

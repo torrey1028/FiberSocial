@@ -5,12 +5,14 @@ import kotlinx.coroutines.CompletableDeferred
 import com.autom8ed.fibersocial.auth.AuthToken
 import com.autom8ed.fibersocial.auth.SessionExpiredException
 import com.autom8ed.fibersocial.feed.models.Post
+import com.autom8ed.fibersocial.feed.models.RavelryUser
 import com.autom8ed.fibersocial.feed.models.VoteType
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.http.ContentType
+import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
 import io.ktor.serialization.kotlinx.json.json
@@ -389,6 +391,171 @@ class TopicDetailViewModelTest {
         assertTrue(err1.toString().contains("oops"))
     }
 
+    private fun deleteRoutingClient(deleteResponds: String = "ok") = routingApiClient { path ->
+        when {
+            path.contains("/posts.json") -> postsJson(1L, 2L)
+            Regex("/forum_posts/\\d+$").containsMatchIn(path) -> deleteResponds
+            else -> TOKEN_PAGE_HTML
+        }
+    }
+
+    @Test
+    fun `deletePost removes the post and returns to Idle`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = TopicDetailViewModel(deleteRoutingClient(), this)
+        vm.load(42L)
+        awaitChildren(coroutineContext[Job]!!)
+        val target = (vm.state.value as TopicDetailState.Loaded).posts.first()
+        vm.deletePost(target)
+        awaitChildren(coroutineContext[Job]!!)
+        assertIs<DeleteState.Idle>(vm.deleteState.value)
+        val state = assertIs<TopicDetailState.Loaded>(vm.state.value)
+        assertEquals(listOf(2L), state.posts.map { it.id })
+    }
+
+    @Test
+    fun `deletePost failure keeps the thread and reports Error`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = TopicDetailViewModel(
+            routingApiClient { path ->
+                when {
+                    path.contains("/posts.json") -> postsJson(1L, 2L)
+                    Regex("/forum_posts/\\d+$").containsMatchIn(path) -> error("Simulated delete failure")
+                    else -> TOKEN_PAGE_HTML
+                }
+            },
+            this,
+        )
+        vm.load(42L)
+        awaitChildren(coroutineContext[Job]!!)
+        vm.deletePost((vm.state.value as TopicDetailState.Loaded).posts.first())
+        awaitChildren(coroutineContext[Job]!!)
+        assertIs<DeleteState.Error>(vm.deleteState.value)
+        assertEquals(2, (vm.state.value as TopicDetailState.Loaded).posts.size)
+    }
+
+    @Test
+    fun `deletePost failure with no exception message falls back to a default`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = TopicDetailViewModel(
+            routingApiClient { path ->
+                when {
+                    path.contains("/posts.json") -> postsJson(1L)
+                    Regex("/forum_posts/\\d+$").containsMatchIn(path) -> throw IllegalStateException()
+                    else -> TOKEN_PAGE_HTML
+                }
+            },
+            this,
+        )
+        vm.load(42L)
+        awaitChildren(coroutineContext[Job]!!)
+        vm.deletePost((vm.state.value as TopicDetailState.Loaded).posts.first())
+        awaitChildren(coroutineContext[Job]!!)
+        assertEquals(DeleteState.Error("Failed to delete post"), vm.deleteState.value)
+    }
+
+    @Test
+    fun `deletePost session expiry signals sessionExpired`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = TopicDetailViewModel(sessionExpiredApiClient(), this)
+        vm.deletePost(Post(id = 1L))
+        awaitChildren(coroutineContext[Job]!!)
+        assertIs<DeleteState.Idle>(vm.deleteState.value)
+        assertEquals(Unit, vm.sessionExpired.first())
+    }
+
+    @Test
+    fun `acknowledgeDeleteError clears the error`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = TopicDetailViewModel(errorApiClient(), this)
+        vm.deletePost(Post(id = 1L))
+        awaitChildren(coroutineContext[Job]!!)
+        assertIs<DeleteState.Error>(vm.deleteState.value)
+        vm.acknowledgeDeleteError()
+        assertIs<DeleteState.Idle>(vm.deleteState.value)
+    }
+
+    @Test
+    fun `editPost replaces post body and returns to Idle`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = TopicDetailViewModel(
+            routingApiClient { path ->
+                when {
+                    path.contains("/forum_posts/") -> forumPostJson(id = 1L, body = "edited body", bodyHtml = "<p>edited body</p>")
+                    else -> postsJson(1L, 2L)
+                }
+            },
+            this,
+        )
+        vm.load(42L)
+        awaitChildren(coroutineContext[Job]!!)
+        val target = (vm.state.value as TopicDetailState.Loaded).posts.first()
+        vm.editPost(target, "edited body")
+        awaitChildren(coroutineContext[Job]!!)
+        assertIs<EditState.Idle>(vm.editState.value)
+        val updated = (vm.state.value as TopicDetailState.Loaded).posts.first { it.id == 1L }
+        assertEquals("edited body", updated.body)
+        assertEquals("<p>edited body</p>", updated.bodyHtml)
+    }
+
+    @Test
+    fun `editPost ignores blank body`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = TopicDetailViewModel(errorApiClient(), this)
+        vm.editPost(Post(id = 1L), "   ")
+        awaitChildren(coroutineContext[Job]!!)
+        assertIs<EditState.Idle>(vm.editState.value)
+    }
+
+    @Test
+    fun `editPost failure keeps original body and reports Error`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = TopicDetailViewModel(
+            routingApiClient { path ->
+                when {
+                    path.contains("/forum_posts/") -> error("Simulated edit failure")
+                    else -> postsJson(1L)
+                }
+            },
+            this,
+        )
+        vm.load(42L)
+        awaitChildren(coroutineContext[Job]!!)
+        vm.editPost((vm.state.value as TopicDetailState.Loaded).posts.first(), "new text")
+        awaitChildren(coroutineContext[Job]!!)
+        assertIs<EditState.Error>(vm.editState.value)
+        assertEquals("Reply 1", (vm.state.value as TopicDetailState.Loaded).posts.first().body)
+    }
+
+    @Test
+    fun `editPost failure with no exception message falls back to a default`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = TopicDetailViewModel(
+            routingApiClient { path ->
+                when {
+                    path.contains("/forum_posts/") -> throw IllegalStateException()
+                    else -> postsJson(1L)
+                }
+            },
+            this,
+        )
+        vm.load(42L)
+        awaitChildren(coroutineContext[Job]!!)
+        vm.editPost((vm.state.value as TopicDetailState.Loaded).posts.first(), "new text")
+        awaitChildren(coroutineContext[Job]!!)
+        assertEquals(EditState.Error("Failed to save edit"), vm.editState.value)
+    }
+
+    @Test
+    fun `editPost session expiry signals sessionExpired`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = TopicDetailViewModel(sessionExpiredApiClient(), this)
+        vm.editPost(Post(id = 1L), "text")
+        awaitChildren(coroutineContext[Job]!!)
+        assertIs<EditState.Idle>(vm.editState.value)
+        assertEquals(Unit, vm.sessionExpired.first())
+    }
+
+    @Test
+    fun `acknowledgeEditError clears the error`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = TopicDetailViewModel(errorApiClient(), this)
+        vm.editPost(Post(id = 1L), "text")
+        awaitChildren(coroutineContext[Job]!!)
+        assertIs<EditState.Error>(vm.editState.value)
+        vm.acknowledgeEditError()
+        assertIs<EditState.Idle>(vm.editState.value)
+    }
+
     @Test
     fun `sendReply appends created post and transitions to Sent`() = runTest(UnconfinedTestDispatcher()) {
         val vm = TopicDetailViewModel(
@@ -620,6 +787,321 @@ class TopicDetailViewModelTest {
             assertTrue(posts.none { it.id == 99L })
             assertIs<ReplyState.Idle>(vm.replyState.value)
         }
+
+    @Test
+    fun `a failed delete that outlives its topic shows no stale error dialog`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val releaseDelete = CompletableDeferred<Unit>()
+            val engine = MockEngine { request ->
+                when {
+                    request.method == HttpMethod.Post && request.url.encodedPath.startsWith("/forum_posts/") -> {
+                        releaseDelete.await()
+                        respond("nope", HttpStatusCode.Forbidden)
+                    }
+                    request.url.encodedPath == "/" ->
+                        respond(TOKEN_PAGE_HTML, HttpStatusCode.OK, headersOf("Content-Type", "text/html"))
+                    else ->
+                        respond(postsJson(7L), HttpStatusCode.OK,
+                            headersOf("Content-Type", ContentType.Application.Json.toString()))
+                }
+            }
+            val httpClient = HttpClient(engine) {
+                install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+            }
+            val vm = TopicDetailViewModel(RavelryApiClient(httpClient, FakeFeedTokenStorage()), this)
+            vm.load(1L)
+            vm.state.first { it is TopicDetailState.Loaded }
+            val victim = (vm.state.value as TopicDetailState.Loaded).posts.first()
+            vm.deletePost(victim)
+
+            vm.load(2L)
+            vm.state.first { it is TopicDetailState.Loaded }
+            releaseDelete.complete(Unit)
+            awaitChildren(coroutineContext[Job]!!)
+
+            // The failure belongs to topic 1; topic 2 must not pop its error dialog.
+            assertIs<DeleteState.Idle>(vm.deleteState.value)
+        }
+
+    @Test
+    fun `a successful delete that outlives its topic leaves the new thread untouched`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val releaseDelete = CompletableDeferred<Unit>()
+            val engine = MockEngine { request ->
+                when {
+                    request.method == HttpMethod.Post && request.url.encodedPath.startsWith("/forum_posts/") -> {
+                        releaseDelete.await()
+                        respond("ok", HttpStatusCode.OK, headersOf("Content-Type", "text/html"))
+                    }
+                    request.url.encodedPath == "/" ->
+                        respond(TOKEN_PAGE_HTML, HttpStatusCode.OK, headersOf("Content-Type", "text/html"))
+                    else ->
+                        respond(postsJson(7L), HttpStatusCode.OK,
+                            headersOf("Content-Type", ContentType.Application.Json.toString()))
+                }
+            }
+            val httpClient = HttpClient(engine) {
+                install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+            }
+            val vm = TopicDetailViewModel(RavelryApiClient(httpClient, FakeFeedTokenStorage()), this)
+            vm.load(1L)
+            vm.state.first { it is TopicDetailState.Loaded }
+            val victim = (vm.state.value as TopicDetailState.Loaded).posts.first()
+            vm.deletePost(victim)
+
+            vm.load(2L)
+            vm.state.first { it is TopicDetailState.Loaded }
+            releaseDelete.complete(Unit)
+            awaitChildren(coroutineContext[Job]!!)
+
+            // The delete belongs to topic 1; topic 2's thread must keep all its posts.
+            val posts = (vm.state.value as TopicDetailState.Loaded).posts
+            assertTrue(posts.any { it.id == victim.id })
+        }
+
+    @Test
+    fun `a delete that completes during a same-topic reload still applies`() =
+        runTest(UnconfinedTestDispatcher()) {
+            // Regression: load() used to bump topicGeneration on every call, including a
+            // pull-to-refresh of the SAME topic — which silently discarded a delete/edit's
+            // outcome (the coroutine's captured generation no longer matched by the time
+            // it resolved), even though nothing about the topic actually changed.
+            val releaseDelete = CompletableDeferred<Unit>()
+            val engine = MockEngine { request ->
+                when {
+                    request.method == HttpMethod.Post && request.url.encodedPath.startsWith("/forum_posts/") -> {
+                        releaseDelete.await()
+                        respond("ok", HttpStatusCode.OK, headersOf("Content-Type", "text/html"))
+                    }
+                    // fetchAuthenticityToken() GETs the bare WWW_URL — Ktor reports that as
+                    // an empty encodedPath, not "/".
+                    request.url.encodedPath.isEmpty() ->
+                        respond(TOKEN_PAGE_HTML, HttpStatusCode.OK, headersOf("Content-Type", "text/html"))
+                    else ->
+                        respond(postsJson(7L), HttpStatusCode.OK,
+                            headersOf("Content-Type", ContentType.Application.Json.toString()))
+                }
+            }
+            val httpClient = HttpClient(engine) {
+                install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+            }
+            val vm = TopicDetailViewModel(RavelryApiClient(httpClient, FakeFeedTokenStorage()), this)
+            vm.load(1L)
+            vm.state.first { it is TopicDetailState.Loaded }
+            val victim = (vm.state.value as TopicDetailState.Loaded).posts.first()
+            vm.deletePost(victim)
+
+            // A pull-to-refresh of the SAME topic while the delete is still in flight.
+            vm.load(1L)
+            vm.state.first { it is TopicDetailState.Loaded }
+            releaseDelete.complete(Unit)
+            awaitChildren(coroutineContext[Job]!!)
+
+            assertIs<DeleteState.Idle>(vm.deleteState.value)
+            val posts = (vm.state.value as TopicDetailState.Loaded).posts
+            assertTrue(posts.none { it.id == victim.id })
+        }
+
+    @Test
+    fun `an edit that outlives its topic touches neither the new thread nor the editor`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val releaseEdit = CompletableDeferred<Unit>()
+            val engine = MockEngine { request ->
+                if (request.method == HttpMethod.Post && request.url.encodedPath.startsWith("/forum_posts/")) {
+                    releaseEdit.await()
+                    respond(forumPostJson(id = 7L, body = "late edit", bodyHtml = "<p>late edit</p>"),
+                        HttpStatusCode.OK, headersOf("Content-Type", ContentType.Application.Json.toString()))
+                } else {
+                    respond(postsJson(7L), HttpStatusCode.OK,
+                        headersOf("Content-Type", ContentType.Application.Json.toString()))
+                }
+            }
+            val httpClient = HttpClient(engine) {
+                install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+            }
+            val vm = TopicDetailViewModel(RavelryApiClient(httpClient, FakeFeedTokenStorage()), this)
+            vm.load(1L)
+            vm.state.first { it is TopicDetailState.Loaded }
+            val victim = (vm.state.value as TopicDetailState.Loaded).posts.first()
+            vm.editPost(victim, "late edit")
+
+            // Navigate to another topic while the edit is parked mid-flight.
+            vm.load(2L)
+            vm.state.first { it is TopicDetailState.Loaded }
+            releaseEdit.complete(Unit)
+            awaitChildren(coroutineContext[Job]!!)
+
+            // Topic 2's thread must not gain topic 1's edited body, and the editor
+            // must stay Idle rather than flashing a stale Idle-from-elsewhere state.
+            val posts = (vm.state.value as TopicDetailState.Loaded).posts
+            assertTrue(posts.none { it.body == "late edit" })
+            assertIs<EditState.Idle>(vm.editState.value)
+        }
+
+    @Test
+    fun `a stale delete session expiry still signals but leaves delete state alone`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val releaseDelete = CompletableDeferred<Unit>()
+            val engine = MockEngine { request ->
+                when {
+                    request.method == HttpMethod.Post && request.url.encodedPath.startsWith("/forum_posts/") -> {
+                        releaseDelete.await()
+                        respond("", HttpStatusCode.Found,
+                            headersOf(HttpHeaders.Location, "https://www.ravelry.com/account/login"))
+                    }
+                    request.url.host == "www.ravelry.com" ->
+                        respond(TOKEN_PAGE_HTML, HttpStatusCode.OK, headersOf("Content-Type", "text/html"))
+                    else ->
+                        respond(postsJson(7L), HttpStatusCode.OK,
+                            headersOf("Content-Type", ContentType.Application.Json.toString()))
+                }
+            }
+            val httpClient = HttpClient(engine) {
+                install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+            }
+            val vm = TopicDetailViewModel(RavelryApiClient(httpClient, FakeFeedTokenStorage()), this)
+            vm.load(1L)
+            vm.state.first { it is TopicDetailState.Loaded }
+            val victim = (vm.state.value as TopicDetailState.Loaded).posts.first()
+            vm.deletePost(victim)
+
+            vm.load(2L)
+            vm.state.first { it is TopicDetailState.Loaded }
+            releaseDelete.complete(Unit)
+            awaitChildren(coroutineContext[Job]!!)
+
+            assertIs<DeleteState.Idle>(vm.deleteState.value)
+            assertEquals(Unit, vm.sessionExpired.first())
+        }
+
+    @Test
+    fun `a stale edit failure does not surface an error on the new topic`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val releaseEdit = CompletableDeferred<Unit>()
+            val engine = MockEngine { request ->
+                if (request.method == HttpMethod.Post && request.url.encodedPath.startsWith("/forum_posts/")) {
+                    releaseEdit.await()
+                    respond("<html>down for maintenance</html>", HttpStatusCode.OK,
+                        headersOf("Content-Type", "text/html"))
+                } else {
+                    respond(postsJson(7L), HttpStatusCode.OK,
+                        headersOf("Content-Type", ContentType.Application.Json.toString()))
+                }
+            }
+            val httpClient = HttpClient(engine) {
+                install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+            }
+            val vm = TopicDetailViewModel(RavelryApiClient(httpClient, FakeFeedTokenStorage()), this)
+            vm.load(1L)
+            vm.state.first { it is TopicDetailState.Loaded }
+            val victim = (vm.state.value as TopicDetailState.Loaded).posts.first()
+            vm.editPost(victim, "late edit")
+
+            vm.load(2L)
+            vm.state.first { it is TopicDetailState.Loaded }
+            releaseEdit.complete(Unit)
+            awaitChildren(coroutineContext[Job]!!)
+
+            assertIs<EditState.Idle>(vm.editState.value)
+        }
+
+    @Test
+    fun `a stale edit session expiry still signals but leaves editor state alone`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val releaseEdit = CompletableDeferred<Unit>()
+            val engine = MockEngine { request ->
+                if (request.method == HttpMethod.Post && request.url.encodedPath.startsWith("/forum_posts/")) {
+                    releaseEdit.await()
+                    respond("", HttpStatusCode.Unauthorized)
+                } else {
+                    respond(postsJson(7L), HttpStatusCode.OK,
+                        headersOf("Content-Type", ContentType.Application.Json.toString()))
+                }
+            }
+            val httpClient = HttpClient(engine) {
+                install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+            }
+            val vm = TopicDetailViewModel(RavelryApiClient(httpClient, FakeFeedTokenStorage()), this)
+            vm.load(1L)
+            vm.state.first { it is TopicDetailState.Loaded }
+            val victim = (vm.state.value as TopicDetailState.Loaded).posts.first()
+            vm.editPost(victim, "late edit")
+
+            vm.load(2L)
+            vm.state.first { it is TopicDetailState.Loaded }
+            releaseEdit.complete(Unit)
+            awaitChildren(coroutineContext[Job]!!)
+
+            assertIs<EditState.Idle>(vm.editState.value)
+            assertEquals(Unit, vm.sessionExpired.first())
+        }
+
+    @Test
+    fun `a delete that succeeds while the thread is not loaded leaves state alone`() =
+        runTest(UnconfinedTestDispatcher()) {
+            // Topic failed to load (state = Error); the delete itself succeeded on the
+            // server, so it must not crash trying to update a thread that isn't Loaded.
+            val fakePost = Post(id = 7L, bodyHtml = "<p>hi</p>", user = RavelryUser(username = "me"))
+            val vm = TopicDetailViewModel(
+                routingApiClient { path ->
+                    when {
+                        path.startsWith("/forum_posts/") -> "ok"
+                        path.isEmpty() -> TOKEN_PAGE_HTML
+                        else -> error("load failed")
+                    }
+                },
+                this,
+            )
+            vm.load(42L)
+            awaitChildren(coroutineContext[Job]!!)
+            assertIs<TopicDetailState.Error>(vm.state.value)
+
+            vm.deletePost(fakePost)
+            awaitChildren(coroutineContext[Job]!!)
+            assertIs<DeleteState.Idle>(vm.deleteState.value)
+            assertIs<TopicDetailState.Error>(vm.state.value)
+        }
+
+    @Test
+    fun `an edit that succeeds while the thread is not loaded leaves state alone`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val fakePost = Post(id = 7L, bodyHtml = "<p>hi</p>", user = RavelryUser(username = "me"))
+            val vm = TopicDetailViewModel(
+                routingApiClient { path ->
+                    if (path.startsWith("/forum_posts/")) forumPostJson(id = 7L, body = "edited", bodyHtml = "<p>edited</p>")
+                    else error("load failed")
+                },
+                this,
+            )
+            vm.load(42L)
+            awaitChildren(coroutineContext[Job]!!)
+            assertIs<TopicDetailState.Error>(vm.state.value)
+
+            vm.editPost(fakePost, "edited")
+            awaitChildren(coroutineContext[Job]!!)
+            assertIs<EditState.Idle>(vm.editState.value)
+            assertIs<TopicDetailState.Error>(vm.state.value)
+        }
+
+    @Test
+    fun `load resets leftover edit and delete state`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = TopicDetailViewModel(
+            routingApiClient { path ->
+                if (path.contains("/forum_posts/")) error("boom") else postsJson(1L)
+            },
+            this,
+        )
+        vm.load(1L)
+        awaitChildren(coroutineContext[Job]!!)
+        val post = (vm.state.value as TopicDetailState.Loaded).posts.first()
+        vm.editPost(post, "new body")
+        awaitChildren(coroutineContext[Job]!!)
+        assertIs<EditState.Error>(vm.editState.value)
+
+        vm.load(2L)
+        assertIs<EditState.Idle>(vm.editState.value)
+        assertIs<DeleteState.Idle>(vm.deleteState.value)
+    }
 
     @Test
     fun `acknowledgeReplySent does not clear an Error`() = runTest(UnconfinedTestDispatcher()) {

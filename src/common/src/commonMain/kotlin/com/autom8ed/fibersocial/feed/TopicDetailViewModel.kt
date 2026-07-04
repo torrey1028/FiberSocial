@@ -55,6 +55,40 @@ sealed class ReplyState {
 }
 
 /**
+ * State of an in-flight own-post deletion.
+ */
+sealed class DeleteState {
+    /** No deletion in flight. */
+    object Idle : DeleteState()
+
+    /** The post with [postId] is being deleted. */
+    data class Deleting(val postId: Long) : DeleteState()
+
+    /**
+     * Deletion failed; the post remains in the thread.
+     * @property message Human-readable error description.
+     */
+    data class Error(val message: String) : DeleteState()
+}
+
+/**
+ * State of an in-flight own-post edit.
+ */
+sealed class EditState {
+    /** No edit in flight. */
+    object Idle : EditState()
+
+    /** The post with [postId] is being saved. */
+    data class Saving(val postId: Long) : EditState()
+
+    /**
+     * Save failed; the post keeps its original body.
+     * @property message Human-readable error description.
+     */
+    data class Error(val message: String) : EditState()
+}
+
+/**
  * Loads and exposes the reply thread for a single Ravelry forum topic.
  *
  * @param apiClient Used to fetch posts.
@@ -68,12 +102,20 @@ class TopicDetailViewModel(
     private val _sessionExpired = Channel<Unit>(Channel.BUFFERED)
 
     private val _replyState = MutableStateFlow<ReplyState>(ReplyState.Idle)
+    private val _deleteState = MutableStateFlow<DeleteState>(DeleteState.Idle)
+    private val _editState = MutableStateFlow<EditState>(EditState.Idle)
 
     /** Observable reply thread state. */
     val state: StateFlow<TopicDetailState> = _state.asStateFlow()
 
     /** Observable state of the current reply submission. */
     val replyState: StateFlow<ReplyState> = _replyState.asStateFlow()
+
+    /** Observable state of the current own-post deletion. */
+    val deleteState: StateFlow<DeleteState> = _deleteState.asStateFlow()
+
+    /** Observable state of the current own-post edit. */
+    val editState: StateFlow<EditState> = _editState.asStateFlow()
 
     /**
      * Emits [Unit] when a [SessionExpiredException] is caught. Each emission is consumed
@@ -89,8 +131,18 @@ class TopicDetailViewModel(
     fun load(topicId: Long) {
         // The ViewModel is reused across topics: a new topic invalidates any leftover
         // composer state AND any in-flight send's right to touch state (topicGeneration).
-        topicGeneration++
-        _replyState.value = ReplyState.Idle
+        // A reload of the SAME topic — pull-to-refresh — must not: sendReply/deletePost/
+        // editPost all capture topicGeneration before their network call and check it on
+        // the way back in, so bumping it here on every refresh silently dropped their
+        // outcome (success or failure) whenever a refresh landed while one was in flight.
+        val isSameTopic = topicId == loadedTopicId
+        loadedTopicId = topicId
+        if (!isSameTopic) {
+            topicGeneration++
+            _replyState.value = ReplyState.Idle
+            _editState.value = EditState.Idle
+            _deleteState.value = DeleteState.Idle
+        }
         scope.launch {
             println("FiberSocial: TopicDetailViewModel.load(topicId=$topicId)")
             _state.value = TopicDetailState.Loading
@@ -151,9 +203,92 @@ class TopicDetailViewModel(
     /** Monotonic token: a send from a previous topic may not touch the current one's state. */
     private var topicGeneration = 0
 
+    /** The topic [load] most recently targeted; distinguishes a new topic from a refresh. */
+    private var loadedTopicId: Long? = null
+
     /** Resets [replyState] from [ReplyState.Sent] back to [ReplyState.Idle] after the UI has reacted. */
     fun acknowledgeReplySent() {
         if (_replyState.value is ReplyState.Sent) _replyState.value = ReplyState.Idle
+    }
+
+    /**
+     * Deletes the current user's own [post] from the thread. Pessimistic: the post is
+     * removed from [state] only after Ravelry confirms the deletion. Double-submits are
+     * ignored while a deletion is in flight. On failure the thread is untouched and
+     * [deleteState] reports the error; session expiry routes through [sessionExpired].
+     *
+     * @param post The post to delete (must be authored by the signed-in user; the server
+     *   rejects deletions of others' posts).
+     */
+    fun deletePost(post: Post) {
+        if (_deleteState.value is DeleteState.Deleting) return
+        _deleteState.value = DeleteState.Deleting(post.id)
+        // Same in-flight-outlives-its-topic contract as sendReply: after navigating
+        // away, this coroutine may not touch the new topic's thread or dialogs.
+        val generation = topicGeneration
+        scope.launch {
+            try {
+                apiClient.deletePost(post.id)
+                if (generation != topicGeneration) return@launch
+                val current = _state.value
+                if (current is TopicDetailState.Loaded) {
+                    _state.value = TopicDetailState.Loaded(current.posts.filterNot { it.id == post.id })
+                }
+                _deleteState.value = DeleteState.Idle
+            } catch (e: SessionExpiredException) {
+                println("FiberSocial: TopicDetailViewModel.deletePost session expired")
+                if (generation == topicGeneration) _deleteState.value = DeleteState.Idle
+                _sessionExpired.trySend(Unit)
+            } catch (e: Exception) {
+                println("FiberSocial: TopicDetailViewModel.deletePost error: ${e.message}")
+                if (generation == topicGeneration) {
+                    _deleteState.value = DeleteState.Error(e.message ?: "Failed to delete post")
+                }
+            }
+        }
+    }
+
+    /** Clears a [DeleteState.Error] after the UI has shown it. */
+    fun acknowledgeDeleteError() {
+        if (_deleteState.value is DeleteState.Error) _deleteState.value = DeleteState.Idle
+    }
+
+    /**
+     * Saves an edit to the current user's own [post]. On success the post's body is replaced
+     * in [state] with Ravelry's returned version. Blank bodies and double-submits are ignored.
+     * On failure the thread is untouched and [editState] reports the error; session expiry
+     * routes through [sessionExpired].
+     *
+     * @param post The post being edited.
+     * @param newBody New body text.
+     */
+    fun editPost(post: Post, newBody: String) {
+        val trimmed = newBody.trim()
+        if (trimmed.isEmpty() || _editState.value is EditState.Saving) return
+        _editState.value = EditState.Saving(post.id)
+        val generation = topicGeneration
+        scope.launch {
+            try {
+                val updated = apiClient.editPost(post.id, trimmed)
+                if (generation != topicGeneration) return@launch
+                updatePost(post.id) { it.copy(body = updated.body, bodyHtml = updated.bodyHtml) }
+                _editState.value = EditState.Idle
+            } catch (e: SessionExpiredException) {
+                println("FiberSocial: TopicDetailViewModel.editPost session expired")
+                if (generation == topicGeneration) _editState.value = EditState.Idle
+                _sessionExpired.trySend(Unit)
+            } catch (e: Exception) {
+                println("FiberSocial: TopicDetailViewModel.editPost error: ${e.message}")
+                if (generation == topicGeneration) {
+                    _editState.value = EditState.Error(e.message ?: "Failed to save edit")
+                }
+            }
+        }
+    }
+
+    /** Clears an [EditState.Error] after the UI has shown it. */
+    fun acknowledgeEditError() {
+        if (_editState.value is EditState.Error) _editState.value = EditState.Idle
     }
 
     /**
