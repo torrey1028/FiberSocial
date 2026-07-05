@@ -41,6 +41,28 @@ class NewTopicViewModelTest {
     }
 
     @Test
+    fun `create forwards a trimmed summary to the api and drops a blank one`() = runTest(UnconfinedTestDispatcher()) {
+        val sentSummaries = mutableListOf<String?>()
+        val engine = MockEngine { request ->
+            sentSummaries += (request.body as FormDataContent).formData["summary"]
+            respond(
+                content = topicCreateResponseJson(),
+                status = HttpStatusCode.OK,
+                headers = headersOf("Content-Type", ContentType.Application.Json.toString()),
+            )
+        }
+        val client = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val vm = NewTopicViewModel(RavelryApiClient(client, FakeFeedTokenStorage()), this)
+        vm.create(42L, "title", "body", "  A short blurb  ")
+        awaitChildren(coroutineContext[Job]!!)
+        vm.create(42L, "title", "body", "   ")
+        awaitChildren(coroutineContext[Job]!!)
+        assertEquals(listOf("A short blurb", null), sentSummaries)
+    }
+
+    @Test
     fun `create ignores blank title or body`() = runTest(UnconfinedTestDispatcher()) {
         val vm = NewTopicViewModel(errorApiClient(), this)
         vm.create(42L, "   ", "body")

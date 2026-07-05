@@ -49,13 +49,14 @@ fun NewTopicScreen(
     initialGroup: Group?,
     state: NewTopicState,
     onBack: () -> Unit,
-    onPost: (Group, String, String) -> Unit,
+    onPost: (Group, String, String, String) -> Unit,
     onCreated: (Topic, Group) -> Unit,
 ) {
     // Group is not Saveable; survives recomposition, not process death — acceptable
-    // for a modal composer, and title/body (the real typing effort) do survive.
+    // for a modal composer, and title/summary/body (the real typing effort) do survive.
     var group by remember { mutableStateOf(initialGroup) }
     var title by rememberSaveable { mutableStateOf("") }
+    var summary by rememberSaveable { mutableStateOf("") }
     var body by rememberSaveable { mutableStateOf("") }
     val sending = state is NewTopicState.Sending
 
@@ -90,7 +91,7 @@ fun NewTopicScreen(
                         CircularProgressIndicator(modifier = Modifier.size(32.dp).padding(4.dp))
                     } else {
                         TextButton(
-                            onClick = { group?.let { onPost(it, title, body) } },
+                            onClick = { group?.let { onPost(it, title, body, summary) } },
                             enabled = group != null && title.isNotBlank() && body.isNotBlank(),
                         ) { Text("Post") }
                     }
@@ -150,6 +151,16 @@ fun NewTopicScreen(
                 // Hard clamp rather than error state: Ravelry rejects longer titles anyway.
                 onValueChange = { title = it.take(NewTopicViewModel.MAX_TITLE_LENGTH) },
                 label = { Text("Title") },
+                singleLine = true,
+                enabled = !sending,
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            )
+
+            OutlinedTextField(
+                value = summary,
+                onValueChange = { summary = it },
+                label = { Text("Summary (optional)") },
+                placeholder = { Text("A short blurb shown in the topic list") },
                 singleLine = true,
                 enabled = !sending,
                 modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
