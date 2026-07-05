@@ -46,7 +46,7 @@ class FeedAndroidViewModel(app: Application) : AndroidViewModel(app) {
         refreshToken = { authRepository.refreshToken() },
     )
     private val repository = FeedRepository(apiClient)
-    val feed = FeedViewModel(repository, viewModelScope)
+    val feed = FeedViewModel(repository, viewModelScope, AndroidGroupOrderStore(app))
     val topicDetail = TopicDetailViewModel(apiClient, viewModelScope)
     val newTopic = NewTopicViewModel(apiClient, viewModelScope)
     val events = EventsViewModel(apiClient, viewModelScope)
