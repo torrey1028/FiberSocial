@@ -111,11 +111,12 @@ fun FeedbackScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
 
+            // The "[App Feedback]" prefix is added silently at send time (see
+            // feedbackTitle), so the field shows only what the user types.
             OutlinedTextField(
                 value = title,
                 onValueChange = { title = it },
                 label = { Text("Title") },
-                prefix = { Text("[App Feedback] ") },
                 singleLine = true,
                 enabled = !sending,
                 modifier = Modifier.fillMaxWidth(),
