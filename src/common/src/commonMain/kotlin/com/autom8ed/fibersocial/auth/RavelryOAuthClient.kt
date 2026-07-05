@@ -16,7 +16,12 @@ import kotlinx.datetime.Clock
  * @param httpClient Ktor client configured with JSON content negotiation.
  * @param clientId OAuth application client ID.
  * @param clientSecret OAuth application client secret. Never commit this value;
- *   it must be injected from `local.properties` via `BuildConfig`.
+ *   it is injected via `BuildConfig` from the gitignored `local.properties` for
+ *   local builds, and from the `RAVELRY_CLIENT_SECRET` GitHub Actions secret for
+ *   CI builds. Note that any credential compiled into a distributed APK is
+ *   extractable by decompilation (RFC 8252 §8.5); Ravelry's token endpoint
+ *   nevertheless requires Basic client authentication, so a PKCE-only public
+ *   client is not an option here.
  */
 class RavelryOAuthClient(
     private val httpClient: HttpClient,

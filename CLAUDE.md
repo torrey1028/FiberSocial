@@ -8,7 +8,7 @@
 
 ## Secrets
 
-- Never commit `ravelry.client_secret`. It lives only in `local.properties` (gitignored) as `ravelry.client_secret`.
+- Never commit `ravelry.client_secret`. It lives in the gitignored `local.properties` as `ravelry.client_secret` for local builds, and in the `RAVELRY_CLIENT_SECRET` GitHub Actions repo secret for CI builds (`android-build.yml` materializes it into CI's own `local.properties` — that injection is sanctioned, not a leak).
 
 ## Building & running the Android app
 

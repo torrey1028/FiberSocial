@@ -27,6 +27,21 @@ class AuthAndroidViewModel(app: Application) : AndroidViewModel(app) {
     val auth = AuthViewModel(repository, viewModelScope)
 
     init {
+        // Builds without injected credentials (e.g. fork-PR CI artifacts, or a
+        // stale build from before local.properties was filled in — see CLAUDE.md)
+        // fail token exchange with an opaque invalid_client; say why up front.
+        val missing = listOfNotNull(
+            "RAVELRY_CLIENT_ID".takeIf { BuildConfig.RAVELRY_CLIENT_ID.isBlank() },
+            "RAVELRY_CLIENT_SECRET".takeIf { BuildConfig.RAVELRY_CLIENT_SECRET.isBlank() },
+        )
+        if (missing.isNotEmpty()) {
+            println(
+                "FiberSocial: WARNING — ${missing.joinToString(" and ")} " +
+                    "${if (missing.size == 1) "is" else "are"} blank. OAuth login will " +
+                    "fail with invalid_client. Set ravelry.client_id/ravelry.client_secret " +
+                    "in local.properties (or CI secrets) and rebuild with ./gradlew clean."
+            )
+        }
         auth.checkStoredAuth()
     }
 
