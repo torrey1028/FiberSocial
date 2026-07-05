@@ -92,6 +92,15 @@ class AuthViewModel(
         }
     }
 
+    /**
+     * Surfaces a login failure detected before the token exchange (e.g. the OAuth redirect's
+     * `state` failed validation, issue #149) as an [AuthState.Error] so the login screen can
+     * show [message] and offer a retry, rather than silently dropping the user back.
+     */
+    fun failLogin(message: String) {
+        _state.value = AuthState.Error(message)
+    }
+
     /** Clears stored credentials and returns to [AuthState.Unauthenticated]. */
     fun logout() {
         scope.launch {

@@ -50,6 +50,7 @@ import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -379,6 +380,9 @@ fun FeedScreen(
                 ) {
                     FeedList(
                         items = s.items,
+                        hasMore = s.hasMore,
+                        loadingMore = s.loadingMore,
+                        onLoadMore = { viewModel.feed.loadMore() },
                         onTopicClick = { topic ->
                             viewModel.topicDetail.load(topic.id)
                             selectedTopic = topic
@@ -392,6 +396,9 @@ fun FeedScreen(
                 ) {
                     FeedList(
                         items = s.stale.items,
+                        hasMore = s.stale.hasMore,
+                        loadingMore = s.stale.loadingMore,
+                        onLoadMore = { viewModel.feed.loadMore() },
                         onTopicClick = { topic ->
                             viewModel.topicDetail.load(topic.id)
                             selectedTopic = topic
@@ -771,13 +778,35 @@ private fun GroupEventsBadge(count: Int, onClick: () -> Unit) {
     }
 }
 
+/** Visible-item slack before the end of the list that triggers [onLoadMore]. */
+private const val LOAD_MORE_THRESHOLD = 5
+
 @Composable
 private fun FeedList(
     items: List<FeedItem>,
+    hasMore: Boolean,
+    loadingMore: Boolean,
+    onLoadMore: () -> Unit,
     modifier: Modifier = Modifier,
     onTopicClick: (FeedItem) -> Unit,
 ) {
+    val listState = rememberLazyListState()
+
+    // Fires onLoadMore once the user has scrolled within LOAD_MORE_THRESHOLD items of the
+    // bottom, so the next page arrives before they hit the end (issue #106).
+    val shouldLoadMore by remember {
+        derivedStateOf {
+            val layoutInfo = listState.layoutInfo
+            val lastVisibleIndex = layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+            lastVisibleIndex >= layoutInfo.totalItemsCount - 1 - LOAD_MORE_THRESHOLD
+        }
+    }
+    LaunchedEffect(shouldLoadMore, hasMore, loadingMore) {
+        if (shouldLoadMore && hasMore && !loadingMore) onLoadMore()
+    }
+
     LazyColumn(
+        state = listState,
         modifier = modifier.fillMaxSize(),
         contentPadding = PaddingValues(vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -787,6 +816,33 @@ private fun FeedList(
                 item = item,
                 onClick = { onTopicClick(item) },
                 modifier = Modifier.padding(horizontal = 16.dp),
+            )
+        }
+        if (items.isNotEmpty()) {
+            item(key = "feed-footer") {
+                FeedListFooter(loadingMore = loadingMore, hasMore = hasMore)
+            }
+        }
+    }
+}
+
+/**
+ * Trailing row below the last topic card: a spinner while [loadingMore] fetches the next
+ * page, or an "end of feed" message once [hasMore] goes `false` (issue #106).
+ */
+@Composable
+private fun FeedListFooter(loadingMore: Boolean, hasMore: Boolean) {
+    Box(
+        modifier = Modifier.fillMaxWidth().padding(16.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        when {
+            loadingMore -> CircularProgressIndicator(modifier = Modifier.size(24.dp))
+            !hasMore -> Text(
+                text = "You're all caught up",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
             )
         }
     }
