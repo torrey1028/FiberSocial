@@ -891,9 +891,17 @@ class TopicDetailViewModelTest {
             val victim = (vm.state.value as TopicDetailState.Loaded).posts.first()
             vm.deletePost(victim)
 
-            // A pull-to-refresh of the SAME topic while the delete is still in flight.
+            // A pull-to-refresh of the SAME topic while the delete is still in flight. Its
+            // Loaded result is indistinguishable from the pre-refresh Loaded state (same
+            // fixture data), so `vm.state.first { it is Loaded }` alone can't tell whether
+            // this second load actually ran yet or is still queued behind the delete's own
+            // coroutine — it can spuriously pass against the stale, pre-refresh value. Join
+            // its specific child job instead, so the refresh is guaranteed to have applied
+            // its own state mutation before the delete is released and can filter on top of it.
+            val childrenBeforeReload = coroutineContext[Job]!!.children.toSet()
             vm.load(1L)
-            vm.state.first { it is TopicDetailState.Loaded }
+            coroutineContext[Job]!!.children.first { it !in childrenBeforeReload }.join()
+
             releaseDelete.complete(Unit)
             awaitChildren(coroutineContext[Job]!!)
 
