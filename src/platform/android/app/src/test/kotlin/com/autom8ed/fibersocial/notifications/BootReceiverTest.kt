@@ -5,6 +5,8 @@ import android.app.Application
 import android.content.Context
 import android.content.Intent
 import android.os.Looper
+import com.autom8ed.fibersocial.storage.NOTIFICATION_STATE_PREFS_NAME
+import com.autom8ed.fibersocial.storage.plainKeyValueStore
 import kotlinx.coroutines.test.runTest
 import org.junit.Before
 import org.junit.Test
@@ -30,7 +32,8 @@ class BootReceiverTest {
     }
 
     private suspend fun seedState(vararg reminders: ScheduledReminder) {
-        AndroidNotificationStateStore(app).save(NotificationState(scheduledReminders = reminders.toList()))
+        KeyValueNotificationStateStore(plainKeyValueStore(app, NOTIFICATION_STATE_PREFS_NAME))
+            .save(NotificationState(scheduledReminders = reminders.toList()))
     }
 
     /**
