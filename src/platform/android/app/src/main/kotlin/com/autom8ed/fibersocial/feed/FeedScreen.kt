@@ -68,6 +68,7 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -93,6 +94,9 @@ import com.autom8ed.fibersocial.notifications.EventSyncWorker
 import com.autom8ed.fibersocial.notifications.KeyValueNotificationSettingsStore
 import com.autom8ed.fibersocial.notifications.NotificationSettings
 import com.autom8ed.fibersocial.notifications.PollCadence
+import com.autom8ed.fibersocial.feedback.FeedbackScreen
+import com.autom8ed.fibersocial.feedback.SupportGroup
+import com.autom8ed.fibersocial.feedback.deviceContext
 import com.autom8ed.fibersocial.settings.SettingsScreen
 import com.autom8ed.fibersocial.storage.NOTIFICATION_SETTINGS_PREFS_NAME
 import com.autom8ed.fibersocial.storage.plainKeyValueStore
@@ -117,6 +121,7 @@ fun FeedScreen(
     var eventsGroup by remember { mutableStateOf<Group?>(null) }
     var showSettings by rememberSaveable { mutableStateOf(false) }
     var composingTopic by rememberSaveable { mutableStateOf(false) }
+    var sendingFeedback by rememberSaveable { mutableStateOf(false) }
 
     // A tapped notification lands here: open the event detail directly.
     LaunchedEffect(deepLinkEventPermalink) {
@@ -128,6 +133,7 @@ fun FeedScreen(
             showSettings = false
             eventsGroup = null
             composingTopic = false
+            sendingFeedback = false
             viewModel.eventDetail.load(deepLinkEventPermalink)
             selectedEventPermalink = deepLinkEventPermalink
             onDeepLinkConsumed()
@@ -161,6 +167,31 @@ fun FeedScreen(
         else -> emptyMap()
     }
 
+    // Rendered before settings so "Send feedback" (opened from Settings) shows over it;
+    // backing out returns to the still-open settings screen.
+    if (sendingFeedback) {
+        val feedbackState by viewModel.feedback.state.collectAsState()
+        val uriHandler = LocalUriHandler.current
+        val deviceInfo = remember { deviceContext() }
+        FeedbackScreen(
+            state = feedbackState,
+            deviceInfo = deviceInfo,
+            onBack = {
+                sendingFeedback = false
+                viewModel.feedback.reset()
+            },
+            onSend = { title, description, details -> viewModel.feedback.send(title, description, details) },
+            onSent = {
+                sendingFeedback = false
+                viewModel.feedback.acknowledgeSent()
+            },
+            onOpenSupportGroup = {
+                uriHandler.openUri("https://www.ravelry.com/groups/${SupportGroup.PERMALINK}")
+            },
+        )
+        return
+    }
+
     if (showSettings) {
         val context = LocalContext.current
         val settingsStore = remember {
@@ -175,6 +206,7 @@ fun FeedScreen(
             user = user,
             onBack = { showSettings = false },
             onSignOut = onLogout,
+            onSendFeedback = { sendingFeedback = true },
             pollCadence = pollCadence,
             onPollCadenceSelected = { cadence ->
                 pollCadence = cadence

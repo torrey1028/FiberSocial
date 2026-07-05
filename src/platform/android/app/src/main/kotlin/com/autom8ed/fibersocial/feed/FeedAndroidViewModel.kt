@@ -7,6 +7,7 @@ import com.autom8ed.fibersocial.BuildConfig
 import com.autom8ed.fibersocial.auth.KeyValueTokenStorage
 import com.autom8ed.fibersocial.events.EventDetailViewModel
 import com.autom8ed.fibersocial.events.EventsViewModel
+import com.autom8ed.fibersocial.feedback.FeedbackViewModel
 import com.autom8ed.fibersocial.net.ravelryApiClient
 import com.autom8ed.fibersocial.net.ravelryAuthRepository
 import com.autom8ed.fibersocial.net.ravelryHttpClient
@@ -32,6 +33,7 @@ class FeedAndroidViewModel(app: Application) : AndroidViewModel(app) {
     val feed = FeedViewModel(repository, viewModelScope, AndroidGroupOrderStore(app))
     val topicDetail = TopicDetailViewModel(apiClient, viewModelScope)
     val newTopic = NewTopicViewModel(apiClient, viewModelScope)
+    val feedback = FeedbackViewModel(apiClient, viewModelScope)
     val events = EventsViewModel(apiClient, viewModelScope)
     val eventDetail = EventDetailViewModel(
         apiClient,
@@ -47,6 +49,7 @@ class FeedAndroidViewModel(app: Application) : AndroidViewModel(app) {
         feed.sessionExpired,
         topicDetail.sessionExpired,
         newTopic.sessionExpired,
+        feedback.sessionExpired,
         events.sessionExpired,
         eventDetail.sessionExpired,
     )
