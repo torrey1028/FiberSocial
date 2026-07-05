@@ -53,7 +53,7 @@ fun NewTopicScreen(
     onCreated: (Topic, Group) -> Unit,
 ) {
     // Group is not Saveable; survives recomposition, not process death — acceptable
-    // for a modal composer, and title/body (the real typing effort) do survive.
+    // for a modal composer, and title/summary/body (the real typing effort) do survive.
     var group by remember { mutableStateOf(initialGroup) }
     var title by rememberSaveable { mutableStateOf("") }
     var summary by rememberSaveable { mutableStateOf("") }

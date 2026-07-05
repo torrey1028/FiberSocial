@@ -982,7 +982,7 @@ class RavelryApiClientTest {
         assertEquals("Show us your WIPs", capturedForm!!["title"])
         assertEquals("Post a photo of what's on your needles!", capturedForm!!["body"])
         // No summary passed → the field is omitted entirely, not sent blank.
-        assertEquals(null, capturedForm["summary"])
+        assertEquals(null, capturedForm!!["summary"])
         assertEquals(7001L, topic.id)
         assertEquals("Show us your WIPs", topic.title)
         assertEquals("yarnie", topic.createdByUser?.username)
