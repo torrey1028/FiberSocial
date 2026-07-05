@@ -1252,6 +1252,58 @@ class RavelryApiClientTest {
     }
 
     @Test
+    fun `joinGroup throws SessionExpiredException when redirected straight to the login path`() = runTest {
+        val engine = MockEngine { request ->
+            if (request.method.value == "POST") {
+                respond("", HttpStatusCode.Found,
+                    headersOf(HttpHeaders.Location, "https://www.ravelry.com/login"))
+            } else {
+                respond(TOKEN_PAGE_HTML, HttpStatusCode.OK, headersOf("Content-Type", "text/html"))
+            }
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        assertFailsWith<SessionExpiredException> {
+            RavelryApiClient(httpClient, FakeFeedTokenStorage()).joinGroup("some-group")
+        }
+    }
+
+    @Test
+    fun `joinGroup succeeds on a non-login redirect, such as permalink canonicalization`() = runTest {
+        val engine = MockEngine { request ->
+            if (request.method.value == "POST") {
+                respond("", HttpStatusCode.Found,
+                    headersOf(HttpHeaders.Location, "https://www.ravelry.com/groups/fibersocial-app-support"))
+            } else {
+                respond(TOKEN_PAGE_HTML, HttpStatusCode.OK, headersOf("Content-Type", "text/html"))
+            }
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        // Must not throw.
+        RavelryApiClient(httpClient, FakeFeedTokenStorage()).joinGroup("app-support")
+    }
+
+    @Test
+    fun `joinGroup throws on an unexpected rejection status`() = runTest {
+        val engine = MockEngine { request ->
+            if (request.method.value == "POST") {
+                respond("", HttpStatusCode.InternalServerError)
+            } else {
+                respond(TOKEN_PAGE_HTML, HttpStatusCode.OK, headersOf("Content-Type", "text/html"))
+            }
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        assertFailsWith<IllegalStateException> {
+            RavelryApiClient(httpClient, FakeFeedTokenStorage()).joinGroup("some-group")
+        }
+    }
+
+    @Test
     fun `deletePost succeeds when the redirect is to a group whose slug merely contains account or login`() = runTest {
         // Regression: a raw location.contains("/login")/contains("/account") substring
         // check would misfire on a real, successful-delete redirect whose path merely
