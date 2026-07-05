@@ -981,9 +981,49 @@ class RavelryApiClientTest {
         assertEquals("123", capturedForm!!["forum_id"])
         assertEquals("Show us your WIPs", capturedForm!!["title"])
         assertEquals("Post a photo of what's on your needles!", capturedForm!!["body"])
+        // No summary passed → the field is omitted entirely, not sent blank.
+        assertEquals(null, capturedForm["summary"])
         assertEquals(7001L, topic.id)
         assertEquals("Show us your WIPs", topic.title)
         assertEquals("yarnie", topic.createdByUser?.username)
+    }
+
+    @Test
+    fun `createTopic sends the summary form field when one is provided`() = runTest {
+        var capturedForm: io.ktor.http.Parameters? = null
+        val engine = MockEngine { request ->
+            capturedForm = (request.body as io.ktor.client.request.forms.FormDataContent).formData
+            respond(
+                content = topicCreateResponseJson(id = 7002L, title = "Show us your WIPs"),
+                status = HttpStatusCode.OK,
+                headers = headersOf("Content-Type", ContentType.Application.Json.toString()),
+            )
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        RavelryApiClient(httpClient, FakeFeedTokenStorage())
+            .createTopic(123L, "Show us your WIPs", "Photos please!", "A weekly photo thread")
+        assertEquals("A weekly photo thread", capturedForm!!["summary"])
+    }
+
+    @Test
+    fun `createTopic omits a blank summary`() = runTest {
+        var capturedForm: io.ktor.http.Parameters? = null
+        val engine = MockEngine { request ->
+            capturedForm = (request.body as io.ktor.client.request.forms.FormDataContent).formData
+            respond(
+                content = topicCreateResponseJson(id = 7003L, title = "Show us your WIPs"),
+                status = HttpStatusCode.OK,
+                headers = headersOf("Content-Type", ContentType.Application.Json.toString()),
+            )
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        RavelryApiClient(httpClient, FakeFeedTokenStorage())
+            .createTopic(123L, "Show us your WIPs", "Photos please!", "   ")
+        assertEquals(null, capturedForm!!["summary"])
     }
 
     @Test
