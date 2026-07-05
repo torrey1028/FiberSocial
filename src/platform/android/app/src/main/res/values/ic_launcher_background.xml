@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Adaptive launcher-icon background: soft lavender behind the purple FS
+         monogram, so the mark stays distinct instead of blending into light
+         home screens. Foreground art comes from the app logo (FiberSocialLogo). -->
+    <color name="ic_launcher_background">#EEE9FF</color>
+</resources>
