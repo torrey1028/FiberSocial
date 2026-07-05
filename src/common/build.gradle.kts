@@ -18,7 +18,9 @@ kotlin {
     sourceSets {
         commonMain.dependencies {
             implementation("com.fleeksoft.ksoup:ksoup:0.2.6")
-            implementation("io.ktor:ktor-client-core:2.3.12")
+            // api: ravelryHttpClient()/ravelryAuthRepository()/ravelryApiClient() expose
+            // HttpClient in their signatures, so it must resolve on consumers' classpath.
+            api("io.ktor:ktor-client-core:2.3.12")
             implementation("io.ktor:ktor-client-content-negotiation:2.3.12")
             implementation("io.ktor:ktor-serialization-kotlinx-json:2.3.12")
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1")
@@ -30,6 +32,15 @@ kotlin {
             implementation(kotlin("test"))
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
             implementation("io.ktor:ktor-client-mock:2.3.12")
+        }
+        androidMain.dependencies {
+            implementation("io.ktor:ktor-client-android:2.3.12")
+        }
+        jvmMain.dependencies {
+            // Only used by the jvm() target's `ravelryHttpClient()` actual, which
+            // exists solely so :common:jvmTest can compile — the jvm() target isn't
+            // shipped. The Android app gets the Android-engine actual below.
+            implementation("io.ktor:ktor-client-cio:2.3.12")
         }
     }
 }

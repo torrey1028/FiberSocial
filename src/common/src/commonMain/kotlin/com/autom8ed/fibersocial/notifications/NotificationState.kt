@@ -49,27 +49,56 @@ enum class ReminderKind(val offset: Duration) {
 }
 
 /**
+ * How often the user wants the app to check for new events, expressed qualitatively
+ * rather than as precise hours: iOS background refresh is opportunistic (the OS decides
+ * cadence from usage patterns, not the app), so a precise-hours promise would be
+ * untruthful there. Each platform maps a cadence to its own scheduling primitive
+ * underneath — Android to a `WorkManager` periodic interval (see `EventSyncWorker`).
+ */
+@Serializable
+enum class PollCadence {
+    HOURLY,
+    A_FEW_TIMES_A_DAY,
+    ONCE_A_DAY;
+
+    companion object {
+        /** Buckets a legacy precise-hours setting into a qualitative cadence by threshold. */
+        fun fromHours(hours: Int): PollCadence = when {
+            hours <= 1 -> HOURLY
+            hours < 12 -> A_FEW_TIMES_A_DAY
+            else -> ONCE_A_DAY
+        }
+    }
+}
+
+/** Human label for a poll cadence choice. */
+fun pollCadenceLabel(cadence: PollCadence): String = when (cadence) {
+    PollCadence.HOURLY -> "Hourly"
+    PollCadence.A_FEW_TIMES_A_DAY -> "A few times a day"
+    PollCadence.ONCE_A_DAY -> "Once a day"
+}
+
+/**
  * User-configurable notification settings.
  *
- * @property pollIntervalHours How often the background sync scrapes for new events and
- *   RSVP changes. The settings UI offers [POLL_INTERVAL_CHOICES]; nothing enforces the
- *   bound on persisted values (a stale/corrupt store must not brick loading), so
- *   schedule computations should read [effectivePollIntervalHours].
+ * @property pollCadence How often the background sync scrapes for new events and RSVP
+ *   changes. Null before the first migration read (see [effectivePollCadence]).
  */
 @Serializable
 data class NotificationSettings(
-    val pollIntervalHours: Int = DEFAULT_POLL_INTERVAL_HOURS,
+    val pollCadence: PollCadence? = null,
+    // Legacy precise-hours setting, superseded by [pollCadence] (issue #113). Retained,
+    // internal to this module, purely so a store holding pre-migration JSON migrates to
+    // a qualitative bucket via [effectivePollCadence] instead of silently resetting to
+    // the default the first time it's next loaded.
+    internal val pollIntervalHours: Int = 6,
 ) {
-    /** [pollIntervalHours] clamped to the supported choices; the default when off-menu. */
-    val effectivePollIntervalHours: Int
-        get() = if (pollIntervalHours in POLL_INTERVAL_CHOICES) pollIntervalHours
-        else DEFAULT_POLL_INTERVAL_HOURS
+    /** [pollCadence] if set; otherwise the legacy hours setting bucketed into a cadence. */
+    val effectivePollCadence: PollCadence
+        get() = pollCadence ?: PollCadence.fromHours(pollIntervalHours)
 
     companion object {
-        const val DEFAULT_POLL_INTERVAL_HOURS: Int = 6
-
-        /** Intervals offered in settings, in hours. */
-        val POLL_INTERVAL_CHOICES: List<Int> = listOf(1, 3, 6, 12, 24)
+        val DEFAULT_POLL_CADENCE: PollCadence = PollCadence.A_FEW_TIMES_A_DAY
     }
 }
 

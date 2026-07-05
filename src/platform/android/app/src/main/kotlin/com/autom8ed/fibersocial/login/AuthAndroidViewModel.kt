@@ -4,32 +4,25 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.autom8ed.fibersocial.BuildConfig
-import com.autom8ed.fibersocial.auth.AndroidTokenStorage
-import com.autom8ed.fibersocial.auth.AuthRepository
 import com.autom8ed.fibersocial.auth.AuthViewModel
-import com.autom8ed.fibersocial.auth.RavelryOAuthClient
-import io.ktor.client.HttpClient
-import io.ktor.client.engine.android.Android
-import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
-import io.ktor.serialization.kotlinx.json.json
-import kotlinx.serialization.json.Json
+import com.autom8ed.fibersocial.auth.KeyValueTokenStorage
+import com.autom8ed.fibersocial.auth.RavelryAuthManager
+import com.autom8ed.fibersocial.net.ravelryAuthRepository
+import com.autom8ed.fibersocial.net.ravelryHttpClient
+import com.autom8ed.fibersocial.storage.AUTH_PREFS_NAME
+import com.autom8ed.fibersocial.storage.encryptedKeyValueStore
 
 class AuthAndroidViewModel(app: Application) : AndroidViewModel(app) {
 
-    private val httpClient = HttpClient(Android) {
-        install(ContentNegotiation) {
-            json(Json { ignoreUnknownKeys = true })
-        }
-    }
-
+    private val httpClient = ravelryHttpClient()
     private val authManager = RavelryAuthManager()
-    private val tokenStorage = AndroidTokenStorage(app)
-    private val oauthClient = RavelryOAuthClient(
+    private val tokenStorage = KeyValueTokenStorage(encryptedKeyValueStore(app, AUTH_PREFS_NAME))
+    private val repository = ravelryAuthRepository(
         httpClient = httpClient,
+        tokenStorage = tokenStorage,
         clientId = BuildConfig.RAVELRY_CLIENT_ID,
         clientSecret = BuildConfig.RAVELRY_CLIENT_SECRET,
     )
-    private val repository = AuthRepository(oauthClient, tokenStorage)
 
     val auth = AuthViewModel(repository, viewModelScope)
 
