@@ -867,6 +867,7 @@ class TopicDetailViewModelTest {
             // outcome (the coroutine's captured generation no longer matched by the time
             // it resolved), even though nothing about the topic actually changed.
             val releaseDelete = CompletableDeferred<Unit>()
+            var loadCount = 0
             val engine = MockEngine { request ->
                 when {
                     request.method == HttpMethod.Post && request.url.encodedPath.startsWith("/forum_posts/") -> {
@@ -877,9 +878,16 @@ class TopicDetailViewModelTest {
                     // an empty encodedPath, not "/".
                     request.url.encodedPath.isEmpty() ->
                         respond(TOKEN_PAGE_HTML, HttpStatusCode.OK, headersOf("Content-Type", "text/html"))
-                    else ->
-                        respond(postsJson(7L), HttpStatusCode.OK,
+                    else -> {
+                        // The reload's response carries an extra post (99) not in the
+                        // initial load's — a marker distinguishing "the refresh actually
+                        // landed" from the initial Loaded value, which has identical shape
+                        // otherwise and so can't be waited on via `it is Loaded` alone.
+                        loadCount++
+                        val ids = if (loadCount == 1) longArrayOf(7L) else longArrayOf(7L, 99L)
+                        respond(postsJson(*ids), HttpStatusCode.OK,
                             headersOf("Content-Type", ContentType.Application.Json.toString()))
+                    }
                 }
             }
             val httpClient = HttpClient(engine) {
@@ -893,7 +901,8 @@ class TopicDetailViewModelTest {
 
             // A pull-to-refresh of the SAME topic while the delete is still in flight.
             vm.load(1L)
-            vm.state.first { it is TopicDetailState.Loaded }
+            vm.state.first { it is TopicDetailState.Loaded && it.posts.any { p -> p.id == 99L } }
+
             releaseDelete.complete(Unit)
             awaitChildren(coroutineContext[Job]!!)
 
