@@ -32,6 +32,19 @@ HIGH_COVERAGE_THRESHOLD = 0.85
 HIGH_COVERAGE_REGRESSION_ALLOWANCE = 0.01  # < 1 point regression allowed above the threshold
 MAX_DIFF_ROWS = 25
 
+# kotlinx.serialization's encoder-side codegen. Under Kotlin 2.0 this lived in the
+# generated $$serializer class, already excluded from the report at the jacoco-config
+# level (see common/build.gradle.kts). Kotlin 2.4/K2 moved it directly into the main
+# data class instead, so it now shows up here by name. It's dead code for any DTO
+# that's only ever deserialized (never re-encoded to JSON) — which is nearly all of
+# them — so it's excluded here the same way, just at method instead of class
+# granularity. See PR #139/#150 for the investigation that root-caused this.
+EXCLUDED_METHOD_PREFIXES = ("write$Self",)
+
+
+def is_excluded_method(name):
+    return any(name.startswith(p) for p in EXCLUDED_METHOD_PREFIXES)
+
 
 def allowed_drop(baseline):
     if baseline > HIGH_COVERAGE_THRESHOLD:
@@ -40,15 +53,22 @@ def allowed_drop(baseline):
 
 
 def total_counts(path):
-    # Top-level <counter> elements are the report-wide totals across all packages.
+    """Report-wide covered/missed per metric, summed from per-method counters
+    (excluding EXCLUDED_METHOD_PREFIXES) rather than trusted from the report's own
+    top-level <counter> aggregate, so the exclusion actually affects the totals."""
     root = ET.parse(path).getroot()
     totals = {}
-    for c in root.findall("counter"):
-        if c.get("type") in METRICS:
-            covered, missed = int(c.get("covered")), int(c.get("missed"))
-            if covered + missed > 0:
-                totals[c.get("type")] = (covered, missed)
-    return totals
+    for pkg in root.iter("package"):
+        for cls in pkg.iter("class"):
+            for meth in cls.iter("method"):
+                if is_excluded_method(meth.get("name", "")):
+                    continue
+                for c in meth.iter("counter"):
+                    t = c.get("type")
+                    if t in METRICS:
+                        cur_c, cur_m = totals.get(t, (0, 0))
+                        totals[t] = (cur_c + int(c.get("covered")), cur_m + int(c.get("missed")))
+    return {t: v for t, v in totals.items() if v[0] + v[1] > 0}
 
 
 def method_misses(path):
@@ -59,6 +79,8 @@ def method_misses(path):
         for cls in pkg.iter("class"):
             cname = cls.get("name", "?").split("/")[-1]
             for meth in cls.iter("method"):
+                if is_excluded_method(meth.get("name", "?")):
+                    continue
                 key = (cname, meth.get("name", "?"), meth.get("line", "?"))
                 missed = {}
                 for c in meth.iter("counter"):

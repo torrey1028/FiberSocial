@@ -26,6 +26,8 @@ class SplitOnImagesTest {
             ),
             segments,
         )
+        assertEquals(image, (segments[1] as ParagraphSegment.Photo).image)
+        assertEquals(listOf(Inline.Text("before")), (segments[0] as ParagraphSegment.TextRun).content)
     }
 
     @Test
