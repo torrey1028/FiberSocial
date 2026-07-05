@@ -88,6 +88,73 @@ class EventSyncRunnerTest {
     }
 
     @Test
+    fun `groups are scraped concurrently and a shared event is deduplicated`() = runTest {
+        val engine = MockEngine { request ->
+            val path = request.url.encodedPath
+            val (body, type) = when {
+                path.contains("current_user") ->
+                    """{"user":{"username":"yarnie"}}""" to ContentType.Application.Json
+                path.contains("memberships") ->
+                    """<a href="https://www.ravelry.com/groups/kirkland-fiber-arts-circle-2">K</a>
+                       <a href="https://www.ravelry.com/groups/sock-knitters">S</a>""" to ContentType.Text.Html
+                path.contains("groups/search") -> {
+                    val query = request.url.parameters["query"].orEmpty()
+                    if (query.contains("sock")) {
+                        """{"groups":[{"id":2,"name":"Sock Knitters","permalink":"sock-knitters","forum_id":8}]}""" to ContentType.Application.Json
+                    } else {
+                        """{"groups":[{"id":1,"name":"Kirkland Fiber Arts Circle","permalink":"kirkland-fiber-arts-circle-2","forum_id":9}]}""" to ContentType.Application.Json
+                    }
+                }
+                path.endsWith("/events/saved") ->
+                    """<div class="event_list"></div>""" to ContentType.Text.Html
+                path.contains("/groups/kirkland") ->
+                    // Both groups list the same event — the plan must not double-schedule it.
+                    """<div id="upcoming_events"><div class="event">
+                       <div class="what"><a href="https://www.ravelry.com/events/shared-event">Shared</a></div>
+                       <div class="when">July  5, 2026 @  1:00 PM</div>
+                       <div class="who"><a href="https://www.ravelry.com/events/shared-event/people">1 person</a></div>
+                       </div></div>""" to ContentType.Text.Html
+                path.contains("/groups/sock-knitters") ->
+                    """<div id="upcoming_events"><div class="event">
+                       <div class="what"><a href="https://www.ravelry.com/events/shared-event">Shared</a></div>
+                       <div class="when">July  5, 2026 @  1:00 PM</div>
+                       <div class="who"><a href="https://www.ravelry.com/events/shared-event/people">1 person</a></div>
+                       </div></div>""" to ContentType.Text.Html
+                else -> error("Unexpected path: $path")
+            }
+            respond(body, HttpStatusCode.OK, headersOf("Content-Type", type.toString()))
+        }
+        val client = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val runner = EventSyncRunner(RavelryApiClient(client, FakeFeedTokenStorage()), InMemoryStateStore())
+
+        val plan = runner.sync(NOW, ZONE)
+
+        assertEquals(setOf("shared-event"), plan.newState.knownEvents.keys)
+    }
+
+    @Test
+    fun `sync propagates a network failure without saving partial state`() = runTest {
+        val engine = MockEngine { request ->
+            if (request.url.encodedPath.contains("current_user")) {
+                throw RuntimeException("network unreachable")
+            }
+            respond("<div class=\"event_list\"></div>", HttpStatusCode.OK, headersOf("Content-Type", ContentType.Text.Html.toString()))
+        }
+        val client = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val store = InMemoryStateStore()
+        val runner = EventSyncRunner(RavelryApiClient(client, FakeFeedTokenStorage()), store)
+
+        val result = runCatching { runner.sync(NOW, ZONE) }
+
+        assertTrue(result.isFailure)
+        assertEquals(0, store.saveCount)
+    }
+
+    @Test
     fun `a saved event whose page no longer resolves gets no reminders`() = runTest {
         // Same routing as syncApiClient, but the event page is a 404-style page.
         val engine = MockEngine { request ->

@@ -2,9 +2,27 @@ package com.autom8ed.fibersocial.auth
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNotEquals
+import kotlinx.serialization.SerializationException
+import kotlinx.serialization.json.Json
 
 class AuthTokenTest {
+
+    @Test
+    fun `decodes from JSON that omits sessionCookie`() {
+        val token = Json.decodeFromString<AuthToken>(
+            """{"accessToken":"a","refreshToken":"r","expiresAt":1000}""",
+        )
+        assertEquals(null, token.sessionCookie)
+    }
+
+    @Test
+    fun `decoding JSON missing a required field fails loudly`() {
+        assertFailsWith<SerializationException> {
+            Json.decodeFromString<AuthToken>("""{"refreshToken":"r"}""")
+        }
+    }
 
     @Test
     fun `equal when all fields match`() {

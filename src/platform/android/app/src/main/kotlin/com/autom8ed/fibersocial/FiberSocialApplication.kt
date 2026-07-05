@@ -3,7 +3,9 @@ package com.autom8ed.fibersocial
 import android.app.Application
 import coil.ImageLoader
 import coil.ImageLoaderFactory
-import com.autom8ed.fibersocial.auth.AndroidTokenStorage
+import com.autom8ed.fibersocial.auth.KeyValueTokenStorage
+import com.autom8ed.fibersocial.storage.AUTH_PREFS_NAME
+import com.autom8ed.fibersocial.storage.encryptedKeyValueStore
 import kotlinx.coroutines.runBlocking
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
@@ -24,7 +26,7 @@ class FiberSocialApplication : Application(), ImageLoaderFactory {
     override fun newImageLoader(): ImageLoader {
         // Deferred to first use: EncryptedSharedPreferences creation isn't free, and the
         // cookie lambda runs on OkHttp dispatcher threads, not the main thread.
-        val tokenStorage by lazy { AndroidTokenStorage(this) }
+        val tokenStorage by lazy { KeyValueTokenStorage(encryptedKeyValueStore(this, AUTH_PREFS_NAME)) }
         return ImageLoader.Builder(this)
             .okHttpClient {
                 OkHttpClient.Builder()

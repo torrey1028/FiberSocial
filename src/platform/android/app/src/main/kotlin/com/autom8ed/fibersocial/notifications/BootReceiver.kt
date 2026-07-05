@@ -3,6 +3,8 @@ package com.autom8ed.fibersocial.notifications
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import com.autom8ed.fibersocial.storage.NOTIFICATION_STATE_PREFS_NAME
+import com.autom8ed.fibersocial.storage.plainKeyValueStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -19,7 +21,8 @@ class BootReceiver : BroadcastReceiver() {
         val pending = goAsync()
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                val state = AndroidNotificationStateStore(context).load() ?: return@launch
+                val store = KeyValueNotificationStateStore(plainKeyValueStore(context, NOTIFICATION_STATE_PREFS_NAME))
+                val state = store.load() ?: return@launch
                 val scheduler = ReminderScheduler(context)
                 val now = System.currentTimeMillis()
                 val future = state.scheduledReminders.filter { it.fireAtEpochMs > now }

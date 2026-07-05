@@ -44,6 +44,13 @@ class GroupTest {
         )
         assertEquals(3L, g.id)
     }
+
+    @Test
+    fun `direct construction with only some optional fields set`() {
+        val g = Group(id = 4L, name = "Fiber Circle", permalink = "fiber-circle", forumId = 5L, badgeUrl = "https://example.com/b.png")
+        assertEquals("https://example.com/b.png", g.badgeUrl)
+        assertNull(g.shortDescription)
+    }
 }
 
 class RavelryUserTest {
@@ -145,6 +152,15 @@ class TopicTest {
         assertEquals(false, t.archived)
         assertNull(t.createdByUser)
         assertNull(t.summary)
+    }
+
+    @Test
+    fun `direct construction with only some optional params set`() {
+        val t = Topic(id = 301L, title = "Partial construction", sticky = true, summary = "Pinned")
+        assertEquals(0L, t.forumId)
+        assertEquals(true, t.sticky)
+        assertEquals("Pinned", t.summary)
+        assertNull(t.repliedAt)
     }
 }
 
