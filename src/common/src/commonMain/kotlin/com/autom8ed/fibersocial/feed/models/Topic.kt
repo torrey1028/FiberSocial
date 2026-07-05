@@ -23,7 +23,12 @@ import kotlinx.serialization.Serializable
  * @property sticky Whether a moderator has pinned this topic to the top of the forum.
  * @property archived Whether the topic is closed for new replies.
  * @property createdByUser Author of the opening post. Only present in detail responses.
- * @property summary Plain-text excerpt of the opening post body. Only present in detail responses.
+ * @property summary Author-written topic summary as raw Markdown source. Only present in
+ *   detail responses. May be missing trailing syntax (observed: a closing `**` that
+ *   [summaryHtml] shows was intended) — prefer [summaryHtml] for rendering.
+ * @property summaryHtml Ravelry's server-side HTML rendering of [summary]. Only present
+ *   in detail responses. Authoritative: resolves Markdown edge cases in the raw source
+ *   the way the website does (e.g. auto-closing dangling emphasis).
  */
 @Serializable
 data class Topic(
@@ -38,4 +43,5 @@ data class Topic(
     val archived: Boolean = false,
     @SerialName("created_by_user") val createdByUser: RavelryUser? = null,
     val summary: String? = null,
+    @SerialName("summary_html") val summaryHtml: String? = null,
 )

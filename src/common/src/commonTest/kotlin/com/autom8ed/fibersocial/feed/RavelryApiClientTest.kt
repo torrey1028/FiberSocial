@@ -34,6 +34,12 @@ class RavelryApiClientTest {
     }
 
     @Test
+    fun `getCurrentUser fails loudly when the response is missing the user field`() = runTest {
+        val client = routingApiClient { "{}" }
+        assertFailsWith<kotlinx.serialization.MissingFieldException> { client.getCurrentUser() }
+    }
+
+    @Test
     fun `getUserGroups scrapes memberships HTML and resolves groups via search`() = runTest {
         val client = routingApiClient { path ->
             when {
@@ -112,6 +118,38 @@ class RavelryApiClientTest {
     }
 
     @Test
+    fun `getUserGroups resolves multiple memberships concurrently`() = runTest {
+        val membershipsHtml = """<html><body>
+            <a href="https://www.ravelry.com/groups/kal-hub">KAL Hub</a>
+            <a href="https://www.ravelry.com/groups/sock-knitters">Sock Knitters</a>
+        </body></html>"""
+        val engine = MockEngine { request ->
+            val path = request.url.encodedPath
+            val body = when {
+                path.contains("memberships") -> membershipsHtml
+                path.contains("groups/search") -> {
+                    val query = request.url.parameters["query"].orEmpty()
+                    if (query.contains("sock")) {
+                        """{"groups":[{"id":20,"name":"Sock Knitters","permalink":"sock-knitters","forum_id":43}]}"""
+                    } else {
+                        GROUPS_JSON
+                    }
+                }
+                else -> """{"groups":[]}"""
+            }
+            respond(body, HttpStatusCode.OK, headersOf("Content-Type", ContentType.Application.Json.toString()))
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val client = RavelryApiClient(httpClient, FakeFeedTokenStorage())
+
+        val groups = client.getUserGroups("yarnie")
+
+        assertEquals(setOf("kal-hub", "sock-knitters"), groups.map { it.permalink }.toSet())
+    }
+
+    @Test
     fun `getUserGroups omits a group when every fallback query misses`() = runTest {
         val client = routingApiClient { path ->
             when {
@@ -121,6 +159,34 @@ class RavelryApiClientTest {
             }
         }
         assertEquals(emptyList(), client.getUserGroups("yarnie"))
+    }
+
+    @Test
+    fun `getUserGroups omits a group when search response omits the groups field entirely`() = runTest {
+        val client = routingApiClient { path ->
+            when {
+                path.contains("memberships") -> MEMBERSHIPS_HTML
+                path.contains("groups/search") -> "{}"
+                else -> "{}"
+            }
+        }
+        assertEquals(emptyList(), client.getUserGroups("yarnie"))
+    }
+
+    @Test
+    fun `getUserGroups propagates a network failure while scraping memberships`() = runTest {
+        val engine = MockEngine { request ->
+            if (request.url.encodedPath.contains("memberships")) {
+                throw RuntimeException("network unreachable")
+            }
+            respond(GROUPS_JSON, HttpStatusCode.OK, headersOf("Content-Type", ContentType.Application.Json.toString()))
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val client = RavelryApiClient(httpClient, FakeFeedTokenStorage())
+        val result = runCatching { client.getUserGroups("yarnie") }
+        assertTrue(result.isFailure)
     }
 
     @Test
@@ -140,6 +206,20 @@ class RavelryApiClientTest {
         assertEquals(2, topics.size)
         assertEquals(100L, topics[0].id)
         assertEquals(101L, topics[1].id)
+    }
+
+    @Test
+    fun `getGroupTopics defaults to empty when the response omits the topics field`() = runTest {
+        val client = routingApiClient { "{}" }
+        assertEquals(emptyList(), client.getGroupTopics(42L))
+    }
+
+    @Test
+    fun `getGroupTopics tolerates a partial paginator object`() = runTest {
+        val client = routingApiClient { """{"topics":[{"id":100,"title":"Topic 100"}],"paginator":{"page":2}}""" }
+        val topics = client.getGroupTopics(42L)
+        assertEquals(1, topics.size)
+        assertEquals(100L, topics[0].id)
     }
 
     @Test
@@ -191,6 +271,12 @@ class RavelryApiClientTest {
     @Test
     fun `getTopicPosts returns empty list when topic has no posts`() = runTest {
         val client = routingApiClient { """{"posts":[]}""" }
+        assertEquals(emptyList(), client.getTopicPosts(42L))
+    }
+
+    @Test
+    fun `getTopicPosts defaults to empty when the response omits the posts field entirely`() = runTest {
+        val client = routingApiClient { "{}" }
         assertEquals(emptyList(), client.getTopicPosts(42L))
     }
 
@@ -293,6 +379,14 @@ class RavelryApiClientTest {
         assertEquals("funny", capturedType)
         assertEquals(mapOf("funny" to 1), result.voteTotals)
         assertEquals(listOf("funny"), result.userVotes)
+    }
+
+    @Test
+    fun `voteOnPost defaults vote fields to empty when the response omits them`() = runTest {
+        val client = routingApiClient { "{}" }
+        val result = client.voteOnPost(1000L, VoteType.LOVE, voted = true)
+        assertEquals(emptyMap(), result.voteTotals)
+        assertEquals(emptyList(), result.userVotes)
     }
 
     @Test
@@ -745,6 +839,13 @@ class RavelryApiClientTest {
     }
 
     @Test
+    fun `postReply raises a cautious error when valid JSON is missing the forum_post field`() = runTest {
+        val client = routingApiClient { path -> if (path.contains("/reply.json")) "{}" else postsJson(1L) }
+        val failure = runCatching { client.postReply(42L, "hello") }.exceptionOrNull()
+        assertTrue(failure!!.message!!.contains("the reply may have posted"))
+    }
+
+    @Test
     fun `postReply posts body to reply endpoint and returns created post`() = runTest {
         var capturedPath: String? = null
         var capturedMethod: String? = null
@@ -809,6 +910,13 @@ class RavelryApiClientTest {
         val client = routingApiClient { path ->
             if (path.contains("/topics/create.json")) "<html>down for maintenance</html>" else postsJson(1L)
         }
+        val failure = runCatching { client.createTopic(123L, "title", "body") }.exceptionOrNull()
+        assertTrue(failure!!.message!!.contains("the topic may have been created"))
+    }
+
+    @Test
+    fun `createTopic raises a cautious error when valid JSON is missing the topic field`() = runTest {
+        val client = routingApiClient { path -> if (path.contains("/topics/create.json")) "{}" else postsJson(1L) }
         val failure = runCatching { client.createTopic(123L, "title", "body") }.exceptionOrNull()
         assertTrue(failure!!.message!!.contains("the topic may have been created"))
     }
@@ -1103,6 +1211,13 @@ class RavelryApiClientTest {
         // Same reasoning as postReply/createTopic: a 200 with a non-JSON body must not be
         // treated as success, and the message must warn the edit may still have applied.
         val client = routingApiClient { "<html>down for maintenance</html>" }
+        val failure = runCatching { client.editPost(7L, "edited body") }.exceptionOrNull()
+        assertTrue(failure!!.message!!.contains("the edit may have applied"))
+    }
+
+    @Test
+    fun `editPost raises a cautious error when valid JSON is missing the forum_post field`() = runTest {
+        val client = routingApiClient { "{}" }
         val failure = runCatching { client.editPost(7L, "edited body") }.exceptionOrNull()
         assertTrue(failure!!.message!!.contains("the edit may have applied"))
     }

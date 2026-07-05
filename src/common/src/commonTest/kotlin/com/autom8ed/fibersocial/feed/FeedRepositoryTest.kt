@@ -102,6 +102,47 @@ class FeedRepositoryTest {
     }
 
     @Test
+    fun `getFeedItems builds the preview from summary_html when present`() = runTest {
+        // Ravelry's rendering resolves the dangling ** its raw summary field drops
+        // (issue #104) — prefer it over stripping the damaged Markdown ourselves.
+        val repo = repoWithRoute { path ->
+            when {
+                path.contains("/forums/") -> topicsJson(100L)
+                path.contains("/topics/") -> topicDetailJson(
+                    100L,
+                    summary = "**Please use this thread",
+                    summaryHtml = "<p><strong>Please use this thread</strong></p>",
+                )
+                else -> error("Unexpected: $path")
+            }
+        }
+        val item = repo.getFeedItems(listOf(group)).single()
+        assertEquals("Please use this thread", item.bodyPreview)
+        assertEquals("<p><strong>Please use this thread</strong></p>", item.bodySummaryHtml)
+        assertEquals("**Please use this thread", item.bodySummary)
+    }
+
+    @Test
+    fun `getFeedItems strips markdown from the preview when summary_html is absent`() = runTest {
+        val items = singleTopicRepo(summary = "**Please use this thread").getFeedItems(listOf(group))
+        val item = items.single()
+        assertEquals("Please use this thread", item.bodyPreview)
+        assertEquals("", item.bodySummaryHtml)
+    }
+
+    @Test
+    fun `getFeedItems falls back to markdown stripping when summary_html is blank`() = runTest {
+        val repo = repoWithRoute { path ->
+            when {
+                path.contains("/forums/") -> topicsJson(100L)
+                path.contains("/topics/") -> topicDetailJson(100L, summary = "**Bold** text", summaryHtml = "")
+                else -> error("Unexpected: $path")
+            }
+        }
+        assertEquals("Bold text", repo.getFeedItems(listOf(group)).single().bodyPreview)
+    }
+
+    @Test
     fun `getFeedItems sorts results by lastPostAt descending`() = runTest {
         val group2 = group.copy(id = 11L, forumId = 43L)
         val repo = repoWithRoute { path ->
@@ -156,6 +197,26 @@ class FeedRepositoryTest {
     fun `getFeedItems returns empty list when groups have no topics`() = runTest {
         val repo = repoWithRoute { """{"topics":[]}""" }
         assertEquals(emptyList(), repo.getFeedItems(listOf(group)))
+    }
+
+    @Test
+    fun `getFeedItems combines topics fetched concurrently from multiple groups`() = runTest {
+        val other = com.autom8ed.fibersocial.feed.models.Group(
+            id = 20L, name = "Sock Knitters", permalink = "sock-knitters", forumId = 43L,
+        )
+        val repo = repoWithRoute { path ->
+            when {
+                path.contains("/forums/42/") -> topicsJson(100L)
+                path.contains("/forums/43/") -> topicsJson(200L)
+                path.contains("/topics/100") -> topicDetailJson(100L, postsCount = 1)
+                path.contains("/topics/200") -> topicDetailJson(200L, postsCount = 1)
+                else -> error("Unexpected: $path")
+            }
+        }
+
+        val items = repo.getFeedItems(listOf(group, other))
+
+        assertEquals(setOf(100L, 200L), items.map { it.id }.toSet())
     }
 
     @Test

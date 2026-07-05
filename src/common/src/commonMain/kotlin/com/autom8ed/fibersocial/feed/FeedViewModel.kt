@@ -82,6 +82,11 @@ class FeedViewModel(
     /** Sets the session-expired signal. Call only from platform debug tooling. */
     fun forceSessionExpiry() { _sessionExpired.trySend(Unit) }
 
+    /** Drops the feed into [FeedState.Error]. Call only from platform debug tooling. */
+    fun forceError() {
+        _state.value = FeedState.Error("Forced from the debug panel")
+    }
+
     /** Performs an initial full load: user → groups → feed items. */
     /**
      * Clears any loaded feed back to [FeedState.Loading]. Call on sign-out so a

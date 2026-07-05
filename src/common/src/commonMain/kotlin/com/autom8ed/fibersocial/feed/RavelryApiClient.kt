@@ -168,10 +168,6 @@ class RavelryApiClient(
             header(HttpHeaders.Accept, "text/html")
         }.bodyAsText()
 
-        println("FiberSocial: MEMBERSHIPS_HTML_START")
-        html.chunked(900).forEach { println("FiberSocial: $it") }
-        println("FiberSocial: MEMBERSHIPS_HTML_END")
-
         val permalinks = GROUP_PERMALINK_REGEX.findAll(html)
             .map { it.groupValues[1] }
             .distinct()

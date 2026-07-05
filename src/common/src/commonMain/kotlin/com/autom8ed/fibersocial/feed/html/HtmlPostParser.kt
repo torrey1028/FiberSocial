@@ -170,7 +170,7 @@ object HtmlPostParser {
             "a" -> listOf(Inline.Link(href = node.attr("href"), children = parseInlineChildren(node)))
             "img" -> listOf(
                 Inline.Image(
-                    url = node.attr("src"),
+                    url = resolveImageUrl(node.attr("src")),
                     alt = node.attr("alt"),
                     cssClass = node.attr("class"),
                     width = parsePixelAttr(node.attr("width")),
@@ -191,6 +191,19 @@ object HtmlPostParser {
 
     private fun styled(style: InlineStyle, element: Element): List<Inline> =
         listOf(Inline.Styled(style, parseInlineChildren(element)))
+
+    /**
+     * Resolves an image source to an absolute URL an image loader can fetch. Ravelry
+     * emits post photos with site-relative paths (`/attached/...`, `/forum-images/...`,
+     * confirmed against live `posts.json` captures for issue #102); those resolve against
+     * the www origin. Protocol-relative `//host/...` sources get an explicit scheme.
+     * Absolute URLs pass through untouched.
+     */
+    private fun resolveImageUrl(src: String): String = when {
+        src.startsWith("//") -> "https:$src"
+        src.startsWith("/") -> "https://www.ravelry.com$src"
+        else -> src
+    }
 
     /**
      * Collapses whitespace runs (including the newlines HTML source wraps at) to single

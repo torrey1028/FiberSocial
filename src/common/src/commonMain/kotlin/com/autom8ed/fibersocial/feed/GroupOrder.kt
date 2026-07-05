@@ -30,6 +30,9 @@ interface GroupOrderStore {
 fun reconcileGroupOrder(groups: List<Group>, storedOrder: List<Long>?): List<Group> {
     if (storedOrder == null) return groups
     val byId = groups.associateBy { it.id }
-    val stored = storedOrder.toSet()
-    return storedOrder.mapNotNull { byId[it] } + groups.filter { it.id !in stored }
+    // distinct() guards against corrupted prefs or a future reorder-persistence bug
+    // writing a duplicate ID — without it, that group would appear twice below.
+    val dedupedOrder = storedOrder.distinct()
+    val stored = dedupedOrder.toSet()
+    return dedupedOrder.mapNotNull { byId[it] } + groups.filter { it.id !in stored }
 }

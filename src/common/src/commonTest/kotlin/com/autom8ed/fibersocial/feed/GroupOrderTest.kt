@@ -55,4 +55,15 @@ class GroupOrderTest {
     fun `empty group list reconciles to empty`() {
         assertEquals(emptyList(), reconcileGroupOrder(emptyList(), storedOrder = listOf(1L, 2L)))
     }
+
+    @Test
+    fun `a duplicate id in stored order doesn't duplicate the group`() {
+        // Defensive: corrupted prefs or a future reorder-persistence bug could write a
+        // duplicate id. It must not make the group appear twice.
+        val groups = listOf(group(1), group(2))
+        assertEquals(
+            listOf(1L, 2L),
+            reconcileGroupOrder(groups, storedOrder = listOf(1L, 1L, 2L)).map { it.id },
+        )
+    }
 }

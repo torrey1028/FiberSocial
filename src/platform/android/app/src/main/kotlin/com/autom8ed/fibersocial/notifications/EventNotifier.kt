@@ -48,17 +48,10 @@ class EventNotifier(private val context: Context) {
 
     /** Posts a reminder for an RSVP'd event. */
     fun showReminder(eventPermalink: String, eventTitle: String, kind: ReminderKind) {
-        val lead = when (kind) {
-            ReminderKind.DAY_BEFORE -> "Tomorrow"
-            ReminderKind.SOON -> "Starting in ${kind.offset.inWholeMinutes} minutes"
-        }
         post(
             channel = CHANNEL_REMINDERS,
-            // Mask bit cleared: reminders and new-event cards get disjoint ID ranges.
-            // Both reminder kinds share the ID on purpose — the T-15m notification
-            // replaces the stale T-24h one for the same event.
-            id = eventPermalink.hashCode() and NEW_EVENT_ID_MASK.inv(),
-            title = lead,
+            id = EventNotificationContent.reminderNotificationId(eventPermalink),
+            title = EventNotificationContent.reminderTitle(kind),
             text = eventTitle,
             eventPermalink = eventPermalink,
         )
@@ -68,12 +61,9 @@ class EventNotifier(private val context: Context) {
     fun showNewEvent(notification: NewEventNotification) {
         post(
             channel = CHANNEL_NEW_EVENTS,
-            // Mask bit set (reminders clear it): the two kinds can never collide.
-            id = notification.eventPermalink.hashCode() or NEW_EVENT_ID_MASK,
-            title = "New event in ${notification.groupName}",
-            text = listOf(notification.eventTitle, notification.whenText)
-                .filter { it.isNotBlank() }
-                .joinToString(" — "),
+            id = EventNotificationContent.newEventNotificationId(notification.eventPermalink),
+            title = EventNotificationContent.newEventTitle(notification.groupName),
+            text = EventNotificationContent.newEventText(notification.eventTitle, notification.whenText),
             eventPermalink = notification.eventPermalink,
         )
     }
@@ -122,6 +112,6 @@ class EventNotifier(private val context: Context) {
     companion object {
         /** Set on every new-event ID, cleared on every reminder ID — the two
          *  notification kinds can never collide. Internal for the invariant test. */
-        internal const val NEW_EVENT_ID_MASK = 0x40000000
+        internal const val NEW_EVENT_ID_MASK = EventNotificationContent.NEW_EVENT_ID_MASK
     }
 }
