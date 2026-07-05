@@ -58,8 +58,11 @@ object MarkdownPostParser {
             .trim()
 
     // Paired emphasis is consumed by the parser; runs surviving to the text are the
-    // unclosed leftovers. Underscores stay — they're common inside usernames.
-    private val LITERAL_EMPHASIS_RUN = Regex("\\*+")
+    // unclosed leftovers, which always sit at a word boundary (start-of-text or
+    // whitespace) immediately before more text — unlike a literal asterisk used as
+    // punctuation (e.g. "C*", "3*4"), which sits directly against other characters.
+    // Underscores stay — they're common inside usernames.
+    private val LITERAL_EMPHASIS_RUN = Regex("(?<=^|\\s)\\*+(?=\\S)")
     private val WHITESPACE_RUN = Regex("\\s+")
 
     private fun blockPlainText(block: PostBlock): String = when (block) {

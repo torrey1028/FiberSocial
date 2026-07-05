@@ -42,17 +42,45 @@ class FiberSocialApplication : Application(), ImageLoaderFactory {
     }
 }
 
-/** Adds the Ravelry session cookie to requests aimed at ravelry.com hosts. */
+/**
+ * Adds the Ravelry session cookie to requests aimed at ravelry.com hosts.
+ *
+ * [sessionCookie] is cached for [CACHE_TTL_MS]: an image-heavy thread can fire dozens of
+ * concurrent requests (each with its own redirect hop), and re-reading the encrypted
+ * token store for every one of them is needless repeated decrypt/IO work. The short TTL
+ * bounds how long a stale cookie can linger after a re-login, rather than requiring this
+ * interceptor to hook into the login/logout flow to invalidate it.
+ */
 private class RavelrySessionCookieInterceptor(
     private val sessionCookie: () -> String?,
 ) : Interceptor {
+    @Volatile private var cached: String? = null
+    @Volatile private var cachedAtMs: Long = 0L
+
+    private fun currentCookie(): String? {
+        val now = System.currentTimeMillis()
+        if (now - cachedAtMs > CACHE_TTL_MS) {
+            cached = sessionCookie()
+            cachedAtMs = now
+        }
+        return cached
+    }
+
+    private companion object {
+        const val CACHE_TTL_MS = 30_000L
+    }
 
     override fun intercept(chain: Interceptor.Chain): Response {
         val request = chain.request()
         val host = request.url.host
         val isRavelry = host == "ravelry.com" || host.endsWith(".ravelry.com")
         if (!isRavelry) return chain.proceed(request)
-        val cookie = sessionCookie() ?: return chain.proceed(request)
-        return chain.proceed(request.newBuilder().header("Cookie", cookie).build())
+        val cookie = currentCookie() ?: return chain.proceed(request)
+        // No CookieJar is configured on this client, so there's no other Cookie source
+        // today — but merge rather than clobber if one's ever added later. Per RFC 6265,
+        // a Cookie header is a single semicolon-separated line, not repeated headers.
+        val existing = request.header("Cookie")
+        val merged = if (existing == null) cookie else "$existing; $cookie"
+        return chain.proceed(request.newBuilder().header("Cookie", merged).build())
     }
 }

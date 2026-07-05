@@ -183,6 +183,11 @@ class MarkdownPostParserTest {
     }
 
     @Test
+    fun `plainText keeps a literal asterisk used as punctuation, not emphasis`() {
+        assertEquals("Rated C* and 3*4=12", MarkdownPostParser.plainText("Rated C* and 3*4=12"))
+    }
+
+    @Test
     fun `plainText drops images and keeps surrounding text`() {
         assertEquals(
             "Here's mine:",
