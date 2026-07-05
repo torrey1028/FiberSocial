@@ -91,7 +91,7 @@ class MainActivity : ComponentActivity() {
                                 this@MainActivity,
                                 KeyValueNotificationSettingsStore(
                                     plainKeyValueStore(this@MainActivity, NOTIFICATION_SETTINGS_PREFS_NAME),
-                                ).load().pollIntervalHours,
+                                ).load().effectivePollCadence,
                             )
                         }
                         // On session expiry: show WebView login before clearing auth so there's no

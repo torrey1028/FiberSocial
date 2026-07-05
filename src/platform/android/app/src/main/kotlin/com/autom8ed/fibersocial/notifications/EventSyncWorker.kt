@@ -95,16 +95,13 @@ class EventSyncWorker(
         private const val UNIQUE_ONCE_WORK_NAME = "event_sync_once"
 
         /**
-         * Registers (or re-registers, when [pollIntervalHours] changed) the periodic
-         * sync. UPDATE keeps the existing schedule's timing when nothing changed.
+         * Registers (or re-registers, when [cadence] changed) the periodic sync.
+         * UPDATE keeps the existing schedule's timing when nothing changed.
          */
-        fun schedulePeriodic(context: Context, pollIntervalHours: Int) {
-            // Clamp through the settings model: an off-menu persisted value (corrupt
-            // JSON, future migration) would make PeriodicWorkRequestBuilder throw and
-            // crash the authenticated startup path that calls this.
-            val safeHours = NotificationSettings(pollIntervalHours).effectivePollIntervalHours
+        fun schedulePeriodic(context: Context, cadence: PollCadence) {
+            val hours = cadence.workManagerPollIntervalHours()
             val request = PeriodicWorkRequestBuilder<EventSyncWorker>(
-                safeHours.toLong(), TimeUnit.HOURS,
+                hours.toLong(), TimeUnit.HOURS,
             )
                 .setConstraints(
                     Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build(),
@@ -115,7 +112,7 @@ class EventSyncWorker(
                 ExistingPeriodicWorkPolicy.UPDATE,
                 request,
             )
-            println("FiberSocial: EventSyncWorker scheduled every ${safeHours}h")
+            println("FiberSocial: EventSyncWorker scheduled every ${hours}h ($cadence)")
         }
 
         /** Runs one sync immediately; used by the debug panel. */
@@ -138,4 +135,11 @@ class EventSyncWorker(
             )
         }
     }
+}
+
+/** Maps a qualitative cadence to the concrete `WorkManager` periodic interval it runs at. */
+private fun PollCadence.workManagerPollIntervalHours(): Int = when (this) {
+    PollCadence.HOURLY -> 1
+    PollCadence.A_FEW_TIMES_A_DAY -> 6
+    PollCadence.ONCE_A_DAY -> 24
 }

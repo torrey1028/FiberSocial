@@ -37,14 +37,14 @@ class KeyValueNotificationSettingsStoreTest {
     @Test
     fun `load defaults when nothing saved`() = runTest {
         val store = KeyValueNotificationSettingsStore(FakeKeyValueStore())
-        assertEquals(NotificationSettings.DEFAULT_POLL_INTERVAL_HOURS, store.load().pollIntervalHours)
+        assertEquals(NotificationSettings.DEFAULT_POLL_CADENCE, store.load().effectivePollCadence)
     }
 
     @Test
     fun `save then load round-trips`() = runTest {
         val store = KeyValueNotificationSettingsStore(FakeKeyValueStore())
-        store.save(NotificationSettings(pollIntervalHours = 12))
-        assertEquals(12, store.load().pollIntervalHours)
+        store.save(NotificationSettings(pollCadence = PollCadence.ONCE_A_DAY))
+        assertEquals(PollCadence.ONCE_A_DAY, store.load().effectivePollCadence)
     }
 
     @Test
@@ -52,8 +52,8 @@ class KeyValueNotificationSettingsStoreTest {
         val fake = FakeKeyValueStore()
         fake.putString("settings", "not json")
         assertEquals(
-            NotificationSettings.DEFAULT_POLL_INTERVAL_HOURS,
-            KeyValueNotificationSettingsStore(fake).load().pollIntervalHours,
+            NotificationSettings.DEFAULT_POLL_CADENCE,
+            KeyValueNotificationSettingsStore(fake).load().effectivePollCadence,
         )
     }
 }
