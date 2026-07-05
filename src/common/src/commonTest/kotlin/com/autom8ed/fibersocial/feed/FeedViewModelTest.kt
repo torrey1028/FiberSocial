@@ -4,7 +4,10 @@ import com.autom8ed.fibersocial.auth.SessionExpiredException
 import com.autom8ed.fibersocial.feed.models.Group
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertTrue
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -14,6 +17,16 @@ import kotlinx.coroutines.test.runTest
 class FeedViewModelTest {
     private suspend fun awaitChildren(job: Job) =
         job.children.toList().forEach { it.join() }
+
+    /**
+     * Joins every child of [job] except [excluded]. Whether the non-excluded call's
+     * coroutine is still active or has already resolved synchronously is platform-
+     * dependent (observed to differ between the JVM and Robolectric test targets), so
+     * this tolerates it having already completed and dropped out of [Job.children]
+     * rather than assuming a fresh child is always present to find.
+     */
+    private suspend fun awaitChildrenExcept(job: Job, excluded: Job) =
+        job.children.filter { it != excluded }.toList().forEach { it.join() }
 
     private val group = Group(id = 10L, name = "KAL Hub", permalink = "kal-hub", forumId = 42L)
 
@@ -328,5 +341,233 @@ class FeedViewModelTest {
             awaitChildren(coroutineContext[Job]!!)
             val after = assertIs<FeedState.Loaded>(vm.state.value)
             assertEquals(group, after.selectedGroup)
+        }
+
+    /** Two-page repo for the single group above: page 1 has topic 100, page 2 has topic 200. */
+    private fun twoPageRepo(): FeedRepository {
+        var forumCallCount = 0
+        return FeedRepository(routingApiClient { path ->
+            when {
+                path.contains("/current_user") -> CURRENT_USER_JSON
+                path.contains("memberships") -> MEMBERSHIPS_HTML
+                path.contains("/groups/search") -> GROUPS_JSON
+                path.contains("/forums/") -> {
+                    forumCallCount++
+                    if (forumCallCount == 1) {
+                        """{"topics":[{"id":100,"title":"Topic 100"}],
+                            "paginator":{"page":1,"page_count":2,"results":2}}"""
+                    } else {
+                        """{"topics":[{"id":200,"title":"Topic 200"}],
+                            "paginator":{"page":2,"page_count":2,"results":2}}"""
+                    }
+                }
+                path.contains("/topics/") ->
+                    topicDetailJson(path.split("/topics/")[1].replace(".json", "").toLong())
+                else -> error("Unexpected: $path")
+            }
+        })
+    }
+
+    @Test
+    fun `load reports hasMore true when the first page is not the last`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val vm = FeedViewModel(twoPageRepo(), this, FakeGroupOrderStore())
+            vm.load()
+            awaitChildren(coroutineContext[Job]!!)
+            val state = assertIs<FeedState.Loaded>(vm.state.value)
+            assertEquals(listOf(100L), state.items.map { it.id })
+            assertTrue(state.hasMore)
+        }
+
+    @Test
+    fun `loadMore appends the next page and clears hasMore once exhausted`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val vm = FeedViewModel(twoPageRepo(), this, FakeGroupOrderStore())
+            vm.load()
+            awaitChildren(coroutineContext[Job]!!)
+
+            vm.loadMore()
+            awaitChildren(coroutineContext[Job]!!)
+            val after = assertIs<FeedState.Loaded>(vm.state.value)
+            assertEquals(listOf(100L, 200L), after.items.map { it.id })
+            assertFalse(after.hasMore)
+            assertFalse(after.loadingMore)
+        }
+
+    @Test
+    fun `loadMore is a no-op when hasMore is false`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = FeedViewModel(successRepo(), this, FakeGroupOrderStore())
+        vm.load()
+        awaitChildren(coroutineContext[Job]!!)
+        val before = assertIs<FeedState.Loaded>(vm.state.value)
+        assertFalse(before.hasMore)
+
+        vm.loadMore()
+        awaitChildren(coroutineContext[Job]!!)
+        assertEquals(before, vm.state.value)
+    }
+
+    @Test
+    fun `loadMore is a no-op when state is not Loaded`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = FeedViewModel(twoPageRepo(), this, FakeGroupOrderStore())
+        vm.loadMore()
+        awaitChildren(coroutineContext[Job]!!)
+        assertIs<FeedState.Loading>(vm.state.value)
+    }
+
+    @Test
+    fun `loadMore sets loadingMore synchronously so a second call is ignored while in flight`() =
+        runTest(UnconfinedTestDispatcher()) {
+            // Gated so the "still in flight" window is deterministic rather than
+            // dependent on whether the underlying fetch happens to suspend for real —
+            // that's platform-dependent (observed to differ between the JVM and
+            // Robolectric test targets) and made this assertion flaky.
+            val gate = CompletableDeferred<Unit>()
+            val vm = FeedViewModel(gatedTwoPageRepo(gate), this, FakeGroupOrderStore())
+            vm.load()
+            awaitChildren(coroutineContext[Job]!!)
+
+            vm.loadMore()
+            val midFlight = assertIs<FeedState.Loaded>(vm.state.value)
+            assertTrue(midFlight.loadingMore)
+
+            // A second call while the first is still in flight must no-op, not double-fetch.
+            vm.loadMore()
+            gate.complete(Unit)
+            awaitChildren(coroutineContext[Job]!!)
+            val after = assertIs<FeedState.Loaded>(vm.state.value)
+            assertEquals(listOf(100L, 200L), after.items.map { it.id })
+        }
+
+    /**
+     * Two-page repo for the single group above whose page-2 request suspends on [gate]
+     * until the test completes it — lets a test hold a `loadMore()` fetch in flight while
+     * driving other ViewModel calls to completion.
+     */
+    private fun gatedTwoPageRepo(gate: CompletableDeferred<Unit>): FeedRepository =
+        FeedRepository(
+            suspendableRoutingApiClient { url ->
+                val path = url.encodedPath
+                when {
+                    path.contains("/current_user") -> CURRENT_USER_JSON
+                    path.contains("memberships") -> MEMBERSHIPS_HTML
+                    path.contains("/groups/search") -> GROUPS_JSON
+                    path.contains("/forums/") ->
+                        if (url.parameters["page"] == "2") {
+                            gate.await()
+                            """{"topics":[{"id":200,"title":"Topic 200"}],
+                                "paginator":{"page":2,"page_count":2,"results":2}}"""
+                        } else {
+                            """{"topics":[{"id":100,"title":"Topic 100"}],
+                                "paginator":{"page":1,"page_count":2,"results":2}}"""
+                        }
+                    path.contains("/topics/") ->
+                        topicDetailJson(path.split("/topics/")[1].replace(".json", "").toLong())
+                    else -> error("Unexpected: $path")
+                }
+            },
+        )
+
+    @Test
+    fun `loadMore discards its stale page if a refresh completes first`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val gate = CompletableDeferred<Unit>()
+            val vm = FeedViewModel(gatedTwoPageRepo(gate), this, FakeGroupOrderStore())
+            val parentJob = coroutineContext[Job]!!
+            vm.load()
+            awaitChildren(parentJob)
+            assertEquals(listOf(100L), (vm.state.value as FeedState.Loaded).items.map { it.id })
+
+            // Starts the page-2 fetch, which parks on `gate` — loadingMore stays true
+            // until the test lets it through below. Capture its Job by reference so later
+            // steps can await specific coroutines without joining this still-parked one.
+            vm.loadMore()
+            assertTrue((vm.state.value as FeedState.Loaded).loadingMore)
+            val loadMoreJob = parentJob.children.single()
+
+            // A refresh for the same group completes in full while the page-2 fetch is
+            // still in flight, replacing state with a brand-new page-1 Loaded instance.
+            vm.refresh()
+            awaitChildrenExcept(parentJob, loadMoreJob)
+            val refreshed = assertIs<FeedState.Loaded>(vm.state.value)
+            assertEquals(listOf(100L), refreshed.items.map { it.id })
+            assertFalse(refreshed.loadingMore)
+
+            // Now let the stale page-2 fetch resolve. Before the fix, its guard only
+            // compared group id (unchanged) and would splice topic 200 onto the
+            // already-refreshed items. It must be discarded instead.
+            gate.complete(Unit)
+            loadMoreJob.join()
+            val after = assertIs<FeedState.Loaded>(vm.state.value)
+            assertEquals(listOf(100L), after.items.map { it.id })
+            assertEquals(refreshed, after)
+        }
+
+    @Test
+    fun `loadMore failure does not clobber state after the user switched groups`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val group2 = Group(id = 11L, name = "Sock Society", permalink = "sock", forumId = 43L)
+            val gate = CompletableDeferred<Unit>()
+            val repo = FeedRepository(
+                suspendableRoutingApiClient { url ->
+                    val path = url.encodedPath
+                    when {
+                        path.contains("/current_user") -> CURRENT_USER_JSON
+                        path.contains("memberships") ->
+                            """<html><body>
+                            <a href="https://www.ravelry.com/groups/kal-hub">KAL Hub</a>
+                            <a href="https://www.ravelry.com/groups/sock">Sock Society</a>
+                            </body></html>"""
+                        path.contains("/groups/search") ->
+                            """{"groups":[
+                                {"id":10,"name":"KAL Hub","permalink":"kal-hub","forum_id":42},
+                                {"id":11,"name":"Sock Society","permalink":"sock","forum_id":43}
+                            ]}"""
+                        path.contains("/forums/42/") -> {
+                            // group 1 (KAL Hub)'s first page reports a further page so
+                            // loadMore() is reachable, then its page-2 fetch parks on
+                            // `gate` and fails once released.
+                            if (url.parameters["page"] == "2") {
+                                gate.await()
+                                error("Simulated failure for a superseded loadMore fetch")
+                            } else {
+                                """{"topics":[{"id":100,"title":"Topic 100"}],
+                                    "paginator":{"page":1,"page_count":2,"results":2}}"""
+                            }
+                        }
+                        path.contains("/forums/43/") -> topicsJson(200L)
+                        path.contains("/topics/") ->
+                            topicDetailJson(path.split("/topics/")[1].replace(".json", "").toLong())
+                        else -> error("Unexpected: $path")
+                    }
+                },
+            )
+            val vm = FeedViewModel(repo, this, FakeGroupOrderStore())
+            val parentJob = coroutineContext[Job]!!
+            vm.load()
+            awaitChildren(parentJob)
+            assertEquals(group, (vm.state.value as FeedState.Loaded).selectedGroup)
+
+            // Starts group 1's page-2 fetch, which parks on `gate`. Capture its Job by
+            // reference so later steps can await specific coroutines without joining
+            // this still-parked one.
+            vm.loadMore()
+            assertTrue((vm.state.value as FeedState.Loaded).loadingMore)
+            val loadMoreJob = parentJob.children.single()
+
+            // The user switches to group 2 before the stuck fetch resolves.
+            vm.selectGroup(group2)
+            awaitChildrenExcept(parentJob, loadMoreJob)
+            val switched = assertIs<FeedState.Loaded>(vm.state.value)
+            assertEquals(group2, switched.selectedGroup)
+
+            // Now the superseded fetch fails. Before the fix, the catch block
+            // unconditionally reverted `_state.value` to the pre-fetch group-1 snapshot,
+            // even though the user has since moved on to group 2.
+            gate.complete(Unit)
+            loadMoreJob.join()
+            val after = assertIs<FeedState.Loaded>(vm.state.value)
+            assertEquals(group2, after.selectedGroup)
+            assertEquals(switched, after)
         }
 }

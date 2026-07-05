@@ -202,30 +202,65 @@ class RavelryApiClientTest {
     @Test
     fun `getGroupTopics returns topics list`() = runTest {
         val client = routingApiClient { topicsJson(100L, 101L) }
-        val topics = client.getGroupTopics(42L)
-        assertEquals(2, topics.size)
-        assertEquals(100L, topics[0].id)
-        assertEquals(101L, topics[1].id)
+        val page = client.getGroupTopics(42L)
+        assertEquals(2, page.topics.size)
+        assertEquals(100L, page.topics[0].id)
+        assertEquals(101L, page.topics[1].id)
     }
 
     @Test
     fun `getGroupTopics defaults to empty when the response omits the topics field`() = runTest {
         val client = routingApiClient { "{}" }
-        assertEquals(emptyList(), client.getGroupTopics(42L))
+        assertEquals(emptyList(), client.getGroupTopics(42L).topics)
     }
 
     @Test
     fun `getGroupTopics tolerates a partial paginator object`() = runTest {
         val client = routingApiClient { """{"topics":[{"id":100,"title":"Topic 100"}],"paginator":{"page":2}}""" }
-        val topics = client.getGroupTopics(42L)
-        assertEquals(1, topics.size)
-        assertEquals(100L, topics[0].id)
+        val page = client.getGroupTopics(42L)
+        assertEquals(1, page.topics.size)
+        assertEquals(100L, page.topics[0].id)
     }
 
     @Test
     fun `getGroupTopics returns empty list when forum has no topics`() = runTest {
         val client = routingApiClient { """{"topics":[]}""" }
-        assertEquals(emptyList(), client.getGroupTopics(42L))
+        assertEquals(emptyList(), client.getGroupTopics(42L).topics)
+    }
+
+    @Test
+    fun `getGroupTopics reports hasMore true when more pages remain`() = runTest {
+        val client = routingApiClient {
+            """{"topics":[{"id":100,"title":"Topic 100"}],"paginator":{"page":1,"page_count":3,"results":60}}"""
+        }
+        val page = client.getGroupTopics(42L)
+        assertTrue(page.hasMore)
+        assertEquals(1, page.page)
+    }
+
+    @Test
+    fun `getGroupTopics reports hasMore false on the last page`() = runTest {
+        val client = routingApiClient {
+            """{"topics":[{"id":100,"title":"Topic 100"}],"paginator":{"page":3,"page_count":3,"results":60}}"""
+        }
+        val page = client.getGroupTopics(42L)
+        assertFalse(page.hasMore)
+        assertEquals(3, page.page)
+    }
+
+    @Test
+    fun `getGroupTopics reports hasMore false when the paginator is absent`() = runTest {
+        val client = routingApiClient { topicsJson(100L) }
+        assertFalse(client.getGroupTopics(42L).hasMore)
+    }
+
+    @Test
+    fun `getGroupTopics sends the requested page and page size`() = runTest {
+        var capturedUrl: io.ktor.http.Url? = null
+        val client = routingApiClientCapturing(onRequest = { capturedUrl = it }) { topicsJson(100L) }
+        client.getGroupTopics(42L, page = 2, pageSize = 50)
+        assertEquals("2", capturedUrl?.parameters?.get("page"))
+        assertEquals("50", capturedUrl?.parameters?.get("page_size"))
     }
 
     @Test
@@ -586,6 +621,21 @@ class RavelryApiClientTest {
     }
 
     @Test
+    fun `getGroupEvents throws ForbiddenException on 403 rather than bouncing to login`() = runTest {
+        // A 403 means the session is valid but the page is off-limits (permission), not
+        // expiry — it must not surface as SessionExpiredException (issue #82).
+        val client = htmlApiClient(MockEngine { _ ->
+            respond("", HttpStatusCode.Forbidden)
+        })
+        val e = assertFailsWith<ForbiddenException> { client.getGroupEvents("members-only-group") }
+        // FeedErrorState pattern-matches "401"/"403" in the message to detect expired
+        // sessions — a message containing that digit would defeat this classification.
+        val message = e.message ?: ""
+        assertFalse(message.contains("403"))
+        assertFalse(message.contains("401"))
+    }
+
+    @Test
     fun `getGroupEvents throws SessionExpiredException when redirected to the login page`() = runTest {
         // An expired session cookie doesn't 401 on www.ravelry.com — it 302s to the login
         // page, which Ktor follows to a 200. The client must not mistake that for a group
@@ -645,6 +695,17 @@ class RavelryApiClientTest {
             respond("", HttpStatusCode.Unauthorized)
         })
         assertFailsWith<SessionExpiredException> { client.getEvent("some-event") }
+    }
+
+    @Test
+    fun `getEvent throws ForbiddenException on 403 rather than bouncing to login`() = runTest {
+        val client = htmlApiClient(MockEngine { _ ->
+            respond("", HttpStatusCode.Forbidden)
+        })
+        val e = assertFailsWith<ForbiddenException> { client.getEvent("restricted-event") }
+        val message = e.message ?: ""
+        assertFalse(message.contains("403"))
+        assertFalse(message.contains("401"))
     }
 
     @Test
@@ -723,6 +784,17 @@ class RavelryApiClientTest {
     }
 
     @Test
+    fun `getEventAttendees throws ForbiddenException on 403 rather than bouncing to login`() = runTest {
+        val client = htmlApiClient(MockEngine { _ ->
+            respond("", HttpStatusCode.Forbidden)
+        })
+        val e = assertFailsWith<ForbiddenException> { client.getEventAttendees("private-event") }
+        val message = e.message ?: ""
+        assertFalse(message.contains("403"))
+        assertFalse(message.contains("401"))
+    }
+
+    @Test
     fun `getSavedEvents scrapes the saved-events page with the session cookie`() = runTest {
         var requestedUrl = ""
         var sentCookie: String? = null
@@ -757,6 +829,17 @@ class RavelryApiClientTest {
             respond("", HttpStatusCode.Unauthorized)
         })
         assertFailsWith<SessionExpiredException> { client.getSavedEvents() }
+    }
+
+    @Test
+    fun `getSavedEvents throws ForbiddenException on 403 rather than bouncing to login`() = runTest {
+        val client = htmlApiClient(MockEngine { _ ->
+            respond("", HttpStatusCode.Forbidden)
+        })
+        val e = assertFailsWith<ForbiddenException> { client.getSavedEvents() }
+        val message = e.message ?: ""
+        assertFalse(message.contains("403"))
+        assertFalse(message.contains("401"))
     }
 
     @Test

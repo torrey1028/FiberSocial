@@ -17,6 +17,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Fails fast (no JDK/Gradle needed) if a top-level type is declared in both
+      # :common and :app — a silent dex-merge collision that crashes at runtime with
+      # no compile error (see #155/#156).
+      - name: Check for cross-module class collisions
+        run: python3 scripts/check_module_collisions.py
+
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:

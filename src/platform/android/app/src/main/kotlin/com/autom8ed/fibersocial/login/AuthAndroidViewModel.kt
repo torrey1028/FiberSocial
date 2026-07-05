@@ -47,7 +47,14 @@ class AuthAndroidViewModel(app: Application) : AndroidViewModel(app) {
 
     fun buildAuthUrl(): String = authManager.buildAuthUrl(BuildConfig.RAVELRY_CLIENT_ID)
 
-    fun handleAuthCode(code: String, sessionCookie: String) {
+    fun handleAuthCode(code: String, state: String?, sessionCookie: String) {
+        // Reject a redirect whose state doesn't match the one we issued before exchanging
+        // the code — login-CSRF defense (issue #149).
+        if (!authManager.validateState(state)) {
+            println("FiberSocial: OAuth state mismatch — rejecting login (possible CSRF)")
+            auth.failLogin("Login could not be verified. Please try again.")
+            return
+        }
         auth.onAuthCodeReceived(
             authCode = code,
             codeVerifier = authManager.consumeCodeVerifier(),
