@@ -4,13 +4,15 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.autom8ed.fibersocial.BuildConfig
-import com.autom8ed.fibersocial.auth.AndroidTokenStorage
+import com.autom8ed.fibersocial.auth.KeyValueTokenStorage
 import com.autom8ed.fibersocial.events.EventDetailViewModel
 import com.autom8ed.fibersocial.events.EventsViewModel
 import com.autom8ed.fibersocial.net.ravelryApiClient
 import com.autom8ed.fibersocial.net.ravelryAuthRepository
 import com.autom8ed.fibersocial.net.ravelryHttpClient
 import com.autom8ed.fibersocial.notifications.EventSyncWorker
+import com.autom8ed.fibersocial.storage.AUTH_PREFS_NAME
+import com.autom8ed.fibersocial.storage.encryptedKeyValueStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.launch
@@ -18,7 +20,7 @@ import kotlinx.coroutines.launch
 class FeedAndroidViewModel(app: Application) : AndroidViewModel(app) {
 
     private val httpClient = ravelryHttpClient()
-    private val tokenStorage = AndroidTokenStorage(app)
+    private val tokenStorage = KeyValueTokenStorage(encryptedKeyValueStore(app, AUTH_PREFS_NAME))
     private val authRepository = ravelryAuthRepository(
         httpClient = httpClient,
         tokenStorage = tokenStorage,

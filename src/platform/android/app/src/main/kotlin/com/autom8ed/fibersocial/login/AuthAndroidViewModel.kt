@@ -4,16 +4,18 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.autom8ed.fibersocial.BuildConfig
-import com.autom8ed.fibersocial.auth.AndroidTokenStorage
 import com.autom8ed.fibersocial.auth.AuthViewModel
+import com.autom8ed.fibersocial.auth.KeyValueTokenStorage
 import com.autom8ed.fibersocial.net.ravelryAuthRepository
 import com.autom8ed.fibersocial.net.ravelryHttpClient
+import com.autom8ed.fibersocial.storage.AUTH_PREFS_NAME
+import com.autom8ed.fibersocial.storage.encryptedKeyValueStore
 
 class AuthAndroidViewModel(app: Application) : AndroidViewModel(app) {
 
     private val httpClient = ravelryHttpClient()
     private val authManager = RavelryAuthManager()
-    private val tokenStorage = AndroidTokenStorage(app)
+    private val tokenStorage = KeyValueTokenStorage(encryptedKeyValueStore(app, AUTH_PREFS_NAME))
     private val repository = ravelryAuthRepository(
         httpClient = httpClient,
         tokenStorage = tokenStorage,

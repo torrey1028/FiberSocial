@@ -12,11 +12,15 @@ import androidx.work.WorkerParameters
 import androidx.work.Constraints
 import com.autom8ed.fibersocial.BuildConfig
 import kotlinx.coroutines.CancellationException
-import com.autom8ed.fibersocial.auth.AndroidTokenStorage
+import com.autom8ed.fibersocial.auth.KeyValueTokenStorage
 import com.autom8ed.fibersocial.auth.SessionExpiredException
 import com.autom8ed.fibersocial.net.ravelryApiClient
 import com.autom8ed.fibersocial.net.ravelryAuthRepository
 import com.autom8ed.fibersocial.net.ravelryHttpClient
+import com.autom8ed.fibersocial.storage.AUTH_PREFS_NAME
+import com.autom8ed.fibersocial.storage.NOTIFICATION_STATE_PREFS_NAME
+import com.autom8ed.fibersocial.storage.encryptedKeyValueStore
+import com.autom8ed.fibersocial.storage.plainKeyValueStore
 import java.util.concurrent.TimeUnit
 import kotlinx.datetime.Clock
 import kotlinx.datetime.TimeZone
@@ -35,7 +39,7 @@ class EventSyncWorker(
         println("FiberSocial: EventSyncWorker starting (attempt $runAttemptCount)")
         val httpClient = ravelryHttpClient()
         return try {
-            val tokenStorage = AndroidTokenStorage(applicationContext)
+            val tokenStorage = KeyValueTokenStorage(encryptedKeyValueStore(applicationContext, AUTH_PREFS_NAME))
             if (tokenStorage.load() == null) {
                 println("FiberSocial: EventSyncWorker skipping — not logged in")
                 return Result.success()
@@ -47,7 +51,10 @@ class EventSyncWorker(
                 clientSecret = BuildConfig.RAVELRY_CLIENT_SECRET,
             )
             val apiClient = ravelryApiClient(httpClient, tokenStorage, authRepository)
-            val runner = EventSyncRunner(apiClient, AndroidNotificationStateStore(applicationContext))
+            val runner = EventSyncRunner(
+                apiClient,
+                KeyValueNotificationStateStore(plainKeyValueStore(applicationContext, NOTIFICATION_STATE_PREFS_NAME)),
+            )
             val plan = runner.sync(Clock.System.now(), TimeZone.currentSystemDefault())
             apply(plan)
             Result.success()
