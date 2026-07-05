@@ -139,7 +139,17 @@ object MarkdownPostParser {
             when (inline) {
                 is Inline.Text -> splitShortcodes(inline.text, emoji)
                 is Inline.Styled -> listOf(inline.copy(children = inline.children.substituteEmoji(emoji)))
-                is Inline.Link -> listOf(inline.copy(children = inline.children.substituteEmoji(emoji)))
+                is Inline.Link ->
+                    // A bare-URL autolink displays its own href as its text (indistinguishable
+                    // from a manually-authored link by this point — both rendered to the same
+                    // <a> HTML). If that URL happens to contain a `:shortcode:`-shaped
+                    // substring, substituting would splice an emoji image into the middle of
+                    // visible link text while href stays untouched, mismatching what's shown
+                    // from where it points. Skip substitution specifically for that case.
+                    listOf(
+                        if (inlinePlainText(inline.children) == inline.href) inline
+                        else inline.copy(children = inline.children.substituteEmoji(emoji)),
+                    )
                 // Inline.Code deliberately untouched: `:smile:` in code stays literal.
                 else -> listOf(inline)
             }

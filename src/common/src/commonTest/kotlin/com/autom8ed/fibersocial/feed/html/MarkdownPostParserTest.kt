@@ -166,6 +166,16 @@ class MarkdownPostParserTest {
     }
 
     @Test
+    fun `a bare-url autolink is left untouched even if it contains a shortcode-shaped substring`() {
+        // The link's displayed text IS its href (an autolink) — splicing an emoji image
+        // into the middle of it would show something the href no longer matches.
+        val url = "http://example.com/:purple_heart:/page"
+        val link = singleParagraph(url, renderedHtml = emoHtml).filterIsInstance<Inline.Link>().single()
+        assertEquals(listOf<Inline>(Inline.Text(url)), link.children)
+        assertEquals(url, link.href)
+    }
+
+    @Test
     fun `plainText unwraps paired emphasis and links`() {
         assertEquals(
             "Please use this thread for patterns",
