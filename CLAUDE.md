@@ -24,6 +24,7 @@
 - Required `local.properties` keys: `release.store.file` (path relative to `src/platform/android/`), `release.store.password`, `release.key.alias`, `release.key.password`.
 - The actual keystore file (`*.keystore`/`*.jks`, gitignored) doesn't come along with `git worktree add` any more than `local.properties` does — copy it into a fresh worktree from an existing checkout alongside `local.properties`, don't regenerate it (a new keystore produces a different signature and can't upgrade-install over an app signed by the old one).
 - CI (`android-build.yml`) builds and uploads a signed `app-release` artifact too, once the `RELEASE_KEYSTORE_BASE64` repo secret (and its companion password/alias secrets) are set — see the Secrets section above.
+- Every push to `main` also republishes a rolling `latest` GitHub Release with the signed APK attached, giving a permanent, unauthenticated download link that always points at the newest build: `https://github.com/torrey1028/FiberSocial/releases/latest/download/app-release.apk`. The workflow deletes and recreates the `latest` tag/release each run (`gh release delete latest --cleanup-tag` then `gh release create latest --target "$GITHUB_SHA"`) so it always points at the commit that was actually built, rather than editing an older release in place.
 
 ## Logging
 
