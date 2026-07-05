@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.autom8ed.fibersocial.BuildConfig
 import com.autom8ed.fibersocial.auth.AuthViewModel
 import com.autom8ed.fibersocial.auth.KeyValueTokenStorage
+import com.autom8ed.fibersocial.auth.RavelryAuthManager
 import com.autom8ed.fibersocial.net.ravelryAuthRepository
 import com.autom8ed.fibersocial.net.ravelryHttpClient
 import com.autom8ed.fibersocial.storage.AUTH_PREFS_NAME
