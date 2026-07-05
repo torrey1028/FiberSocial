@@ -49,14 +49,14 @@ class FeedbackViewModelTest {
     @Test
     fun `send posts feedback and transitions to Sent`() = runTest(UnconfinedTestDispatcher()) {
         val vm = FeedbackViewModel(routingApiClient { topicCreateResponseJson(id = 8001L) }, this)
-        vm.send("The feed scrolls to the top on refresh", deviceInfoSample())
+        vm.send("Scroll bug", "The feed scrolls to the top on refresh", deviceInfoSample())
         awaitChildren(coroutineContext[Job]!!)
         val state = assertIs<FeedbackState.Sent>(vm.state.value)
         assertEquals(8001L, state.topic.id)
     }
 
     @Test
-    fun `send targets the support forum with a derived title and body including details`() =
+    fun `send targets the support forum with a prefixed title and body including details`() =
         runTest(UnconfinedTestDispatcher()) {
             var forumId: String? = null
             var title: String? = null
@@ -77,19 +77,28 @@ class FeedbackViewModelTest {
             }
             val vm = FeedbackViewModel(RavelryApiClient(client, FakeFeedTokenStorage()), this)
 
-            vm.send("Crash on opening a photo\nSteps: tap any WIP post", "App: FiberSocial 1.0 (build 1)")
+            vm.send("Photo crash", "Tap any WIP post to reproduce", "App: FiberSocial 1.0 (build 1)")
             awaitChildren(coroutineContext[Job]!!)
 
             assertEquals(SupportGroup.FORUM_ID.toString(), forumId)
-            assertEquals("Crash on opening a photo", title)
-            assertTrue(body!!.startsWith("Crash on opening a photo"))
+            // Title is the entered subject with the [App Feedback] prefix — not the body.
+            assertEquals("[App Feedback] Photo crash", title)
+            assertTrue(body!!.startsWith("Tap any WIP post to reproduce"))
             assertTrue("App: FiberSocial 1.0 (build 1)" in body!!)
         }
 
     @Test
+    fun `send ignores a blank title`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = FeedbackViewModel(errorApiClient(), this)
+        vm.send("   ", "a real description", "some details")
+        awaitChildren(coroutineContext[Job]!!)
+        assertIs<FeedbackState.Idle>(vm.state.value)
+    }
+
+    @Test
     fun `send ignores a blank description`() = runTest(UnconfinedTestDispatcher()) {
         val vm = FeedbackViewModel(errorApiClient(), this)
-        vm.send("   \n  ", "some details")
+        vm.send("A title", "   \n  ", "some details")
         awaitChildren(coroutineContext[Job]!!)
         assertIs<FeedbackState.Idle>(vm.state.value)
     }
@@ -98,7 +107,7 @@ class FeedbackViewModelTest {
     fun `a 403 becomes NeedsMembership, not an error or login bounce`() =
         runTest(UnconfinedTestDispatcher()) {
             val vm = FeedbackViewModel(statusApiClient(HttpStatusCode.Forbidden), this)
-            vm.send("I can't post", "")
+            vm.send("Can't post", "I can't post", "")
             awaitChildren(coroutineContext[Job]!!)
             assertIs<FeedbackState.NeedsMembership>(vm.state.value)
         }
@@ -106,7 +115,7 @@ class FeedbackViewModelTest {
     @Test
     fun `an unexpected failure becomes a recoverable Error`() = runTest(UnconfinedTestDispatcher()) {
         val vm = FeedbackViewModel(errorApiClient(), this)
-        vm.send("something broke", "")
+        vm.send("Broken", "something broke", "")
         awaitChildren(coroutineContext[Job]!!)
         assertIs<FeedbackState.Error>(vm.state.value)
         vm.reset()
@@ -117,7 +126,7 @@ class FeedbackViewModelTest {
     fun `session expiry signals sessionExpired and returns to Idle`() =
         runTest(UnconfinedTestDispatcher()) {
             val vm = FeedbackViewModel(sessionExpiredApiClient(), this)
-            vm.send("hello", "")
+            vm.send("Hi", "hello", "")
             awaitChildren(coroutineContext[Job]!!)
             assertIs<FeedbackState.Idle>(vm.state.value)
             assertEquals(Unit, vm.sessionExpired.first())
@@ -126,7 +135,7 @@ class FeedbackViewModelTest {
     @Test
     fun `acknowledgeSent resets Sent back to Idle`() = runTest(UnconfinedTestDispatcher()) {
         val vm = FeedbackViewModel(routingApiClient { topicCreateResponseJson() }, this)
-        vm.send("great app", "")
+        vm.send("Nice", "great app", "")
         awaitChildren(coroutineContext[Job]!!)
         assertIs<FeedbackState.Sent>(vm.state.value)
         vm.acknowledgeSent()
@@ -134,17 +143,12 @@ class FeedbackViewModelTest {
     }
 
     @Test
-    fun `feedbackTitle uses the first non-blank line`() {
-        assertEquals("Real first line", feedbackTitle("\n  \nReal first line\nmore text"))
+    fun `feedbackTitle prefixes the trimmed subject with the App Feedback tag`() {
+        assertEquals("[App Feedback] Photo crash", feedbackTitle("  Photo crash  "))
     }
 
     @Test
-    fun `feedbackTitle falls back to a default for a blank description`() {
-        assertEquals("App feedback", feedbackTitle("   \n\t "))
-    }
-
-    @Test
-    fun `feedbackTitle clamps to Ravelry's limit`() {
+    fun `feedbackTitle clamps to Ravelry's limit including the prefix`() {
         assertEquals(250, feedbackTitle("x".repeat(400)).length)
     }
 

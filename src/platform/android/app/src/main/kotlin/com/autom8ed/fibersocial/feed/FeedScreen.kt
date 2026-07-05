@@ -176,7 +176,7 @@ fun FeedScreen(
                 sendingFeedback = false
                 viewModel.feedback.reset()
             },
-            onSend = { description, details -> viewModel.feedback.send(description, details) },
+            onSend = { title, description, details -> viewModel.feedback.send(title, description, details) },
             onSent = {
                 sendingFeedback = false
                 viewModel.feedback.acknowledgeSent()

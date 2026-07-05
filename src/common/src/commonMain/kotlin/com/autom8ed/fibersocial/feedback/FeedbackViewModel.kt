@@ -14,8 +14,11 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 
-/** Ravelry's topic-title length limit; the derived title is clamped to it as a backstop. */
+/** Ravelry's topic-title length limit; the title is clamped to it as a backstop. */
 private const val MAX_TITLE_LENGTH = 250
+
+/** Prepended to every feedback topic's title so reports are recognizable in the group. */
+private const val TITLE_PREFIX = "[App Feedback] "
 
 /** State of an in-flight feedback submission. Mirrors [com.autom8ed.fibersocial.feed.NewTopicState]. */
 sealed class FeedbackState {
@@ -69,21 +72,23 @@ class FeedbackViewModel(
     val sessionExpired: Flow<Unit> = _sessionExpired.receiveAsFlow()
 
     /**
-     * Posts feedback as a new topic in the support group's forum. [description] is the
-     * user's report; [details] is optional app/device context appended under a divider
-     * (the user can edit or clear it in the composer). The topic title is derived from the
-     * first line of [description]. Blank descriptions and double-submits are ignored; a 403
-     * (not a posting member) becomes [FeedbackState.NeedsMembership] rather than an error.
+     * Posts feedback as a new topic in the support group's forum. [title] is the report's
+     * subject (posted with an `[App Feedback]` prefix — see [feedbackTitle]); [description]
+     * is the body; [details] is optional app/device context appended under a divider (the
+     * user can edit or clear it in the composer). Blank title/description and double-submits
+     * are ignored; a 403 (not a posting member) becomes [FeedbackState.NeedsMembership]
+     * rather than an error.
      */
-    fun send(description: String, details: String = "") {
+    fun send(title: String, description: String, details: String = "") {
+        val subject = title.trim()
         val desc = description.trim()
-        if (desc.isEmpty() || _state.value is FeedbackState.Sending) return
-        val title = feedbackTitle(desc)
+        if (subject.isEmpty() || desc.isEmpty() || _state.value is FeedbackState.Sending) return
+        val topicTitle = feedbackTitle(subject)
         val body = feedbackBody(desc, details)
         _state.value = FeedbackState.Sending
         scope.launch {
             try {
-                val topic = apiClient.createTopic(SupportGroup.FORUM_ID, title, body)
+                val topic = apiClient.createTopic(SupportGroup.FORUM_ID, topicTitle, body)
                 println("FiberSocial: FeedbackViewModel sent feedback topic ${topic.id}")
                 _state.value = FeedbackState.Sent(topic)
             } catch (e: CancellationException) {
@@ -116,11 +121,9 @@ class FeedbackViewModel(
     }
 }
 
-/** The topic title for a feedback report: its first non-blank line, clamped, or a default. */
-fun feedbackTitle(description: String): String {
-    val firstLine = description.lineSequence().map { it.trim() }.firstOrNull { it.isNotEmpty() }
-    return (firstLine ?: "App feedback").take(MAX_TITLE_LENGTH)
-}
+/** The topic title for a feedback report: the user's [subject], `[App Feedback]`-prefixed and clamped. */
+fun feedbackTitle(subject: String): String =
+    (TITLE_PREFIX + subject.trim()).take(MAX_TITLE_LENGTH)
 
 /** The topic body: the report, with any app/device [details] appended under a divider. */
 fun feedbackBody(description: String, details: String): String {

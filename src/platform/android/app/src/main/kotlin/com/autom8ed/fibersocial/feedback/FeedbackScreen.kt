@@ -57,7 +57,7 @@ fun deviceContext(): String {
  * @param state Current submission state from `FeedbackViewModel`.
  * @param deviceInfo Pre-filled app/device context (see [deviceContext]); editable.
  * @param onBack Dismiss without sending.
- * @param onSend Submit (description, details).
+ * @param onSend Submit (title, description, details).
  * @param onSent Acknowledge a successful send and close.
  * @param onOpenSupportGroup Open the group on Ravelry — shown when posting needs membership
  *   (stopgap until in-app join lands; see PR A / issue #57).
@@ -68,11 +68,12 @@ fun FeedbackScreen(
     state: FeedbackState,
     deviceInfo: String,
     onBack: () -> Unit,
-    onSend: (description: String, details: String) -> Unit,
+    onSend: (title: String, description: String, details: String) -> Unit,
     onSent: () -> Unit,
     onOpenSupportGroup: () -> Unit,
 ) {
     BackHandler(onBack = onBack)
+    var title by rememberSaveable { mutableStateOf("") }
     var description by rememberSaveable { mutableStateOf("") }
     var details by rememberSaveable { mutableStateOf(deviceInfo) }
     val sending = state is FeedbackState.Sending
@@ -104,9 +105,20 @@ fun FeedbackScreen(
         ) {
             Text(
                 text = "Feedback is posted as a topic in the FiberSocial App Support group on " +
-                    "Ravelry. Describe the issue or idea — the more detail, the better.",
+                    "Ravelry. Give it a short title and describe the issue or idea — the more " +
+                    "detail, the better.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+
+            OutlinedTextField(
+                value = title,
+                onValueChange = { title = it },
+                label = { Text("Title") },
+                prefix = { Text("[App Feedback] ") },
+                singleLine = true,
+                enabled = !sending,
+                modifier = Modifier.fillMaxWidth(),
             )
 
             OutlinedTextField(
@@ -149,8 +161,8 @@ fun FeedbackScreen(
             }
 
             Button(
-                onClick = { onSend(description, details) },
-                enabled = !sending && description.isNotBlank(),
+                onClick = { onSend(title, description, details) },
+                enabled = !sending && title.isNotBlank() && description.isNotBlank(),
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 if (sending) {
