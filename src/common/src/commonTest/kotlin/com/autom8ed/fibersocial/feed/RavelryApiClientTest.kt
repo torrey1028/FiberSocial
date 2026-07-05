@@ -586,6 +586,16 @@ class RavelryApiClientTest {
     }
 
     @Test
+    fun `getGroupEvents throws ForbiddenException on 403 rather than bouncing to login`() = runTest {
+        // A 403 means the session is valid but the page is off-limits (permission), not
+        // expiry — it must not surface as SessionExpiredException (issue #82).
+        val client = htmlApiClient(MockEngine { _ ->
+            respond("", HttpStatusCode.Forbidden)
+        })
+        assertFailsWith<ForbiddenException> { client.getGroupEvents("members-only-group") }
+    }
+
+    @Test
     fun `getGroupEvents throws SessionExpiredException when redirected to the login page`() = runTest {
         // An expired session cookie doesn't 401 on www.ravelry.com — it 302s to the login
         // page, which Ktor follows to a 200. The client must not mistake that for a group
@@ -645,6 +655,14 @@ class RavelryApiClientTest {
             respond("", HttpStatusCode.Unauthorized)
         })
         assertFailsWith<SessionExpiredException> { client.getEvent("some-event") }
+    }
+
+    @Test
+    fun `getEvent throws ForbiddenException on 403 rather than bouncing to login`() = runTest {
+        val client = htmlApiClient(MockEngine { _ ->
+            respond("", HttpStatusCode.Forbidden)
+        })
+        assertFailsWith<ForbiddenException> { client.getEvent("restricted-event") }
     }
 
     @Test
