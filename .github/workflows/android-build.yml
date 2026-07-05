@@ -53,6 +53,26 @@ jobs:
             exit 1
           fi
 
+      # Same textual-substitution hazard as the step above: env + printf %s,
+      # never ${{ }} inside the script. Only runs when the signing secret is
+      # configured, so fork PRs (and repos that haven't set it up yet) just
+      # skip release signing rather than failing.
+      - name: Write release signing config
+        if: ${{ secrets.RELEASE_KEYSTORE_BASE64 != '' }}
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          RELEASE_KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        run: |
+          echo "$RELEASE_KEYSTORE_BASE64" | base64 -d > src/platform/android/release.keystore
+          {
+            printf 'release.store.file=release.keystore\n'
+            printf 'release.store.password=%s\n' "$RELEASE_KEYSTORE_PASSWORD"
+            printf 'release.key.alias=%s\n' "$RELEASE_KEY_ALIAS"
+            printf 'release.key.password=%s\n' "$RELEASE_KEY_PASSWORD"
+          } >> src/platform/android/local.properties
+
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
@@ -69,4 +89,17 @@ jobs:
         with:
           name: app-debug
           path: src/platform/android/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 7
+
+      - name: Build release APK
+        if: ${{ secrets.RELEASE_KEYSTORE_BASE64 != '' }}
+        working-directory: src/platform/android
+        run: ./gradlew assembleRelease
+
+      - name: Upload release APK
+        if: ${{ secrets.RELEASE_KEYSTORE_BASE64 != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-release
+          path: src/platform/android/app/build/outputs/apk/release/app-release.apk
           retention-days: 7

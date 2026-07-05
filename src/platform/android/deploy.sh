@@ -4,8 +4,17 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
-echo "==> Building debug APK..."
-./gradlew assembleDebug
+BUILD_TYPE="debug"
+if [ "$1" = "--release" ]; then
+    BUILD_TYPE="release"
+fi
+
+echo "==> Building ${BUILD_TYPE} APK..."
+if [ "$BUILD_TYPE" = "release" ]; then
+    ./gradlew assembleRelease
+else
+    ./gradlew assembleDebug
+fi
 
 echo ""
 echo "==> Checking for connected devices..."
@@ -19,7 +28,7 @@ if [ "$DEVICES" -eq 0 ]; then
 fi
 
 echo "Found $DEVICES device(s). Installing..."
-adb install -r app/build/outputs/apk/debug/app-debug.apk
+adb install -r "app/build/outputs/apk/${BUILD_TYPE}/app-${BUILD_TYPE}.apk"
 
 echo ""
 echo "Done! FiberSocial installed on device."
