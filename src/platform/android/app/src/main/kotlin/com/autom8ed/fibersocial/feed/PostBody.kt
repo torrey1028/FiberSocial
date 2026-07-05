@@ -1,6 +1,7 @@
 package com.autom8ed.fibersocial.feed
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -104,16 +105,33 @@ private fun BlockView(block: PostBlock) {
  */
 @Composable
 private fun ParagraphView(content: List<Inline>) {
+    val uriHandler = LocalUriHandler.current
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         splitOnImages(content).forEach { segment ->
             when (segment) {
                 is ParagraphSegment.TextRun -> InlineText(segment.content)
-                is ParagraphSegment.Photo -> AsyncImage(
-                    model = segment.image.url,
-                    contentDescription = segment.image.alt.ifEmpty { null },
-                    contentScale = ContentScale.FillWidth,
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                is ParagraphSegment.Photo -> {
+                    val target = segment.linkHref?.let(::resolveRavelryHref)
+                    AsyncImage(
+                        model = segment.image.url,
+                        contentDescription = segment.image.alt.ifEmpty { null },
+                        contentScale = ContentScale.FillWidth,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .then(
+                                if (target == null) Modifier
+                                else Modifier.clickable {
+                                    // User-generated target: no activity may handle it;
+                                    // don't crash on tap (same contract as InlineText).
+                                    try {
+                                        uriHandler.openUri(target)
+                                    } catch (e: Exception) {
+                                        println("FiberSocial: couldn't open link $target: ${e.message}")
+                                    }
+                                },
+                            ),
+                    )
+                }
             }
         }
     }
@@ -372,16 +390,21 @@ internal fun headingStyle(level: Int, typography: Typography): TextStyle {
 /**
  * A piece of a paragraph: either a run of text inlines (which may itself contain inline
  * emoji images) or a lifted-out full content photo.
+ *
+ * @property linkHref When the photo was wrapped in a link (Ravelry wraps every post
+ *   photo in a link to its project page), the link's target; tapping the photo opens it.
  */
 internal sealed interface ParagraphSegment {
     data class TextRun(val content: List<Inline>) : ParagraphSegment
-    data class Photo(val image: Inline.Image) : ParagraphSegment
+    data class Photo(val image: Inline.Image, val linkHref: String? = null) : ParagraphSegment
 }
 
 /**
  * Splits paragraph content around full content photos so they can render as full-width
- * blocks. Small inline emoji ([Inline.Image.isInlineEmoji]) stay merged into the
- * surrounding text run instead, so they render inline at text size.
+ * blocks. Photos nested one level down inside a link are lifted out the same way — they
+ * keep the link target for tap handling, and any sibling text inside the link stays a
+ * linked text run. Small inline emoji ([Inline.Image.isInlineEmoji]) stay merged into
+ * the surrounding text run instead, so they render inline at text size.
  */
 internal fun splitOnImages(content: List<Inline>): List<ParagraphSegment> {
     val segments = mutableListOf<ParagraphSegment>()
@@ -392,12 +415,33 @@ internal fun splitOnImages(content: List<Inline>): List<ParagraphSegment> {
             run.clear()
         }
     }
+    fun Inline.isPhoto() = this is Inline.Image && !isInlineEmoji
     content.forEach { inline ->
-        if (inline is Inline.Image && !inline.isInlineEmoji) {
-            flushRun()
-            segments += ParagraphSegment.Photo(inline)
-        } else {
-            run += inline
+        when {
+            inline is Inline.Image && inline.isPhoto() -> {
+                flushRun()
+                segments += ParagraphSegment.Photo(inline)
+            }
+            inline is Inline.Link && inline.children.any { it.isPhoto() } -> {
+                val caption = mutableListOf<Inline>()
+                fun flushCaption() {
+                    if (caption.isNotEmpty()) {
+                        run += Inline.Link(inline.href, caption.toList())
+                        caption.clear()
+                    }
+                }
+                inline.children.forEach { child ->
+                    if (child is Inline.Image && child.isPhoto()) {
+                        flushCaption()
+                        flushRun()
+                        segments += ParagraphSegment.Photo(child, linkHref = inline.href)
+                    } else {
+                        caption += child
+                    }
+                }
+                flushCaption()
+            }
+            else -> run += inline
         }
     }
     flushRun()
@@ -476,8 +520,8 @@ private fun androidx.compose.ui.text.AnnotatedString.Builder.appendInlines(
             }
             // Inline emoji are rendered in place via an inline-content placeholder (see
             // `collectInlineEmoji`/`InlineText`). Full content photos are lifted out at
-            // the paragraph level instead; ignore any that appear deeper here (e.g.
-            // inside a link or table cell).
+            // the paragraph level instead (including one level inside links, see
+            // `splitOnImages`); ignore any that appear deeper here (e.g. a table cell).
             is Inline.Image -> if (inline.isInlineEmoji) {
                 appendInlineContent(inline.url, inline.alt.ifEmpty { "emoji" })
             }

@@ -5,6 +5,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
@@ -86,10 +88,12 @@ class DeletePostUiTest {
 
         compose.onNodeWithContentDescription("Edit post").performClick()
 
-        // After: the bottom bar becomes the edit bar with save/cancel controls and the body.
+        // After: the bottom bar becomes the edit bar with save/cancel controls and the
+        // body pre-filled. The post body also renders "original text" in the thread now,
+        // so match the editable field specifically.
         compose.onNodeWithContentDescription("Save edit").assertIsDisplayed()
         compose.onNodeWithContentDescription("Cancel edit").assertIsDisplayed()
-        compose.onNodeWithText("original text").assertIsDisplayed()
+        compose.onNode(hasText("original text") and hasSetTextAction()).assertIsDisplayed()
     }
 
     @Test
@@ -117,7 +121,7 @@ class DeletePostUiTest {
         postsState = TopicDetailState.Loading
 
         compose.onNodeWithContentDescription("Save edit").assertIsDisplayed()
-        compose.onNodeWithText("original text").assertIsDisplayed()
+        compose.onNode(hasText("original text") and hasSetTextAction()).assertIsDisplayed()
     }
 
     @Test

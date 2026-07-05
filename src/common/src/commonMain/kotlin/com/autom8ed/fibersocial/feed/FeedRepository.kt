@@ -6,6 +6,7 @@ import com.autom8ed.fibersocial.feed.models.FeedItem
 import com.autom8ed.fibersocial.feed.models.Group
 import com.autom8ed.fibersocial.feed.models.Post
 import com.autom8ed.fibersocial.feed.models.RavelryUser
+import com.autom8ed.fibersocial.feed.html.MarkdownPostParser
 import com.autom8ed.fibersocial.feed.models.Topic
 import com.fleeksoft.ksoup.Ksoup
 import kotlinx.coroutines.async
@@ -84,7 +85,11 @@ class FeedRepository(private val apiClient: RavelryApiClient) {
         val attributableReply = latestReply?.takeIf { it.user != null }
         val author = createdByUser ?: RavelryUser(username = "unknown")
         val full = summary ?: ""
-        val preview = full.take(200)
+        // The card shows plain text (issue #104). Prefer Ravelry's HTML rendering of the
+        // summary — it resolves raw-Markdown damage (dangling emphasis from a dropped
+        // closing `**`) the way the website does; the Markdown source is the fallback.
+        val preview = summaryHtml?.takeIf { it.isNotBlank() }?.let { htmlPreview(it) }
+            ?: MarkdownPostParser.plainText(full).take(200)
         // Whether posts carry images does not affect the card: a topic with a photo in
         // it is still a discussion (issue #77 — the old image-first ProjectTopic mapping
         // silently dropped nearly half of a real group's topics from the feed). Images
@@ -98,6 +103,7 @@ class FeedRepository(private val apiClient: RavelryApiClient) {
             title = title,
             bodyPreview = preview,
             bodySummary = full,
+            bodySummaryHtml = summaryHtml.orEmpty(),
             replyCount = postsCount,
             sticky = sticky,
             // Author and preview stand or fall together: a reply whose user is

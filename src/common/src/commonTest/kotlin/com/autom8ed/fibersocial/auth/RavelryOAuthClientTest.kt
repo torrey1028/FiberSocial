@@ -1,7 +1,9 @@
 package com.autom8ed.fibersocial.auth
 
+import io.ktor.serialization.JsonConvertException
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNotEquals
 import kotlinx.coroutines.test.runTest
 
@@ -39,6 +41,14 @@ class RavelryOAuthClientTest {
         val client = mockOAuthClient(TOKEN_JSON_NO_REFRESH)
         val token = client.exchangeAuthCode("code", "verifier", "https://redirect")
         assertEquals("", token.refreshToken)
+    }
+
+    @Test
+    fun `a token response missing a required field fails loudly`() = runTest {
+        val client = mockOAuthClient("""{"refresh_token":"r"}""")
+        assertFailsWith<JsonConvertException> {
+            client.exchangeAuthCode("code", "verifier", "https://redirect")
+        }
     }
 
     @Test

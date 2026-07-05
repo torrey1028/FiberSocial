@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
+import com.autom8ed.fibersocial.auth.RavelryAuthManager
 
 @Composable
 fun WebViewLoginScreen(

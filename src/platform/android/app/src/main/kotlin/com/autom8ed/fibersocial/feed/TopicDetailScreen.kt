@@ -53,7 +53,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.unit.dp
-import com.autom8ed.fibersocial.feed.html.HtmlPostParser
+import com.autom8ed.fibersocial.feed.html.parseBodyDocument
+import com.autom8ed.fibersocial.feed.html.parseSummaryDocument
 import com.autom8ed.fibersocial.feed.models.FeedItem
 import com.autom8ed.fibersocial.feed.models.Post
 import com.autom8ed.fibersocial.ui.Avatar
@@ -186,15 +187,14 @@ fun TopicDetailScreen(
             ) {
                 item(key = "header") {
                     Text(topic.title, style = MaterialTheme.typography.titleLarge)
+                    // The topic's author-written summary belongs with the title.
+                    if (topic.bodySummaryHtml.isNotBlank() || topic.bodySummary.isNotBlank()) {
+                        Spacer(Modifier.height(8.dp))
+                        PostBody(document = remember(topic) { topic.parseSummaryDocument() })
+                    }
                     Spacer(Modifier.height(12.dp))
                     AuthorRow(user = topic.author, timestamp = topic.lastPostAt)
                     Spacer(Modifier.height(16.dp))
-                    HorizontalDivider()
-                    Spacer(Modifier.height(16.dp))
-                    if (topic.bodySummary.isNotBlank()) {
-                        PostBody(document = remember(topic.bodySummary) { HtmlPostParser.parse(topic.bodySummary) })
-                        Spacer(Modifier.height(16.dp))
-                    }
                     HorizontalDivider()
                     Spacer(Modifier.height(16.dp))
                     Text(
@@ -297,9 +297,9 @@ internal fun ReplyItem(
                 }
             }
         }
-        if (post.bodyHtml.isNotBlank()) {
+        if (post.body.isNotBlank() || post.bodyHtml.isNotBlank()) {
             Spacer(Modifier.height(8.dp))
-            PostBody(document = remember(post.bodyHtml) { HtmlPostParser.parse(post.bodyHtml) })
+            PostBody(document = remember(post) { post.parseBodyDocument() })
         }
         Spacer(Modifier.height(8.dp))
         VoteRow(post = post, onVote = onVote)
@@ -396,15 +396,6 @@ private fun PostActionErrorDialog(title: String, message: String, onDismiss: () 
         confirmButton = { TextButton(onClick = onDismiss) { Text("OK") } },
     )
 }
-
-private val VOTE_TYPE_EMOJI: Map<VoteType, String> = mapOf(
-    VoteType.INTERESTING to "🤔",
-    VoteType.EDUCATIONAL to "📚",
-    VoteType.FUNNY to "😂",
-    VoteType.AGREE to "👍",
-    VoteType.DISAGREE to "👎",
-    VoteType.LOVE to "❤️",
-)
 
 @Composable
 private fun VoteRow(post: Post, onVote: (VoteType) -> Unit) {

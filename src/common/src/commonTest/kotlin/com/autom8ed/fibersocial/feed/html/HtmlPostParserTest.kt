@@ -182,6 +182,22 @@ class HtmlPostParserInlineTest {
     }
 
     @Test
+    fun `site-relative image sources resolve against the ravelry origin`() {
+        // Ravelry emits post photos as /attached/... paths (live capture, issue #102).
+        val content = singleParagraph("""<p><img src="/attached/courtneyshannon/23807567" alt="shawl"></p>""")
+        assertEquals(
+            "https://www.ravelry.com/attached/courtneyshannon/23807567",
+            assertIs<Inline.Image>(content.single()).url,
+        )
+    }
+
+    @Test
+    fun `protocol-relative image sources get an explicit https scheme`() {
+        val content = singleParagraph("""<p><img src="//images.example/yarn.jpg" alt=""></p>""")
+        assertEquals("https://images.example/yarn.jpg", assertIs<Inline.Image>(content.single()).url)
+    }
+
+    @Test
     fun `an emo class flags an image as inline emoji`() {
         // Real markup captured from a live Ravelry post: no width/height at all, just class="emo".
         val content = singleParagraph(
