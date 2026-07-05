@@ -269,7 +269,7 @@ fun FeedScreen(
 
     CloseDrawerOnBack(drawerState)
 
-    val title = if (loaded == null) "FiberSocial" else loaded.selectedGroup?.name ?: "All Groups"
+    val title = loaded?.selectedGroup?.name ?: "FiberSocial"
     val selectedGroup = loaded?.selectedGroup
 
     ModalNavigationDrawer(
@@ -457,7 +457,7 @@ internal fun GroupDrawer(
     selectedGroup: Group?,
     eventCounts: Map<Long, Int>,
     user: RavelryUser?,
-    onGroupSelected: (Group?) -> Unit,
+    onGroupSelected: (Group) -> Unit,
     onGroupEventsClick: (Group) -> Unit,
     onSettingsClick: () -> Unit,
 ) {
@@ -472,15 +472,6 @@ internal fun GroupDrawer(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(horizontal = 28.dp, vertical = 8.dp),
                     )
-                    NavigationDrawerItem(
-                        label = { Text("All Groups") },
-                        selected = selectedGroup == null,
-                        onClick = { onGroupSelected(null) },
-                        modifier = Modifier.padding(horizontal = 12.dp),
-                    )
-                    if (groups.isNotEmpty()) {
-                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp, horizontal = 12.dp))
-                    }
                 }
                 items(groups, key = { it.id }) { group ->
                     val eventCount = eventCounts[group.id] ?: 0

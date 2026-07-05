@@ -24,9 +24,11 @@ sealed class FeedState {
      * Feed data is available and up to date.
      *
      * @property user The authenticated Ravelry user.
-     * @property groups All groups the user is a member of (used to populate the filter drawer).
-     * @property selectedGroup The group currently being filtered to, or `null` for "All Groups".
-     * @property items Feed items for the selected group(s), sorted newest-reply-first.
+     * @property groups All groups the user is a member of, in the user's stored display
+     *   order (see [GroupOrderStore]); populates the group drawer.
+     * @property selectedGroup The group whose topics are being shown. `null` only when
+     *   the user belongs to no groups — there is no "all groups" view (issue #97).
+     * @property items Feed items for the selected group, sorted newest-reply-first.
      */
     data class Loaded(
         val user: RavelryUser,
@@ -57,10 +59,13 @@ sealed class FeedState {
  *
  * @param repository Feed data source.
  * @param scope Coroutine scope tied to the ViewModel's lifecycle.
+ * @param groupOrderStore Persisted group display order; its first group is the default
+ *   group opened on load (issue #97).
  */
 class FeedViewModel(
     private val repository: FeedRepository,
     private val scope: CoroutineScope,
+    private val groupOrderStore: GroupOrderStore,
 ) {
     private val _state = MutableStateFlow<FeedState>(FeedState.Loading)
     private val _sessionExpired = Channel<Unit>(Channel.BUFFERED)
@@ -91,7 +96,7 @@ class FeedViewModel(
         scope.launch {
             println("FiberSocial: FeedViewModel.load() starting")
             _state.value = FeedState.Loading
-            _state.value = fetchFeed(selectedGroup = null)
+            _state.value = fetchFeed(selectedGroup = null) // null: fall back to the default group
             println("FiberSocial: FeedViewModel.load() -> ${_state.value::class.simpleName}")
         }
     }
@@ -111,24 +116,19 @@ class FeedViewModel(
     }
 
     /**
-     * Filters the feed to [group], or clears the filter when [group] is `null`.
-     * No-ops if the feed is not in [FeedState.Loaded].
-     *
-     * @param group The group to show, or `null` to show all groups.
+     * Shows [group]'s topics. No-ops if the feed is not in [FeedState.Loaded].
      */
-    fun selectGroup(group: Group?) {
+    fun selectGroup(group: Group) {
         val current = _state.value as? FeedState.Loaded ?: return
-        println("FiberSocial: FeedViewModel.selectGroup(${group?.name ?: "All Groups"})")
+        println("FiberSocial: FeedViewModel.selectGroup(${group.name})")
         scope.launch {
             _state.value = FeedState.Refreshing(current)
-            val groups = current.groups
-            val filtered = if (group == null) groups else listOf(group)
             _state.value = try {
-                val items = repository.getFeedItems(filtered)
+                val items = repository.getFeedItems(listOf(group))
                 println("FiberSocial: selectGroup loaded ${items.size} items")
                 FeedState.Loaded(
                     user = current.user,
-                    groups = groups,
+                    groups = current.groups,
                     selectedGroup = group,
                     items = items,
                 )
@@ -143,18 +143,30 @@ class FeedViewModel(
         }
     }
 
+    /**
+     * @param selectedGroup Group to keep showing (a refresh), or `null` to open the
+     *   default group — the first in the stored order. A remembered selection survives
+     *   only while the user still belongs to that group.
+     */
     private suspend fun fetchFeed(selectedGroup: Group?): FeedState = try {
         val user = repository.getCurrentUser()
         println("FiberSocial: fetched user=${user.username}")
-        val groups = repository.getUserGroups(user.username)
-        println("FiberSocial: fetched ${groups.size} groups: ${groups.map { it.name }}")
-        val filtered = if (selectedGroup == null) groups else listOf(selectedGroup)
-        val items = repository.getFeedItems(filtered)
+        val fetched = repository.getUserGroups(user.username)
+        println("FiberSocial: fetched ${fetched.size} groups: ${fetched.map { it.name }}")
+        val storedOrder = groupOrderStore.load()
+        val groups = reconcileGroupOrder(fetched, storedOrder)
+        // Persisting the reconciled result seeds the order on first run and applies the
+        // issue #97 maintenance rules (joined groups appended, left groups pruned).
+        val reconciledIds = groups.map { it.id }
+        if (reconciledIds != storedOrder) groupOrderStore.save(reconciledIds)
+        val selected = selectedGroup?.let { s -> groups.firstOrNull { it.id == s.id } }
+            ?: groups.firstOrNull()
+        val items = if (selected == null) emptyList() else repository.getFeedItems(listOf(selected))
         println("FiberSocial: fetched ${items.size} feed items")
         FeedState.Loaded(
             user = user,
             groups = groups,
-            selectedGroup = selectedGroup,
+            selectedGroup = selected,
             items = items,
         )
     } catch (e: SessionExpiredException) {

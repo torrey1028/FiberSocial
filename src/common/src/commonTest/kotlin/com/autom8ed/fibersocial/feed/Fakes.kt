@@ -13,6 +13,15 @@ import io.ktor.http.headersOf
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.json.Json
 
+/** In-memory [GroupOrderStore]; [stored] exposes what the code under test persisted. */
+class FakeGroupOrderStore(initial: List<Long>? = null) : GroupOrderStore {
+    var stored: List<Long>? = initial
+        private set
+
+    override suspend fun load(): List<Long>? = stored
+    override suspend fun save(order: List<Long>) { stored = order }
+}
+
 class FakeFeedTokenStorage(
     initial: AuthToken? = AuthToken("test-token", "test-refresh", Long.MAX_VALUE, "sess=test"),
 ) : TokenStorage {
