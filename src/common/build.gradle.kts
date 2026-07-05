@@ -18,6 +18,7 @@ kotlin {
     sourceSets {
         commonMain.dependencies {
             implementation("com.fleeksoft.ksoup:ksoup:0.2.6")
+            implementation("org.jetbrains:markdown:0.7.3")
             // api: ravelryHttpClient()/ravelryAuthRepository()/ravelryApiClient() expose
             // HttpClient in their signatures, so it must resolve on consumers' classpath.
             api("io.ktor:ktor-client-core:2.3.12")

@@ -1,6 +1,7 @@
 package com.autom8ed.fibersocial.feed
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -104,16 +105,33 @@ private fun BlockView(block: PostBlock) {
  */
 @Composable
 private fun ParagraphView(content: List<Inline>) {
+    val uriHandler = LocalUriHandler.current
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         splitOnImages(content).forEach { segment ->
             when (segment) {
                 is ParagraphSegment.TextRun -> InlineText(segment.content)
-                is ParagraphSegment.Photo -> AsyncImage(
-                    model = segment.image.url,
-                    contentDescription = segment.image.alt.ifEmpty { null },
-                    contentScale = ContentScale.FillWidth,
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                is ParagraphSegment.Photo -> {
+                    val target = segment.linkHref?.let(::resolveRavelryHref)
+                    AsyncImage(
+                        model = segment.image.url,
+                        contentDescription = segment.image.alt.ifEmpty { null },
+                        contentScale = ContentScale.FillWidth,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .then(
+                                if (target == null) Modifier
+                                else Modifier.clickable {
+                                    // User-generated target: no activity may handle it;
+                                    // don't crash on tap (same contract as InlineText).
+                                    try {
+                                        uriHandler.openUri(target)
+                                    } catch (e: Exception) {
+                                        println("FiberSocial: couldn't open link $target: ${e.message}")
+                                    }
+                                },
+                            ),
+                    )
+                }
             }
         }
     }
@@ -370,6 +388,104 @@ internal fun headingStyle(level: Int, typography: Typography): TextStyle {
 }
 
 /**
+ * A piece of a paragraph: either a run of text inlines (which may itself contain inline
+ * emoji images) or a lifted-out full content photo.
+ *
+ * @property linkHref When the photo was wrapped in a link (Ravelry wraps every post
+ *   photo in a link to its project page), the link's target; tapping the photo opens it.
+ */
+internal sealed interface ParagraphSegment {
+    data class TextRun(val content: List<Inline>) : ParagraphSegment
+    data class Photo(val image: Inline.Image, val linkHref: String? = null) : ParagraphSegment
+}
+
+/**
+ * Splits paragraph content around full content photos so they can render as full-width
+ * blocks. Photos nested one level down inside a link are lifted out the same way — they
+ * keep the link target for tap handling, and any sibling text inside the link stays a
+ * linked text run. Small inline emoji ([Inline.Image.isInlineEmoji]) stay merged into
+ * the surrounding text run instead, so they render inline at text size.
+ */
+internal fun splitOnImages(content: List<Inline>): List<ParagraphSegment> {
+    val segments = mutableListOf<ParagraphSegment>()
+    val run = mutableListOf<Inline>()
+    fun flushRun() {
+        if (run.isNotEmpty()) {
+            segments += ParagraphSegment.TextRun(run.toList())
+            run.clear()
+        }
+    }
+    fun Inline.isPhoto() = this is Inline.Image && !isInlineEmoji
+    content.forEach { inline ->
+        when {
+            inline is Inline.Image && inline.isPhoto() -> {
+                flushRun()
+                segments += ParagraphSegment.Photo(inline)
+            }
+            inline is Inline.Link && inline.children.any { it.isPhoto() } -> {
+                val caption = mutableListOf<Inline>()
+                fun flushCaption() {
+                    if (caption.isNotEmpty()) {
+                        run += Inline.Link(inline.href, caption.toList())
+                        caption.clear()
+                    }
+                }
+                inline.children.forEach { child ->
+                    if (child is Inline.Image && child.isPhoto()) {
+                        flushCaption()
+                        flushRun()
+                        segments += ParagraphSegment.Photo(child, linkHref = inline.href)
+                    } else {
+                        caption += child
+                    }
+                }
+                flushCaption()
+            }
+            else -> run += inline
+        }
+    }
+    flushRun()
+    return segments
+}
+
+/**
+ * Collects the inline emoji images present in [content], including inside styled spans
+ * and links, in document order. Used to build the `inlineContent` map [InlineText] passes
+ * to the underlying [Text] so each placeholder appended by `appendInlines` has a matching
+ * renderer.
+ */
+internal fun collectInlineEmoji(content: List<Inline>): List<Inline.Image> =
+    content.flatMap { inline ->
+        when (inline) {
+            is Inline.Image -> if (inline.isInlineEmoji) listOf(inline) else emptyList()
+            is Inline.Styled -> collectInlineEmoji(inline.children)
+            is Inline.Link -> collectInlineEmoji(inline.children)
+            else -> emptyList()
+        }
+    }
+
+/** Schemes a tapped link may open. Hrefs are user-generated, so anything else is inert. */
+private val ALLOWED_LINK_SCHEMES = setOf("http", "https", "mailto")
+
+private val URL_SCHEME = Regex("^([a-zA-Z][a-zA-Z0-9+.-]*):")
+
+/**
+ * Resolves a post link target to something the device can safely open. Site-relative
+ * paths get the Ravelry origin; fragment-only links (Markdown footnote refs) and targets
+ * with schemes outside [ALLOWED_LINK_SCHEMES] (`javascript:`, `intent:`, …) resolve to
+ * nothing and render as styled but inert text.
+ */
+internal fun resolveRavelryHref(href: String): String? {
+    val scheme = URL_SCHEME.find(href)?.groupValues?.get(1)?.lowercase()
+    return when {
+        href.startsWith("#") -> null
+        href.startsWith("/") -> "https://www.ravelry.com$href"
+        scheme != null -> href.takeIf { scheme in ALLOWED_LINK_SCHEMES }
+        else -> null
+    }
+}
+
+/**
  * Builds the [AnnotatedString] for a run of inline content. Links are colored and carry
  * a [URL_ANNOTATION] with the resolved target; inline code gets a monospace chip look.
  */
@@ -404,8 +520,8 @@ private fun androidx.compose.ui.text.AnnotatedString.Builder.appendInlines(
             }
             // Inline emoji are rendered in place via an inline-content placeholder (see
             // `collectInlineEmoji`/`InlineText`). Full content photos are lifted out at
-            // the paragraph level instead; ignore any that appear deeper here (e.g.
-            // inside a link or table cell).
+            // the paragraph level instead (including one level inside links, see
+            // `splitOnImages`); ignore any that appear deeper here (e.g. a table cell).
             is Inline.Image -> if (inline.isInlineEmoji) {
                 appendInlineContent(inline.url, inline.alt.ifEmpty { "emoji" })
             }

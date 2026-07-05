@@ -58,6 +58,7 @@ import com.autom8ed.fibersocial.debug.DebugPanel
 import com.autom8ed.fibersocial.events.EventDetailScreen
 import com.autom8ed.fibersocial.events.EventsScreen
 import com.autom8ed.fibersocial.events.EventsState
+import com.autom8ed.fibersocial.feed.html.MarkdownPostParser
 import com.autom8ed.fibersocial.feed.models.FeedItem
 import com.autom8ed.fibersocial.feed.models.Group
 import com.autom8ed.fibersocial.feed.models.Post
@@ -221,8 +222,9 @@ fun FeedScreen(
                     // is the same person if it ever doesn't.
                     author = topic.createdByUser ?: loaded?.user ?: RavelryUser(username = "unknown"),
                     title = topic.title,
-                    bodyPreview = topic.summary.orEmpty().take(200),
+                    bodyPreview = MarkdownPostParser.plainText(topic.summary.orEmpty()).take(200),
                     bodySummary = topic.summary.orEmpty(),
+                    bodySummaryHtml = topic.summaryHtml.orEmpty(),
                     replyCount = topic.postsCount,
                 )
                 viewModel.feed.refresh()

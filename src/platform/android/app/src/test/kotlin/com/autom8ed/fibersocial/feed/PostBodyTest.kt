@@ -110,6 +110,134 @@ class BuildInlineTextTest {
     }
 }
 
+class SplitOnImagesTest {
+    private val image = Inline.Image(url = "https://images.example/a.jpg", alt = "a")
+    private val emoji = Inline.Image(url = "https://images.example/smile.gif", alt = ":)", cssClass = "emo")
+
+    @Test
+    fun `content without images is a single text run`() {
+        val segments = splitOnImages(listOf(Inline.Text("hello")))
+        assertEquals(listOf<ParagraphSegment>(ParagraphSegment.TextRun(listOf(Inline.Text("hello")))), segments)
+    }
+
+    @Test
+    fun `images split the surrounding text into separate runs`() {
+        val segments = splitOnImages(listOf(Inline.Text("before"), image, Inline.Text("after")))
+        assertEquals(
+            listOf(
+                ParagraphSegment.TextRun(listOf(Inline.Text("before"))),
+                ParagraphSegment.Photo(image),
+                ParagraphSegment.TextRun(listOf(Inline.Text("after"))),
+            ),
+            segments,
+        )
+    }
+
+    @Test
+    fun `image-only paragraph yields just the photo`() {
+        assertEquals(listOf<ParagraphSegment>(ParagraphSegment.Photo(image)), splitOnImages(listOf(image)))
+    }
+
+    @Test
+    fun `inline emoji stay merged into the surrounding text run instead of becoming a photo`() {
+        val segments = splitOnImages(listOf(Inline.Text("before "), emoji, Inline.Text(" after")))
+        assertEquals(
+            listOf(ParagraphSegment.TextRun(listOf(Inline.Text("before "), emoji, Inline.Text(" after")))),
+            segments,
+        )
+    }
+
+    @Test
+    fun `size-flagged inline emoji also stay merged into the text run`() {
+        val small = Inline.Image(url = "https://images.example/icon.gif", alt = "", width = 16, height = 16)
+        assertEquals(listOf<ParagraphSegment>(ParagraphSegment.TextRun(listOf(small))), splitOnImages(listOf(small)))
+    }
+
+    @Test
+    fun `a mix of inline emoji and a full photo splits only around the photo`() {
+        val segments = splitOnImages(listOf(emoji, Inline.Text(" text "), image, emoji))
+        assertEquals(
+            listOf(
+                ParagraphSegment.TextRun(listOf(emoji, Inline.Text(" text "))),
+                ParagraphSegment.Photo(image),
+                ParagraphSegment.TextRun(listOf(emoji)),
+            ),
+            segments,
+        )
+    }
+
+    @Test
+    fun `a photo wrapped in a link is lifted out carrying the link target`() {
+        // Ravelry wraps every post photo in a link to its project page (issue #102).
+        val link = Inline.Link(href = "/projects/u/shawl", children = listOf(image))
+        assertEquals(
+            listOf<ParagraphSegment>(ParagraphSegment.Photo(image, linkHref = "/projects/u/shawl")),
+            splitOnImages(listOf(link)),
+        )
+    }
+
+    @Test
+    fun `text sharing a link with a photo stays a linked text run`() {
+        val link = Inline.Link(href = "/p", children = listOf(Inline.Text("caption "), image))
+        assertEquals(
+            listOf(
+                ParagraphSegment.TextRun(listOf(Inline.Link("/p", listOf(Inline.Text("caption "))))),
+                ParagraphSegment.Photo(image, linkHref = "/p"),
+            ),
+            splitOnImages(listOf(link)),
+        )
+    }
+
+    @Test
+    fun `an emoji inside a link stays in the linked text run`() {
+        val link = Inline.Link(href = "/p", children = listOf(Inline.Text("hi "), emoji))
+        assertEquals(
+            listOf<ParagraphSegment>(ParagraphSegment.TextRun(listOf(link))),
+            splitOnImages(listOf(link)),
+        )
+    }
+
+    @Test
+    fun `a link with two photos lifts both with the same target`() {
+        val second = Inline.Image(url = "https://images.example/b.jpg", alt = "b")
+        val link = Inline.Link(href = "/p", children = listOf(image, second))
+        assertEquals(
+            listOf<ParagraphSegment>(
+                ParagraphSegment.Photo(image, linkHref = "/p"),
+                ParagraphSegment.Photo(second, linkHref = "/p"),
+            ),
+            splitOnImages(listOf(link)),
+        )
+    }
+}
+
+class CollectInlineEmojiTest {
+    private val emoji = Inline.Image(url = "https://images.example/smile.gif", alt = ":)", cssClass = "emo")
+    private val photo = Inline.Image(url = "https://images.example/photo.jpg", alt = "a photo")
+
+    @Test
+    fun `no emoji yields an empty list`() {
+        assertEquals(emptyList(), collectInlineEmoji(listOf(Inline.Text("hi"), photo)))
+    }
+
+    @Test
+    fun `top-level emoji are collected in order`() {
+        val other = Inline.Image(url = "https://images.example/smile2.gif", alt = ":D", cssClass = "emo")
+        assertEquals(listOf(emoji, other), collectInlineEmoji(listOf(emoji, Inline.Text(" "), other)))
+    }
+
+    @Test
+    fun `emoji nested inside styled spans and links are collected`() {
+        val content = listOf(
+            Inline.Text("hi "),
+            Inline.Styled(InlineStyle.BOLD, listOf(emoji)),
+            photo,
+            Inline.Link("https://example.com", listOf(emoji)),
+        )
+        assertEquals(listOf(emoji, emoji), collectInlineEmoji(content))
+    }
+}
+
 class HeadingStyleTest {
     private val typography = Typography()
 
