@@ -18,6 +18,16 @@ class FeedViewModelTest {
     private suspend fun awaitChildren(job: Job) =
         job.children.toList().forEach { it.join() }
 
+    /**
+     * Joins every child of [job] except [excluded]. Whether the non-excluded call's
+     * coroutine is still active or has already resolved synchronously is platform-
+     * dependent (observed to differ between the JVM and Robolectric test targets), so
+     * this tolerates it having already completed and dropped out of [Job.children]
+     * rather than assuming a fresh child is always present to find.
+     */
+    private suspend fun awaitChildrenExcept(job: Job, excluded: Job) =
+        job.children.filter { it != excluded }.toList().forEach { it.join() }
+
     private val group = Group(id = 10L, name = "KAL Hub", permalink = "kal-hub", forumId = 42L)
 
     private fun successRepo(): FeedRepository {
@@ -408,7 +418,12 @@ class FeedViewModelTest {
     @Test
     fun `loadMore sets loadingMore synchronously so a second call is ignored while in flight`() =
         runTest(UnconfinedTestDispatcher()) {
-            val vm = FeedViewModel(twoPageRepo(), this, FakeGroupOrderStore())
+            // Gated so the "still in flight" window is deterministic rather than
+            // dependent on whether the underlying fetch happens to suspend for real —
+            // that's platform-dependent (observed to differ between the JVM and
+            // Robolectric test targets) and made this assertion flaky.
+            val gate = CompletableDeferred<Unit>()
+            val vm = FeedViewModel(gatedTwoPageRepo(gate), this, FakeGroupOrderStore())
             vm.load()
             awaitChildren(coroutineContext[Job]!!)
 
@@ -418,6 +433,7 @@ class FeedViewModelTest {
 
             // A second call while the first is still in flight must no-op, not double-fetch.
             vm.loadMore()
+            gate.complete(Unit)
             awaitChildren(coroutineContext[Job]!!)
             val after = assertIs<FeedState.Loaded>(vm.state.value)
             assertEquals(listOf(100L, 200L), after.items.map { it.id })
@@ -472,7 +488,7 @@ class FeedViewModelTest {
             // A refresh for the same group completes in full while the page-2 fetch is
             // still in flight, replacing state with a brand-new page-1 Loaded instance.
             vm.refresh()
-            parentJob.children.first { it != loadMoreJob }.join()
+            awaitChildrenExcept(parentJob, loadMoreJob)
             val refreshed = assertIs<FeedState.Loaded>(vm.state.value)
             assertEquals(listOf(100L), refreshed.items.map { it.id })
             assertFalse(refreshed.loadingMore)
@@ -541,7 +557,7 @@ class FeedViewModelTest {
 
             // The user switches to group 2 before the stuck fetch resolves.
             vm.selectGroup(group2)
-            parentJob.children.first { it != loadMoreJob }.join()
+            awaitChildrenExcept(parentJob, loadMoreJob)
             val switched = assertIs<FeedState.Loaded>(vm.state.value)
             assertEquals(group2, switched.selectedGroup)
 
