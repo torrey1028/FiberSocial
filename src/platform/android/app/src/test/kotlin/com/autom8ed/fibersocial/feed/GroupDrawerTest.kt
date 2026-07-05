@@ -196,6 +196,29 @@ class GroupDrawerTest {
     }
 
     @Test
+    fun `group events badge is disabled while reordering and Done re-enables it`() {
+        var clicked: Group? = null
+        compose.setContent {
+            GroupDrawer(
+                groups = twoGroups,
+                selectedGroup = twoGroups.first(),
+                eventCounts = mapOf(1L to 3),
+                user = user,
+                onGroupSelected = {},
+                onGroupEventsClick = { clicked = it },
+                onSettingsClick = {},
+            )
+        }
+        compose.onNodeWithText("Reorder").performClick()
+        compose.onNodeWithContentDescription("Upcoming events", useUnmergedTree = true).performClick()
+        compose.runOnIdle { assertEquals(null, clicked) }
+
+        compose.onNodeWithText("Done").performClick()
+        compose.onNodeWithContentDescription("Upcoming events", useUnmergedTree = true).performClick()
+        compose.runOnIdle { assertEquals(1L, clicked?.id) }
+    }
+
+    @Test
     fun `footer falls back to Account label when user is not loaded yet`() {
         compose.setContent {
             GroupDrawer(

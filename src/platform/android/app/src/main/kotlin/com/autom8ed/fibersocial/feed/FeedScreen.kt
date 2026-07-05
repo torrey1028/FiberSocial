@@ -623,7 +623,9 @@ internal fun GroupDrawer(
                             {
                                 GroupEventsBadge(
                                     count = eventCount,
-                                    onClick = { onGroupEventsClick(group) },
+                                    // Same reasoning as the row's own onClick above: a
+                                    // rearrange can't be allowed to navigate away.
+                                    onClick = { if (!reorderMode) onGroupEventsClick(group) },
                                 )
                             }
                         } else null,

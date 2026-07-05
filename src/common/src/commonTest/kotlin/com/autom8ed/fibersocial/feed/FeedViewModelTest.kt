@@ -208,6 +208,26 @@ class FeedViewModelTest {
         }
 
     @Test
+    fun `reorderGroups ignores a list that isn't a permutation of the current groups`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val store = FakeGroupOrderStore()
+            val vm = FeedViewModel(twoGroupRepo(), this, store)
+            vm.load()
+            awaitChildren(coroutineContext[Job]!!)
+            val loaded = assertIs<FeedState.Loaded>(vm.state.value)
+            val (first) = loaded.groups
+            val seededOrder = store.stored
+
+            // Dropping a group and duplicating another isn't a valid reorder.
+            vm.reorderGroups(listOf(first, first))
+            awaitChildren(coroutineContext[Job]!!)
+
+            val after = assertIs<FeedState.Loaded>(vm.state.value)
+            assertEquals(loaded.groups, after.groups)
+            assertEquals(seededOrder, store.stored)
+        }
+
+    @Test
     fun `reorderGroups is a no-op when state is not Loaded`() =
         runTest(UnconfinedTestDispatcher()) {
             val store = FakeGroupOrderStore(listOf(10L))
