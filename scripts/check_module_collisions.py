@@ -59,6 +59,15 @@ TYPE_RE = re.compile(
     r"(?:class|interface|object|typealias)\s+([A-Za-z_][A-Za-z0-9_]*)"
 )
 
+# Stripped from file content before brace-depth tracking below: an unbalanced brace
+# inside a block comment or raw string (e.g. a KDoc example showing a JSON literal
+# split across lines, which this codebase's docs and fixtures use heavily) would
+# otherwise push `depth` permanently above 0, silently hiding every top-level type
+# declared later in that same file — the opposite of what this guard is for.
+BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
+TRIPLE_QUOTED_STRING_RE = re.compile(r'""".*?"""', re.DOTALL)
+LINE_COMMENT_RE = re.compile(r"//.*$")
+
 
 def declared_types(root):
     """Yield (fqn, relpath) for every top-level type declared under `root`."""
@@ -67,19 +76,23 @@ def declared_types(root):
             if not name.endswith(".kt"):
                 continue
             path = os.path.join(dirpath, name)
+            with open(path, encoding="utf-8") as handle:
+                content = handle.read()
+            content = BLOCK_COMMENT_RE.sub("", content)
+            content = TRIPLE_QUOTED_STRING_RE.sub("", content)
             package = ""
             depth = 0  # brace depth; only depth 0 is a top-level declaration
-            with open(path, encoding="utf-8") as handle:
-                for line in handle:
-                    pkg = PACKAGE_RE.match(line)
-                    if pkg:
-                        package = pkg.group(1)
-                    if depth == 0:
-                        type_match = TYPE_RE.match(line)
-                        if type_match:
-                            fqn = f"{package}.{type_match.group(1)}" if package else type_match.group(1)
-                            yield fqn, path
-                    depth += line.count("{") - line.count("}")
+            for line in content.splitlines():
+                line = LINE_COMMENT_RE.sub("", line)
+                pkg = PACKAGE_RE.match(line)
+                if pkg:
+                    package = pkg.group(1)
+                if depth == 0:
+                    type_match = TYPE_RE.match(line)
+                    if type_match:
+                        fqn = f"{package}.{type_match.group(1)}" if package else type_match.group(1)
+                        yield fqn, path
+                depth += line.count("{") - line.count("}")
 
 
 def main(argv):
