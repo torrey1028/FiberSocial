@@ -22,6 +22,7 @@ fun DebugPanel(
     onForceSessionExpiry: () -> Unit,
     onRunEventSync: () -> Unit,
     onDismiss: () -> Unit,
+    onForceFeedError: () -> Unit = {},
 ) {
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -50,6 +51,12 @@ fun DebugPanel(
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text("Run Event Sync Now")
+            }
+            TextButton(
+                onClick = { onForceFeedError(); onDismiss() },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Force Feed Error")
             }
             Spacer(Modifier.height(16.dp))
         }

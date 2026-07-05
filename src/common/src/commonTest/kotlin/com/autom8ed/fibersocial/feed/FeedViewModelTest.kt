@@ -142,6 +142,23 @@ class FeedViewModelTest {
         }
 
     @Test
+    fun `forceError drops the feed into the Error state`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = FeedViewModel(successRepo(), this)
+        vm.forceError()
+        assertIs<FeedState.Error>(vm.state.value)
+    }
+
+    @Test
+    fun `load recovers from a forced Error state`() = runTest(UnconfinedTestDispatcher()) {
+        // The Retry button's contract: load() must work from Error (refresh() does not).
+        val vm = FeedViewModel(successRepo(), this)
+        vm.forceError()
+        vm.load()
+        awaitChildren(coroutineContext[Job]!!)
+        assertIs<FeedState.Loaded>(vm.state.value)
+    }
+
+    @Test
     fun `load transitions to Error when api fails`() = runTest(UnconfinedTestDispatcher()) {
         val vm = FeedViewModel(FeedRepository(errorApiClient()), this, FakeGroupOrderStore())
         vm.load()
