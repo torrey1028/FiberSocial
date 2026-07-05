@@ -62,7 +62,7 @@ enum class PollCadence {
     ONCE_A_DAY;
 
     companion object {
-        /** Buckets a legacy precise-hours setting into the nearest qualitative cadence. */
+        /** Buckets a legacy precise-hours setting into a qualitative cadence by threshold. */
         fun fromHours(hours: Int): PollCadence = when {
             hours <= 1 -> HOURLY
             hours < 12 -> A_FEW_TIMES_A_DAY
@@ -89,8 +89,8 @@ data class NotificationSettings(
     val pollCadence: PollCadence? = null,
     // Legacy precise-hours setting, superseded by [pollCadence] (issue #113). Retained,
     // internal to this module, purely so a store holding pre-migration JSON migrates to
-    // the nearest qualitative bucket via [effectivePollCadence] instead of silently
-    // resetting to the default the first time it's next loaded.
+    // a qualitative bucket via [effectivePollCadence] instead of silently resetting to
+    // the default the first time it's next loaded.
     internal val pollIntervalHours: Int = 6,
 ) {
     /** [pollCadence] if set; otherwise the legacy hours setting bucketed into a cadence. */

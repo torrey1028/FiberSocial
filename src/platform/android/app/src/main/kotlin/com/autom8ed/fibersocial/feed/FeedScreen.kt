@@ -63,11 +63,13 @@ import com.autom8ed.fibersocial.feed.models.Group
 import com.autom8ed.fibersocial.feed.models.Post
 import com.autom8ed.fibersocial.feed.models.RavelryUser
 import com.autom8ed.fibersocial.feed.models.VoteType
-import com.autom8ed.fibersocial.notifications.AndroidNotificationSettingsStore
 import com.autom8ed.fibersocial.notifications.EventSyncWorker
+import com.autom8ed.fibersocial.notifications.KeyValueNotificationSettingsStore
 import com.autom8ed.fibersocial.notifications.NotificationSettings
 import com.autom8ed.fibersocial.notifications.PollCadence
 import com.autom8ed.fibersocial.settings.SettingsScreen
+import com.autom8ed.fibersocial.storage.NOTIFICATION_SETTINGS_PREFS_NAME
+import com.autom8ed.fibersocial.storage.plainKeyValueStore
 import com.autom8ed.fibersocial.ui.PullToRefreshBox
 import com.autom8ed.fibersocial.ui.UserAvatar
 import kotlinx.coroutines.launch
@@ -131,10 +133,12 @@ fun FeedScreen(
 
     if (showSettings) {
         val context = LocalContext.current
-        val settingsStore = remember { AndroidNotificationSettingsStore(context) }
+        val settingsStore = remember {
+            KeyValueNotificationSettingsStore(plainKeyValueStore(context, NOTIFICATION_SETTINGS_PREFS_NAME))
+        }
         var pollCadence by remember { mutableStateOf<PollCadence?>(null) }
-        // effective: a legacy stored hours value migrates to the nearest cadence
-        // rather than the dialog having nothing to render.
+        // effective: a legacy stored hours value migrates to a cadence bucket rather
+        // than the dialog having nothing to render.
         LaunchedEffect(Unit) { pollCadence = settingsStore.load().effectivePollCadence }
         val settingsScope = rememberCoroutineScope()
         SettingsScreen(
