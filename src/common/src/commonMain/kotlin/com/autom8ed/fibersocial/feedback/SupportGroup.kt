@@ -2,7 +2,8 @@ package com.autom8ed.fibersocial.feedback
 
 /**
  * The Ravelry group in-app feedback is filed to: [FeedbackViewModel] posts feedback as a
- * topic in this group's forum, and Settings offers a way to join it.
+ * topic in this group's forum. Settings offers a "Send feedback" entry point that links out
+ * to the group when posting requires membership — native one-tap join is a follow-up (PR A).
  *
  * Hardcoded rather than resolved by search on purpose: feedback targets one fixed, known
  * group, and Ravelry's `groups/search.json` doesn't index a freshly created group for a

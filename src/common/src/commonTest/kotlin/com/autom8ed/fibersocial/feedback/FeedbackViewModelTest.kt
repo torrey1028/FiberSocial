@@ -123,6 +123,20 @@ class FeedbackViewModelTest {
     }
 
     @Test
+    fun `a blank exception message falls back to a non-blank Error message`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val engine = MockEngine { throw RuntimeException("") }
+            val client = HttpClient(engine) {
+                install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+            }
+            val vm = FeedbackViewModel(RavelryApiClient(client, FakeFeedTokenStorage()), this)
+            vm.send("Broken", "something broke", "")
+            awaitChildren(coroutineContext[Job]!!)
+            val state = assertIs<FeedbackState.Error>(vm.state.value)
+            assertEquals("Couldn't send feedback", state.message)
+        }
+
+    @Test
     fun `session expiry signals sessionExpired and returns to Idle`() =
         runTest(UnconfinedTestDispatcher()) {
             val vm = FeedbackViewModel(sessionExpiredApiClient(), this)

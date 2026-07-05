@@ -102,7 +102,7 @@ class FeedbackViewModel(
                 _state.value = FeedbackState.NeedsMembership
             } catch (e: Exception) {
                 println("FiberSocial: FeedbackViewModel.send error: ${e.message}")
-                _state.value = FeedbackState.Error(e.message ?: "Couldn't send feedback")
+                _state.value = FeedbackState.Error(e.message?.takeIf { it.isNotBlank() } ?: "Couldn't send feedback")
             }
         }
     }

@@ -51,8 +51,8 @@ fun deviceContext(): String {
 
 /**
  * "Send feedback" screen (issue #57, reduced scope): posts the user's report as a topic in
- * the FiberSocial App Support group's forum. A single description box (the topic title is
- * derived from it) plus an editable app/device info block.
+ * the FiberSocial App Support group's forum. A title field, a description box, and an
+ * editable app/device info block.
  *
  * @param state Current submission state from `FeedbackViewModel`.
  * @param deviceInfo Pre-filled app/device context (see [deviceContext]); editable.
@@ -72,18 +72,23 @@ fun FeedbackScreen(
     onSent: () -> Unit,
     onOpenSupportGroup: () -> Unit,
 ) {
-    BackHandler(onBack = onBack)
     var title by rememberSaveable { mutableStateOf("") }
     var description by rememberSaveable { mutableStateOf("") }
     var details by rememberSaveable { mutableStateOf(deviceInfo) }
     val sending = state is FeedbackState.Sending
+
+    // Disabled while sending: leaving now would unmount this screen's collector on
+    // FeedbackViewModel.state, so a Sent/Error result that lands after navigating
+    // away would never surface (reset() is a no-op mid-send, but that only protects
+    // the ViewModel's state — not whether anyone's still observing it).
+    BackHandler(enabled = !sending, onBack = onBack)
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("Send feedback") },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
+                    IconButton(onClick = onBack, enabled = !sending) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
