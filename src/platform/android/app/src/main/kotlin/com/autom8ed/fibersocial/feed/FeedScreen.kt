@@ -3,6 +3,7 @@ package com.autom8ed.fibersocial.feed
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
@@ -73,11 +74,14 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import com.autom8ed.fibersocial.BuildConfig
+import com.autom8ed.fibersocial.R
 import com.autom8ed.fibersocial.debug.DebugPanel
 import com.autom8ed.fibersocial.events.EventDetailScreen
 import com.autom8ed.fibersocial.events.EventsScreen
@@ -367,7 +371,17 @@ fun FeedScreen(
         Scaffold(
             topBar = {
                 TopAppBar(
-                    title = { Text(title) },
+                    title = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Image(
+                                painter = painterResource(R.drawable.fibersocial_logo),
+                                contentDescription = stringResource(R.string.app_logo_content_description),
+                                modifier = Modifier.size(28.dp),
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(title)
+                        }
+                    },
                     navigationIcon = {
                         IconButton(onClick = {
                             viewModel.feed.acknowledgeJoinError()
