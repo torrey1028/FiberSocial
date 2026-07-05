@@ -34,15 +34,20 @@ jobs:
             printf 'ravelry.client_secret=%s\n' "$RAVELRY_CLIENT_SECRET"
           } > src/platform/android/local.properties
 
-      # Fail loudly on push builds if the repo secret is missing — otherwise CI
-      # goes green while publishing APKs that can't log in (issue #6). Fork PRs
-      # legitimately have no secrets and still build (their artifacts just
+      # Fail loudly on push builds if either repo secret is missing — otherwise
+      # CI goes green while publishing APKs that can't log in (issue #6). Fork
+      # PRs legitimately have no secrets and still build (their artifacts just
       # can't log in, with the runtime warning explaining why).
       - name: Verify OAuth credentials are configured
         if: github.event_name == 'push'
         env:
+          RAVELRY_CLIENT_ID: ${{ secrets.RAVELRY_CLIENT_ID }}
           RAVELRY_CLIENT_SECRET: ${{ secrets.RAVELRY_CLIENT_SECRET }}
         run: |
+          if [ -z "$RAVELRY_CLIENT_ID" ]; then
+            echo "::error::RAVELRY_CLIENT_ID repo secret is not set; CI APKs will fail login with invalid_client. Add it at Settings > Secrets and variables > Actions."
+            exit 1
+          fi
           if [ -z "$RAVELRY_CLIENT_SECRET" ]; then
             echo "::error::RAVELRY_CLIENT_SECRET repo secret is not set; CI APKs will fail login with invalid_client. Add it at Settings > Secrets and variables > Actions."
             exit 1
