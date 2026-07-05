@@ -17,16 +17,14 @@ kotlin {
 
     sourceSets {
         commonMain.dependencies {
-            // Pinned to 0.2.4: later Ksoup releases are built with Kotlin 2.2+, whose
-            // metadata this project's Kotlin 2.0 compiler cannot read.
-            implementation("com.fleeksoft.ksoup:ksoup:0.2.4")
+            implementation("com.fleeksoft.ksoup:ksoup:0.2.6")
             // api: ravelryHttpClient()/ravelryAuthRepository()/ravelryApiClient() expose
             // HttpClient in their signatures, so it must resolve on consumers' classpath.
             api("io.ktor:ktor-client-core:2.3.12")
             implementation("io.ktor:ktor-client-content-negotiation:2.3.12")
             implementation("io.ktor:ktor-serialization-kotlinx-json:2.3.12")
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1")
-            implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.1")
+            implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
             // api: EventSummary/EventDetail expose kotlinx.datetime.LocalDateTime to consumers.
             api("org.jetbrains.kotlinx:kotlinx-datetime:0.6.0")
         }
