@@ -369,7 +369,10 @@ fun FeedScreen(
                 TopAppBar(
                     title = { Text(title) },
                     navigationIcon = {
-                        IconButton(onClick = { scope.launch { drawerState.open() } }) {
+                        IconButton(onClick = {
+                            viewModel.feed.acknowledgeJoinError()
+                            scope.launch { drawerState.open() }
+                        }) {
                             Icon(Icons.Default.Menu, contentDescription = "Select group")
                         }
                     },
