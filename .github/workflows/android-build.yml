@@ -9,6 +9,10 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # The `secrets` context isn't available in step `if:` conditionals — only in
+    # `env:`/`with:` — so the release-signing steps below gate on this instead.
+    env:
+      HAS_RELEASE_SIGNING: ${{ secrets.RELEASE_KEYSTORE_BASE64 != '' }}
 
     steps:
       - uses: actions/checkout@v4
@@ -58,7 +62,7 @@ jobs:
       # configured, so fork PRs (and repos that haven't set it up yet) just
       # skip release signing rather than failing.
       - name: Write release signing config
-        if: ${{ secrets.RELEASE_KEYSTORE_BASE64 != '' }}
+        if: env.HAS_RELEASE_SIGNING == 'true'
         env:
           RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
           RELEASE_KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
@@ -92,12 +96,12 @@ jobs:
           retention-days: 7
 
       - name: Build release APK
-        if: ${{ secrets.RELEASE_KEYSTORE_BASE64 != '' }}
+        if: env.HAS_RELEASE_SIGNING == 'true'
         working-directory: src/platform/android
         run: ./gradlew assembleRelease
 
       - name: Upload release APK
-        if: ${{ secrets.RELEASE_KEYSTORE_BASE64 != '' }}
+        if: env.HAS_RELEASE_SIGNING == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: app-release
