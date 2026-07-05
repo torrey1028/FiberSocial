@@ -32,9 +32,20 @@ android {
         buildConfigField("String", "RAVELRY_CLIENT_SECRET", "\"${localProps.getProperty("ravelry.client_secret", "")}\"")
     }
 
+    val releaseStoreFile = localProps.getProperty("release.store.file")
+    val releaseSigningConfig = if (!releaseStoreFile.isNullOrBlank()) {
+        signingConfigs.create("release") {
+            storeFile = rootProject.file(releaseStoreFile)
+            storePassword = localProps.getProperty("release.store.password")
+            keyAlias = localProps.getProperty("release.key.alias")
+            keyPassword = localProps.getProperty("release.key.password")
+        }
+    } else null
+
     buildTypes {
         release {
             isMinifyEnabled = false
+            releaseSigningConfig?.let { signingConfig = it }
         }
     }
 
