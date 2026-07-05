@@ -205,6 +205,57 @@ class FeedViewModelTest {
     }
 
     @Test
+    fun `reorderGroups reorders the drawer and persists the new order`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val store = FakeGroupOrderStore()
+            val vm = FeedViewModel(twoGroupRepo(), this, store)
+            vm.load()
+            awaitChildren(coroutineContext[Job]!!)
+            val loaded = assertIs<FeedState.Loaded>(vm.state.value)
+            assertEquals(listOf(10L, 11L), loaded.groups.map { it.id })
+
+            vm.reorderGroups(loaded.groups.reversed())
+            awaitChildren(coroutineContext[Job]!!)
+            val after = assertIs<FeedState.Loaded>(vm.state.value)
+            assertEquals(listOf(11L, 10L), after.groups.map { it.id })
+            assertEquals(listOf(11L, 10L), store.stored)
+            // Selection and items are untouched — reordering only affects the drawer.
+            assertEquals(loaded.selectedGroup, after.selectedGroup)
+            assertEquals(loaded.items, after.items)
+        }
+
+    @Test
+    fun `reorderGroups ignores a list that isn't a permutation of the current groups`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val store = FakeGroupOrderStore()
+            val vm = FeedViewModel(twoGroupRepo(), this, store)
+            vm.load()
+            awaitChildren(coroutineContext[Job]!!)
+            val loaded = assertIs<FeedState.Loaded>(vm.state.value)
+            val (first) = loaded.groups
+            val seededOrder = store.stored
+
+            // Dropping a group and duplicating another isn't a valid reorder.
+            vm.reorderGroups(listOf(first, first))
+            awaitChildren(coroutineContext[Job]!!)
+
+            val after = assertIs<FeedState.Loaded>(vm.state.value)
+            assertEquals(loaded.groups, after.groups)
+            assertEquals(seededOrder, store.stored)
+        }
+
+    @Test
+    fun `reorderGroups is a no-op when state is not Loaded`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val store = FakeGroupOrderStore(listOf(10L))
+            val vm = FeedViewModel(successRepo(), this, store)
+            vm.reorderGroups(listOf(group))
+            awaitChildren(coroutineContext[Job]!!)
+            assertIs<FeedState.Loading>(vm.state.value)
+            assertEquals(listOf(10L), store.stored)
+        }
+
+    @Test
     fun `selectGroup is a no-op when state is not Loaded`() = runTest(UnconfinedTestDispatcher()) {
         val vm = FeedViewModel(successRepo(), this, FakeGroupOrderStore())
         vm.selectGroup(group)

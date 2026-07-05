@@ -149,6 +149,26 @@ class FeedViewModel(
     }
 
     /**
+     * Applies a new drawer display order chosen by the user (drag-and-drop, issue #97)
+     * and persists it — the first group of [orderedGroups] becomes the default group on
+     * the next app open. The selection and items are untouched; this only reorders the
+     * drawer. No-ops if the feed is not in [FeedState.Loaded], or if [orderedGroups]
+     * isn't a permutation of the current groups (a caller bug — applying it anyway
+     * could silently drop groups from the drawer and persist a corrupt order).
+     */
+    fun reorderGroups(orderedGroups: List<Group>) {
+        val current = _state.value as? FeedState.Loaded ?: return
+        val sameSize = orderedGroups.size == current.groups.size
+        if (!sameSize || orderedGroups.map { it.id }.toSet() != current.groups.map { it.id }.toSet()) {
+            println("FiberSocial: FeedViewModel.reorderGroups ignored — not a permutation of the current groups")
+            return
+        }
+        println("FiberSocial: FeedViewModel.reorderGroups(${orderedGroups.map { it.name }})")
+        _state.value = current.copy(groups = orderedGroups)
+        scope.launch { groupOrderStore.save(orderedGroups.map { it.id }) }
+    }
+
+    /**
      * @param selectedGroup Group to keep showing (a refresh), or `null` to open the
      *   default group — the first in the stored order. A remembered selection survives
      *   only while the user still belongs to that group.
