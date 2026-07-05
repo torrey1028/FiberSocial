@@ -17,14 +17,14 @@ kotlin {
 
     sourceSets {
         commonMain.dependencies {
-            // Pinned to 0.2.4: later Ksoup releases are built with Kotlin 2.2+, whose
-            // metadata this project's Kotlin 2.0 compiler cannot read.
-            implementation("com.fleeksoft.ksoup:ksoup:0.2.4")
-            implementation("io.ktor:ktor-client-core:2.3.12")
+            implementation("com.fleeksoft.ksoup:ksoup:0.2.6")
+            // api: ravelryHttpClient()/ravelryAuthRepository()/ravelryApiClient() expose
+            // HttpClient in their signatures, so it must resolve on consumers' classpath.
+            api("io.ktor:ktor-client-core:2.3.12")
             implementation("io.ktor:ktor-client-content-negotiation:2.3.12")
             implementation("io.ktor:ktor-serialization-kotlinx-json:2.3.12")
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1")
-            implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.1")
+            implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
             // api: EventSummary/EventDetail expose kotlinx.datetime.LocalDateTime to consumers.
             api("org.jetbrains.kotlinx:kotlinx-datetime:0.6.0")
         }
@@ -32,6 +32,15 @@ kotlin {
             implementation(kotlin("test"))
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
             implementation("io.ktor:ktor-client-mock:2.3.12")
+        }
+        androidMain.dependencies {
+            implementation("io.ktor:ktor-client-android:2.3.12")
+        }
+        jvmMain.dependencies {
+            // Only used by the jvm() target's `ravelryHttpClient()` actual, which
+            // exists solely so :common:jvmTest can compile — the jvm() target isn't
+            // shipped. The Android app gets the Android-engine actual below.
+            implementation("io.ktor:ktor-client-cio:2.3.12")
         }
     }
 }

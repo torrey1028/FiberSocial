@@ -20,27 +20,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.autom8ed.fibersocial.ui.Avatar
 import com.autom8ed.fibersocial.feed.models.FeedItem
-import java.time.Duration
-import java.time.OffsetDateTime
-import java.time.format.DateTimeFormatter
-
-private val RAVELRY_DATE_FORMAT = DateTimeFormatter.ofPattern("yyyy/MM/dd HH:mm:ss Z")
-
-internal fun relativeTime(dateString: String?): String {
-    if (dateString == null) return ""
-    return try {
-        val then = OffsetDateTime.parse(dateString, RAVELRY_DATE_FORMAT)
-        val minutes = Duration.between(then, OffsetDateTime.now()).toMinutes()
-        when {
-            minutes < 60 -> "${minutes}m ago"
-            minutes < 60 * 24 -> "${minutes / 60}h ago"
-            minutes < 60 * 24 * 7 -> "${minutes / (60 * 24)}d ago"
-            else -> "${minutes / (60 * 24 * 7)}w ago"
-        }
-    } catch (_: Exception) {
-        ""
-    }
-}
 
 @Composable
 fun TopicCard(

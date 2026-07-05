@@ -159,6 +159,26 @@ class FeedRepositoryTest {
     }
 
     @Test
+    fun `getFeedItems combines topics fetched concurrently from multiple groups`() = runTest {
+        val other = com.autom8ed.fibersocial.feed.models.Group(
+            id = 20L, name = "Sock Knitters", permalink = "sock-knitters", forumId = 43L,
+        )
+        val repo = repoWithRoute { path ->
+            when {
+                path.contains("/forums/42/") -> topicsJson(100L)
+                path.contains("/forums/43/") -> topicsJson(200L)
+                path.contains("/topics/100") -> topicDetailJson(100L, postsCount = 1)
+                path.contains("/topics/200") -> topicDetailJson(200L, postsCount = 1)
+                else -> error("Unexpected: $path")
+            }
+        }
+
+        val items = repo.getFeedItems(listOf(group, other))
+
+        assertEquals(setOf(100L, 200L), items.map { it.id }.toSet())
+    }
+
+    @Test
     fun `getFeedItems returns empty list when group list is empty`() = runTest {
         val repo = repoWithRoute { error("should not be called") }
         assertEquals(emptyList(), repo.getFeedItems(emptyList()))

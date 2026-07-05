@@ -397,15 +397,6 @@ private fun PostActionErrorDialog(title: String, message: String, onDismiss: () 
     )
 }
 
-private val VOTE_TYPE_EMOJI: Map<VoteType, String> = mapOf(
-    VoteType.INTERESTING to "🤔",
-    VoteType.EDUCATIONAL to "📚",
-    VoteType.FUNNY to "😂",
-    VoteType.AGREE to "👍",
-    VoteType.DISAGREE to "👎",
-    VoteType.LOVE to "❤️",
-)
-
 @Composable
 private fun VoteRow(post: Post, onVote: (VoteType) -> Unit) {
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {

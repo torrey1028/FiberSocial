@@ -7,6 +7,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import com.autom8ed.fibersocial.feed.models.RavelryUser
+import com.autom8ed.fibersocial.notifications.PollCadence
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -65,7 +66,7 @@ class SettingsScreenTest {
     @Test
     fun `poll interval row is hidden while loading`() {
         compose.setContent {
-            SettingsScreen(user = user, onBack = {}, onSignOut = {}, pollIntervalHours = null)
+            SettingsScreen(user = user, onBack = {}, onSignOut = {}, pollCadence = null)
         }
         compose.onNodeWithText("Check for new events").assertDoesNotExist()
     }
@@ -73,40 +74,40 @@ class SettingsScreenTest {
     @Test
     fun `poll interval row shows the current cadence`() {
         compose.setContent {
-            SettingsScreen(user = user, onBack = {}, onSignOut = {}, pollIntervalHours = 6)
+            SettingsScreen(user = user, onBack = {}, onSignOut = {}, pollCadence = PollCadence.A_FEW_TIMES_A_DAY)
         }
         compose.onNodeWithText("Check for new events").assertIsDisplayed()
-        compose.onNodeWithText("Every 6 hours").assertIsDisplayed()
+        compose.onNodeWithText("A few times a day").assertIsDisplayed()
     }
 
     @Test
     fun `choosing a cadence from the dialog invokes the callback and closes it`() {
-        var selected = -1
+        var selected: PollCadence? = null
         compose.setContent {
             SettingsScreen(
                 user = user, onBack = {}, onSignOut = {},
-                pollIntervalHours = 6,
-                onPollIntervalSelected = { selected = it },
+                pollCadence = PollCadence.A_FEW_TIMES_A_DAY,
+                onPollCadenceSelected = { selected = it },
             )
         }
         compose.onNodeWithText("Check for new events").performClick()
-        compose.onNodeWithText("Every hour").performClick()
-        compose.runOnIdle { assertEquals(1, selected) }
+        compose.onNodeWithText("Hourly").performClick()
+        compose.runOnIdle { assertEquals(PollCadence.HOURLY, selected) }
         compose.onNodeWithText("Cancel").assertDoesNotExist()
     }
 
     @Test
     fun `cancel dismisses the dialog without selecting`() {
-        var selected = -1
+        var selected: PollCadence? = null
         compose.setContent {
             SettingsScreen(
                 user = user, onBack = {}, onSignOut = {},
-                pollIntervalHours = 6,
-                onPollIntervalSelected = { selected = it },
+                pollCadence = PollCadence.A_FEW_TIMES_A_DAY,
+                onPollCadenceSelected = { selected = it },
             )
         }
         compose.onNodeWithText("Check for new events").performClick()
         compose.onNodeWithText("Cancel").performClick()
-        compose.runOnIdle { assertEquals(-1, selected) }
+        compose.runOnIdle { assertEquals(null, selected) }
     }
 }
