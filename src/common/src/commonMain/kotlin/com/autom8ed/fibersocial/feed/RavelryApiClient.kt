@@ -253,6 +253,7 @@ class RavelryApiClient(
      * past events and repeats recurring events once per occurrence; filtering is the
      * consumer's job.
      *
+     * @throws ForbiddenException on 403 — valid session, but no permission for this page.
      * @throws SessionExpiredException per [scrapeHtml].
      */
     suspend fun getSavedEvents(): List<SavedEvent> {
@@ -289,8 +290,12 @@ class RavelryApiClient(
         when {
             // 403 means the cookie is valid but this page is off-limits (permission), not
             // an expired session — distinguish it so it doesn't force a needless re-login.
+            // forbiddenMessage() deliberately omits the literal status code: FeedErrorState
+            // pattern-matches "401"/"403" in error text to detect expired sessions, and a
+            // message containing "403" here would make this route back to that same
+            // session-expired UI text despite being classified as ForbiddenException.
             response.status == HttpStatusCode.Forbidden ->
-                throw ForbiddenException("$what returned ${response.status}")
+                throw ForbiddenException(forbiddenMessage(response))
             response.status == HttpStatusCode.Unauthorized ->
                 throw SessionExpiredException("$what returned ${response.status}")
             !response.request.url.encodedPath.startsWith(expectedPathPrefix) ->
