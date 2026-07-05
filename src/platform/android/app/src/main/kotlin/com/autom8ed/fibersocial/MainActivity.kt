@@ -66,9 +66,9 @@ class MainActivity : ComponentActivity() {
                             val authUrl = remember { authVm.buildAuthUrl() }
                             WebViewLoginScreen(
                                 authUrl = authUrl,
-                                onAuthComplete = { code, cookie ->
+                                onAuthComplete = { code, state, cookie ->
                                     showWebView = false
-                                    authVm.handleAuthCode(code, cookie)
+                                    authVm.handleAuthCode(code, state, cookie)
                                 },
                             )
                         } else {

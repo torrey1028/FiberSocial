@@ -4,6 +4,7 @@ import io.ktor.http.Url
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class RavelryAuthManagerTest {
@@ -67,5 +68,42 @@ class RavelryAuthManagerTest {
         manager.buildAuthUrl("client")
         val second = manager.consumeCodeVerifier()
         assertTrue(first != second)
+    }
+
+    @Test
+    fun `validateState accepts the state embedded in the auth url`() {
+        val manager = RavelryAuthManager()
+        val url = manager.buildAuthUrl("client")
+        val state = Url(url).parameters["state"]
+        assertTrue(manager.validateState(state))
+    }
+
+    @Test
+    fun `validateState rejects a mismatched state`() {
+        val manager = RavelryAuthManager()
+        manager.buildAuthUrl("client")
+        assertFalse(manager.validateState("not-the-issued-state"))
+    }
+
+    @Test
+    fun `validateState rejects a missing returned state`() {
+        val manager = RavelryAuthManager()
+        manager.buildAuthUrl("client")
+        assertFalse(manager.validateState(null))
+    }
+
+    @Test
+    fun `validateState rejects before any auth url is built`() {
+        assertFalse(RavelryAuthManager().validateState("anything"))
+    }
+
+    @Test
+    fun `validateState is one-time use`() {
+        val manager = RavelryAuthManager()
+        val url = manager.buildAuthUrl("client")
+        val state = Url(url).parameters["state"]
+        assertTrue(manager.validateState(state))
+        // Replaying the same state after it's been consumed must not pass.
+        assertFalse(manager.validateState(state))
     }
 }

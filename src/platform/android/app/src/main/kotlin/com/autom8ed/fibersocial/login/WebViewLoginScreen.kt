@@ -15,7 +15,7 @@ import com.autom8ed.fibersocial.auth.RavelryAuthManager
 @Composable
 fun WebViewLoginScreen(
     authUrl: String,
-    onAuthComplete: (code: String, sessionCookie: String) -> Unit,
+    onAuthComplete: (code: String, state: String?, sessionCookie: String) -> Unit,
 ) {
     println("FiberSocial: WebViewLoginScreen authUrl=$authUrl")
     AndroidView(
@@ -37,7 +37,9 @@ fun WebViewLoginScreen(
                         val url = request.url.toString()
                         println("FiberSocial: WebView navigating to ${url.take(120)}")
                         if (url.startsWith(RavelryAuthManager.REDIRECT_URI)) {
-                            val code = Uri.parse(url).getQueryParameter("code") ?: return true
+                            val redirect = Uri.parse(url)
+                            val code = redirect.getQueryParameter("code") ?: return true
+                            val state = redirect.getQueryParameter("state")
                             val cm = CookieManager.getInstance()
                             val wwwCookie = cm.getCookie("https://www.ravelry.com") ?: ""
                             val rootCookie = cm.getCookie("https://ravelry.com") ?: ""
@@ -45,7 +47,7 @@ fun WebViewLoginScreen(
                             println("FiberSocial: www.ravelry.com cookies: $wwwCookie")
                             println("FiberSocial: ravelry.com cookies: $rootCookie")
                             val cookie = wwwCookie.ifEmpty { rootCookie }
-                            onAuthComplete(code, cookie)
+                            onAuthComplete(code, state, cookie)
                             return true
                         }
                         return false
