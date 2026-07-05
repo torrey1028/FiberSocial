@@ -167,30 +167,31 @@ class FeedViewModel(
         val current = _state.value as? FeedState.Loaded ?: return
         if (!current.hasMore || current.loadingMore) return
         val group = current.selectedGroup ?: return
-        _state.value = current.copy(loadingMore = true)
+        val loading = current.copy(loadingMore = true)
+        _state.value = loading
         scope.launch {
             println("FiberSocial: FeedViewModel.loadMore() page=${current.nextPage}")
-            _state.value = try {
+            val next = try {
                 val page = repository.getFeedItemsPage(group, page = current.nextPage)
-                // The state may have moved on (group switch, refresh) while this was in
-                // flight — only apply the fetched page if it's still current.
-                val latest = _state.value as? FeedState.Loaded ?: return@launch
-                if (latest.selectedGroup?.id != group.id) return@launch
                 println("FiberSocial: loadMore appended ${page.items.size} items, hasMore=${page.hasMore}")
-                latest.copy(
-                    items = latest.items + page.items,
+                loading.copy(
+                    items = loading.items + page.items,
                     hasMore = page.hasMore,
                     loadingMore = false,
-                    nextPage = latest.nextPage + 1,
+                    nextPage = loading.nextPage + 1,
                 )
             } catch (e: SessionExpiredException) {
                 println("FiberSocial: loadMore session expired")
                 _sessionExpired.trySend(Unit)
-                current.copy(loadingMore = false)
+                loading.copy(loadingMore = false)
             } catch (e: Exception) {
                 println("FiberSocial: loadMore error: ${e.message}")
-                current.copy(loadingMore = false)
+                loading.copy(loadingMore = false)
             }
+            // The state may have moved on (group switch, refresh, another loadMore) while
+            // this fetch was in flight — reference equality against the exact snapshot this
+            // call installed catches ANY intervening change, not just a different group id.
+            if (_state.value === loading) _state.value = next
         }
     }
 

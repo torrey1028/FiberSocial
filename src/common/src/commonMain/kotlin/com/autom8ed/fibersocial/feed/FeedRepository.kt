@@ -42,27 +42,8 @@ class FeedRepository(private val apiClient: RavelryApiClient) {
         apiClient.getUserGroups(username)
 
     /**
-     * Fetches and merges feed items across all [groups].
-     *
-     * For each group, loads the topic list then resolves details in parallel (for author
-     * and body preview). The combined list is sorted newest-reply-first.
-     *
-     * @param groups Groups whose forums should be included in the feed.
-     * @return Merged, sorted list of [FeedItem]s.
-     */
-    suspend fun getFeedItems(groups: List<Group>): List<FeedItem> = coroutineScope {
-        groups.flatMap { group -> fetchTopicsPage(group, page = 1).items }.sortedWith(
-            // Sticky topics are pinned to the top of a group's forum on the website;
-            // mirror that here, then newest-reply-first within each band (issue #78).
-            compareByDescending<FeedItem> { it.sticky }
-                .thenByDescending { it.lastPostAt },
-        )
-    }
-
-    /**
-     * Fetches one page of [group]'s topics (issue #106 — infinite scroll). Unlike
-     * [getFeedItems], this never spans multiple groups: the feed only ever pages through
-     * whichever single group is currently selected.
+     * Fetches one page of [group]'s topics (issue #106 — infinite scroll). The feed only
+     * ever pages through whichever single group is currently selected.
      *
      * @param page 1-based page number.
      * @return This page's items (already sorted sticky-first, newest-reply-first) plus

@@ -1,6 +1,5 @@
 package com.autom8ed.fibersocial.feed
 
-import com.autom8ed.fibersocial.feed.models.FeedItem
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -29,42 +28,45 @@ class FeedRepositoryTest {
         }
     }
 
+    private suspend fun FeedRepository.singlePageItems(group: com.autom8ed.fibersocial.feed.models.Group = this@FeedRepositoryTest.group) =
+        getFeedItemsPage(group, page = 1).items
+
     @Test
-    fun `getFeedItems lists a topic with images like any other topic`() = runTest {
+    fun `getFeedItemsPage lists a topic with images like any other topic`() = runTest {
         // Issue #77: images in a thread must not change how the topic is listed.
-        val items = singleTopicRepo(imagesCount = 3).getFeedItems(listOf(group))
+        val items = singleTopicRepo(imagesCount = 3).singlePageItems()
         assertFalse(items.single().sticky)
     }
 
     @Test
-    fun `getFeedItems marks a sticky topic sticky`() = runTest {
-        val items = singleTopicRepo(sticky = true).getFeedItems(listOf(group))
+    fun `getFeedItemsPage marks a sticky topic sticky`() = runTest {
+        val items = singleTopicRepo(sticky = true).singlePageItems()
         assertTrue(items.single().sticky)
     }
 
     @Test
-    fun `getFeedItems marks a plain topic not sticky`() = runTest {
-        val items = singleTopicRepo().getFeedItems(listOf(group))
+    fun `getFeedItemsPage marks a plain topic not sticky`() = runTest {
+        val items = singleTopicRepo().singlePageItems()
         assertFalse(items.single().sticky)
     }
 
     @Test
-    fun `getFeedItems sticky topic with images is still sticky`() = runTest {
+    fun `getFeedItemsPage sticky topic with images is still sticky`() = runTest {
         // A pinned topic must pin regardless of photos in the thread (issue #77: the old
         // image-first classification hid three of a real group's four stickies).
-        val items = singleTopicRepo(imagesCount = 1, sticky = true).getFeedItems(listOf(group))
+        val items = singleTopicRepo(imagesCount = 1, sticky = true).singlePageItems()
         assertTrue(items.single().sticky)
     }
 
     @Test
-    fun `getFeedItems populates groupId and groupName from group`() = runTest {
-        val items = singleTopicRepo().getFeedItems(listOf(group))
+    fun `getFeedItemsPage populates groupId and groupName from group`() = runTest {
+        val items = singleTopicRepo().singlePageItems()
         assertEquals(10L, items.single().groupId)
         assertEquals("KAL Hub", items.single().groupName)
     }
 
     @Test
-    fun `getFeedItems uses unknown author when createdByUser is null`() = runTest {
+    fun `getFeedItemsPage uses unknown author when createdByUser is null`() = runTest {
         val repo = repoWithRoute { path ->
             when {
                 path.contains("/forums/") -> topicsJson(100L)
@@ -72,37 +74,37 @@ class FeedRepositoryTest {
                 else -> error("Unexpected: $path")
             }
         }
-        val item = repo.getFeedItems(listOf(group)).single()
+        val item = repo.singlePageItems().single()
         assertEquals("unknown", item.author.username)
     }
 
     @Test
-    fun `getFeedItems truncates bodyPreview to 200 chars but keeps full bodySummary`() = runTest {
+    fun `getFeedItemsPage truncates bodyPreview to 200 chars but keeps full bodySummary`() = runTest {
         val long = "x".repeat(300)
-        val items = singleTopicRepo(summary = long).getFeedItems(listOf(group))
+        val items = singleTopicRepo(summary = long).singlePageItems()
         val item = items.single()
         assertEquals(200, item.bodyPreview.length)
         assertEquals(300, item.bodySummary.length)
     }
 
     @Test
-    fun `getFeedItems uses empty string for both preview and summary when summary is null`() = runTest {
-        val items = singleTopicRepo(summary = null).getFeedItems(listOf(group))
+    fun `getFeedItemsPage uses empty string for both preview and summary when summary is null`() = runTest {
+        val items = singleTopicRepo(summary = null).singlePageItems()
         val item = items.single()
         assertEquals("", item.bodyPreview)
         assertEquals("", item.bodySummary)
     }
 
     @Test
-    fun `getFeedItems populates bodySummary on sticky topics`() = runTest {
-        val items = singleTopicRepo(sticky = true, summary = "Pinned info").getFeedItems(listOf(group))
+    fun `getFeedItemsPage populates bodySummary on sticky topics`() = runTest {
+        val items = singleTopicRepo(sticky = true, summary = "Pinned info").singlePageItems()
         val item = items.single()
         assertEquals("Pinned info", item.bodySummary)
         assertEquals("Pinned info", item.bodyPreview)
     }
 
     @Test
-    fun `getFeedItems builds the preview from summary_html when present`() = runTest {
+    fun `getFeedItemsPage builds the preview from summary_html when present`() = runTest {
         // Ravelry's rendering resolves the dangling ** its raw summary field drops
         // (issue #104) — prefer it over stripping the damaged Markdown ourselves.
         val repo = repoWithRoute { path ->
@@ -116,22 +118,22 @@ class FeedRepositoryTest {
                 else -> error("Unexpected: $path")
             }
         }
-        val item = repo.getFeedItems(listOf(group)).single()
+        val item = repo.singlePageItems().single()
         assertEquals("Please use this thread", item.bodyPreview)
         assertEquals("<p><strong>Please use this thread</strong></p>", item.bodySummaryHtml)
         assertEquals("**Please use this thread", item.bodySummary)
     }
 
     @Test
-    fun `getFeedItems strips markdown from the preview when summary_html is absent`() = runTest {
-        val items = singleTopicRepo(summary = "**Please use this thread").getFeedItems(listOf(group))
+    fun `getFeedItemsPage strips markdown from the preview when summary_html is absent`() = runTest {
+        val items = singleTopicRepo(summary = "**Please use this thread").singlePageItems()
         val item = items.single()
         assertEquals("Please use this thread", item.bodyPreview)
         assertEquals("", item.bodySummaryHtml)
     }
 
     @Test
-    fun `getFeedItems falls back to markdown stripping when summary_html is blank`() = runTest {
+    fun `getFeedItemsPage falls back to markdown stripping when summary_html is blank`() = runTest {
         val repo = repoWithRoute { path ->
             when {
                 path.contains("/forums/") -> topicsJson(100L)
@@ -139,32 +141,28 @@ class FeedRepositoryTest {
                 else -> error("Unexpected: $path")
             }
         }
-        assertEquals("Bold text", repo.getFeedItems(listOf(group)).single().bodyPreview)
+        assertEquals("Bold text", repo.singlePageItems().single().bodyPreview)
     }
 
     @Test
-    fun `getFeedItems sorts results by lastPostAt descending`() = runTest {
-        val group2 = group.copy(id = 11L, forumId = 43L)
+    fun `getFeedItemsPage sorts a page's results by lastPostAt descending`() = runTest {
         val repo = repoWithRoute { path ->
             when {
-                path.contains("/forums/42/") -> topicsJson(100L)
-                path.contains("/forums/43/") -> topicsJson(101L)
+                path.contains("/forums/") -> topicsJson(100L, 101L)
                 path.contains("/topics/100") -> topicDetailJson(100L, repliedAt = "2024-01-10")
                 path.contains("/topics/101") -> topicDetailJson(101L, repliedAt = "2024-01-20")
                 else -> error("Unexpected: $path")
             }
         }
-        val items = repo.getFeedItems(listOf(group, group2))
+        val items = repo.singlePageItems()
         assertEquals(listOf(101L, 100L), items.map { it.id })
     }
 
     @Test
-    fun `getFeedItems pins sticky topics above newer discussions`() = runTest {
-        val group2 = group.copy(id = 11L, forumId = 43L)
+    fun `getFeedItemsPage pins sticky topics above newer discussions`() = runTest {
         val repo = repoWithRoute { path ->
             when {
-                path.contains("/forums/42/") -> topicsJson(100L)
-                path.contains("/forums/43/") -> topicsJson(101L)
+                path.contains("/forums/") -> topicsJson(100L, 101L)
                 // The sticky topic's last reply is OLDER than the discussion's,
                 // yet it must still sort first.
                 path.contains("/topics/100") -> topicDetailJson(100L, sticky = true, repliedAt = "2024-01-10")
@@ -172,57 +170,43 @@ class FeedRepositoryTest {
                 else -> error("Unexpected: $path")
             }
         }
-        val items = repo.getFeedItems(listOf(group, group2))
+        val items = repo.singlePageItems()
         assertEquals(listOf(100L, 101L), items.map { it.id })
         assertTrue(items.first().sticky)
     }
 
     @Test
-    fun `getFeedItems sorts sticky topics among themselves by lastPostAt`() = runTest {
-        val group2 = group.copy(id = 11L, forumId = 43L)
+    fun `getFeedItemsPage sorts sticky topics among themselves by lastPostAt`() = runTest {
         val repo = repoWithRoute { path ->
             when {
-                path.contains("/forums/42/") -> topicsJson(100L)
-                path.contains("/forums/43/") -> topicsJson(101L)
+                path.contains("/forums/") -> topicsJson(100L, 101L)
                 path.contains("/topics/100") -> topicDetailJson(100L, sticky = true, repliedAt = "2024-01-10")
                 path.contains("/topics/101") -> topicDetailJson(101L, sticky = true, repliedAt = "2024-01-20")
                 else -> error("Unexpected: $path")
             }
         }
-        val items = repo.getFeedItems(listOf(group, group2))
+        val items = repo.singlePageItems()
         assertEquals(listOf(101L, 100L), items.map { it.id })
     }
 
     @Test
-    fun `getFeedItems returns empty list when groups have no topics`() = runTest {
+    fun `getFeedItemsPage returns empty list when the group has no topics`() = runTest {
         val repo = repoWithRoute { """{"topics":[]}""" }
-        assertEquals(emptyList(), repo.getFeedItems(listOf(group)))
+        assertEquals(emptyList(), repo.singlePageItems())
     }
 
     @Test
-    fun `getFeedItems combines topics fetched concurrently from multiple groups`() = runTest {
-        val other = com.autom8ed.fibersocial.feed.models.Group(
-            id = 20L, name = "Sock Knitters", permalink = "sock-knitters", forumId = 43L,
-        )
+    fun `getFeedItemsPage resolves topics fetched concurrently within one page`() = runTest {
         val repo = repoWithRoute { path ->
             when {
-                path.contains("/forums/42/") -> topicsJson(100L)
-                path.contains("/forums/43/") -> topicsJson(200L)
+                path.contains("/forums/") -> topicsJson(100L, 200L)
                 path.contains("/topics/100") -> topicDetailJson(100L, postsCount = 1)
                 path.contains("/topics/200") -> topicDetailJson(200L, postsCount = 1)
                 else -> error("Unexpected: $path")
             }
         }
-
-        val items = repo.getFeedItems(listOf(group, other))
-
+        val items = repo.singlePageItems()
         assertEquals(setOf(100L, 200L), items.map { it.id }.toSet())
-    }
-
-    @Test
-    fun `getFeedItems returns empty list when group list is empty`() = runTest {
-        val repo = repoWithRoute { error("should not be called") }
-        assertEquals(emptyList(), repo.getFeedItems(emptyList()))
     }
 
     @Test
@@ -246,7 +230,7 @@ class FeedRepositoryTest {
     }
 
     @Test
-    fun `getFeedItems attributes discussion card to latest replier`() = runTest {
+    fun `getFeedItemsPage attributes discussion card to latest replier`() = runTest {
         val repo = repoWithRoute { path ->
             when {
                 path.contains("/forums/") -> topicsJson(100L)
@@ -255,7 +239,7 @@ class FeedRepositoryTest {
                 else -> error("Unexpected: $path")
             }
         }
-        val item = repo.getFeedItems(listOf(group)).single()
+        val item = repo.singlePageItems().single()
         assertEquals("replier", item.latestReplyAuthor?.username)
         assertEquals("Latest reply text", item.latestReplyPreview)
         assertEquals("replier", item.displayAuthor.username)
@@ -263,7 +247,7 @@ class FeedRepositoryTest {
     }
 
     @Test
-    fun `getFeedItems skips latest-post fetch for single-post topics`() = runTest {
+    fun `getFeedItemsPage skips latest-post fetch for single-post topics`() = runTest {
         val requestedPaths = mutableListOf<String>()
         val repo = repoWithRoute { path ->
             requestedPaths += path
@@ -273,13 +257,13 @@ class FeedRepositoryTest {
                 else -> error("Unexpected: $path")
             }
         }
-        val item = repo.getFeedItems(listOf(group)).single()
+        val item = repo.singlePageItems().single()
         assertEquals(null, item.latestReplyAuthor)
         assertEquals(emptyList(), requestedPaths.filter { it.contains("/posts.json") })
     }
 
     @Test
-    fun `getFeedItems skips latest-post fetch for sticky topics`() = runTest {
+    fun `getFeedItemsPage skips latest-post fetch for sticky topics`() = runTest {
         // Announcements discard reply attribution — the extra request would be pure waste.
         val requestedPaths = mutableListOf<String>()
         val repo = repoWithRoute { path ->
@@ -290,19 +274,19 @@ class FeedRepositoryTest {
                 else -> error("Unexpected: $path")
             }
         }
-        assertTrue(repo.getFeedItems(listOf(group)).single().sticky)
+        assertTrue(repo.singlePageItems().single().sticky)
         assertEquals(emptyList(), requestedPaths.filter { it.contains("/posts.json") })
 
         // The field-level contract the old AnnouncementTopic type used to guarantee
         // structurally: pinned cards attribute to the opening post.
-        val item = repo.getFeedItems(listOf(group)).single()
+        val item = repo.singlePageItems().single()
         assertEquals(null, item.latestReplyAuthor)
         assertEquals(null, item.latestReplyPreview)
         assertEquals(item.author, item.displayAuthor)
     }
 
     @Test
-    fun `getFeedItems attributes a topic with images to its latest replier like any other`() = runTest {
+    fun `getFeedItemsPage attributes a topic with images to its latest replier like any other`() = runTest {
         val repo = repoWithRoute { path ->
             when {
                 path.contains("/forums/") -> topicsJson(100L)
@@ -311,12 +295,12 @@ class FeedRepositoryTest {
                 else -> error("Unexpected: $path")
             }
         }
-        val item = repo.getFeedItems(listOf(group)).single()
+        val item = repo.singlePageItems().single()
         assertEquals("replier", item.latestReplyAuthor?.username)
     }
 
     @Test
-    fun `getFeedItems falls back to opening post when latest-post fetch fails`() = runTest {
+    fun `getFeedItemsPage falls back to opening post when latest-post fetch fails`() = runTest {
         val repo = repoWithRoute { path ->
             when {
                 path.contains("/forums/") -> topicsJson(100L)
@@ -325,14 +309,14 @@ class FeedRepositoryTest {
                 else -> error("Unexpected: $path")
             }
         }
-        val item = repo.getFeedItems(listOf(group)).single()
+        val item = repo.singlePageItems().single()
         assertEquals(null, item.latestReplyAuthor)
         assertEquals(null, item.latestReplyPreview)
         assertEquals("yarnie", item.displayAuthor.username)
     }
 
     @Test
-    fun `getFeedItems ignores a latest reply whose user is missing`() = runTest {
+    fun `getFeedItemsPage ignores a latest reply whose user is missing`() = runTest {
         // Author and preview must stand or fall together: a reply without a user
         // must not show its text attributed to the opening poster.
         val repo = repoWithRoute { path ->
@@ -344,14 +328,14 @@ class FeedRepositoryTest {
                 else -> error("Unexpected: $path")
             }
         }
-        val item = repo.getFeedItems(listOf(group)).single()
+        val item = repo.singlePageItems().single()
         assertEquals(null, item.latestReplyAuthor)
         assertEquals(null, item.latestReplyPreview)
         assertEquals("yarnie", item.displayAuthor.username)
     }
 
     @Test
-    fun `getFeedItems strips html and truncates latest reply preview`() = runTest {
+    fun `getFeedItemsPage strips html and truncates latest reply preview`() = runTest {
         val longBody = "<p>" + "y".repeat(300) + "</p>"
         val repo = repoWithRoute { path ->
             when {
@@ -361,7 +345,7 @@ class FeedRepositoryTest {
                 else -> error("Unexpected: $path")
             }
         }
-        val item = repo.getFeedItems(listOf(group)).single()
+        val item = repo.singlePageItems().single()
         assertEquals(200, item.latestReplyPreview?.length)
         assertEquals("y".repeat(200), item.latestReplyPreview)
     }

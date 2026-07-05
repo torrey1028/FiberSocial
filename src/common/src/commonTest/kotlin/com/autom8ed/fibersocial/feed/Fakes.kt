@@ -48,6 +48,28 @@ fun routingApiClient(
     return RavelryApiClient(client, storage)
 }
 
+/**
+ * Like [routingApiClient], but [route] may suspend — lets a test gate a specific request
+ * (e.g. by `url.parameters["page"]`) on a [kotlinx.coroutines.CompletableDeferred] to
+ * deterministically construct an in-flight-request race window.
+ */
+fun suspendableRoutingApiClient(
+    storage: TokenStorage = FakeFeedTokenStorage(),
+    route: suspend (url: io.ktor.http.Url) -> String,
+): RavelryApiClient {
+    val engine = MockEngine { request ->
+        respond(
+            content = route(request.url),
+            status = HttpStatusCode.OK,
+            headers = headersOf("Content-Type", ContentType.Application.Json.toString()),
+        )
+    }
+    val client = HttpClient(engine) {
+        install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+    }
+    return RavelryApiClient(client, storage)
+}
+
 fun routingApiClientCapturing(
     storage: TokenStorage = FakeFeedTokenStorage(),
     onRequest: (io.ktor.http.Url) -> Unit,
