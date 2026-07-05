@@ -621,6 +621,21 @@ class RavelryApiClientTest {
     }
 
     @Test
+    fun `getGroupEvents throws ForbiddenException on 403 rather than bouncing to login`() = runTest {
+        // A 403 means the session is valid but the page is off-limits (permission), not
+        // expiry — it must not surface as SessionExpiredException (issue #82).
+        val client = htmlApiClient(MockEngine { _ ->
+            respond("", HttpStatusCode.Forbidden)
+        })
+        val e = assertFailsWith<ForbiddenException> { client.getGroupEvents("members-only-group") }
+        // FeedErrorState pattern-matches "401"/"403" in the message to detect expired
+        // sessions — a message containing that digit would defeat this classification.
+        val message = e.message ?: ""
+        assertFalse(message.contains("403"))
+        assertFalse(message.contains("401"))
+    }
+
+    @Test
     fun `getGroupEvents throws SessionExpiredException when redirected to the login page`() = runTest {
         // An expired session cookie doesn't 401 on www.ravelry.com — it 302s to the login
         // page, which Ktor follows to a 200. The client must not mistake that for a group
@@ -680,6 +695,17 @@ class RavelryApiClientTest {
             respond("", HttpStatusCode.Unauthorized)
         })
         assertFailsWith<SessionExpiredException> { client.getEvent("some-event") }
+    }
+
+    @Test
+    fun `getEvent throws ForbiddenException on 403 rather than bouncing to login`() = runTest {
+        val client = htmlApiClient(MockEngine { _ ->
+            respond("", HttpStatusCode.Forbidden)
+        })
+        val e = assertFailsWith<ForbiddenException> { client.getEvent("restricted-event") }
+        val message = e.message ?: ""
+        assertFalse(message.contains("403"))
+        assertFalse(message.contains("401"))
     }
 
     @Test
@@ -758,6 +784,17 @@ class RavelryApiClientTest {
     }
 
     @Test
+    fun `getEventAttendees throws ForbiddenException on 403 rather than bouncing to login`() = runTest {
+        val client = htmlApiClient(MockEngine { _ ->
+            respond("", HttpStatusCode.Forbidden)
+        })
+        val e = assertFailsWith<ForbiddenException> { client.getEventAttendees("private-event") }
+        val message = e.message ?: ""
+        assertFalse(message.contains("403"))
+        assertFalse(message.contains("401"))
+    }
+
+    @Test
     fun `getSavedEvents scrapes the saved-events page with the session cookie`() = runTest {
         var requestedUrl = ""
         var sentCookie: String? = null
@@ -792,6 +829,17 @@ class RavelryApiClientTest {
             respond("", HttpStatusCode.Unauthorized)
         })
         assertFailsWith<SessionExpiredException> { client.getSavedEvents() }
+    }
+
+    @Test
+    fun `getSavedEvents throws ForbiddenException on 403 rather than bouncing to login`() = runTest {
+        val client = htmlApiClient(MockEngine { _ ->
+            respond("", HttpStatusCode.Forbidden)
+        })
+        val e = assertFailsWith<ForbiddenException> { client.getSavedEvents() }
+        val message = e.message ?: ""
+        assertFalse(message.contains("403"))
+        assertFalse(message.contains("401"))
     }
 
     @Test

@@ -195,7 +195,8 @@ class RavelryApiClient(
      * [GroupEventsParser]). Groups without the box yield an empty list.
      *
      * @param groupPermalink The group's permalink, e.g. `kirkland-fiber-arts-circle-2`.
-     * @throws SessionExpiredException if the session cookie is rejected (401/403, or a
+     * @throws ForbiddenException on 403 — valid session, but no permission for this page.
+     * @throws SessionExpiredException if the session cookie is rejected (401, or a
      *   redirect off the group page — Ravelry sends expired sessions to the login page).
      * @throws IllegalStateException on any other non-2xx response.
      */
@@ -216,7 +217,8 @@ class RavelryApiClient(
      *
      * @param eventPermalink The event's slug, e.g. `wednesday-hh-at-chainline-39`
      *   (from [EventSummary.permalink]).
-     * @throws SessionExpiredException if the session cookie is rejected (401/403, or a
+     * @throws ForbiddenException on 403 — valid session, but no permission for this page.
+     * @throws SessionExpiredException if the session cookie is rejected (401, or a
      *   redirect off the event page — Ravelry sends expired sessions to the login page).
      * @throws IllegalStateException on any other non-2xx response.
      */
@@ -235,7 +237,8 @@ class RavelryApiClient(
      * `www.ravelry.com/events/{permalink}/people` with the session cookie (see
      * [EventPeopleParser]). An event with no attendees yields an empty list.
      *
-     * @throws SessionExpiredException if the session cookie is rejected (401/403, or a
+     * @throws ForbiddenException on 403 — valid session, but no permission for this page.
+     * @throws SessionExpiredException if the session cookie is rejected (401, or a
      *   redirect off the events path — Ravelry sends expired sessions to the login page).
      * @throws IllegalStateException on any other non-2xx response.
      */
@@ -257,6 +260,7 @@ class RavelryApiClient(
      * past events and repeats recurring events once per occurrence; filtering is the
      * consumer's job.
      *
+     * @throws ForbiddenException on 403 — valid session, but no permission for this page.
      * @throws SessionExpiredException per [scrapeHtml].
      */
     suspend fun getSavedEvents(): List<SavedEvent> {
@@ -276,10 +280,13 @@ class RavelryApiClient(
      * response is not an authenticated 200 — otherwise auth failures would be
      * indistinguishable from a page that merely lacks the scraped markup.
      *
-     * @throws SessionExpiredException on 401/403, or when the (Ktor-followed) redirect
-     *   chain lands outside [expectedPathPrefix] — an expired session cookie surfaces as
-     *   a 302 to the login page, not an error status. Redirects within the prefix
-     *   (permalink canonicalization) are fine.
+     * @throws ForbiddenException on 403 — the session is valid but lacks permission for
+     *   this page (e.g. a members-only group). Re-authenticating can't fix it, so callers
+     *   must surface an error instead of bouncing the user to login (issue #82).
+     * @throws SessionExpiredException on 401, or when the (Ktor-followed) redirect chain
+     *   lands outside [expectedPathPrefix] — an expired session cookie surfaces as a 302
+     *   to the login page, not an error status. Redirects within the prefix (permalink
+     *   canonicalization) are fine.
      * @throws IllegalStateException on any other non-2xx response.
      */
     private suspend fun scrapeHtml(url: String, expectedPathPrefix: String, what: String): String {
@@ -288,7 +295,15 @@ class RavelryApiClient(
             header(HttpHeaders.Accept, "text/html")
         }
         when {
-            response.status == HttpStatusCode.Unauthorized || response.status == HttpStatusCode.Forbidden ->
+            // 403 means the cookie is valid but this page is off-limits (permission), not
+            // an expired session — distinguish it so it doesn't force a needless re-login.
+            // forbiddenMessage() deliberately omits the literal status code: FeedErrorState
+            // pattern-matches "401"/"403" in error text to detect expired sessions, and a
+            // message containing "403" here would make this route back to that same
+            // session-expired UI text despite being classified as ForbiddenException.
+            response.status == HttpStatusCode.Forbidden ->
+                throw ForbiddenException(forbiddenMessage(response))
+            response.status == HttpStatusCode.Unauthorized ->
                 throw SessionExpiredException("$what returned ${response.status}")
             !response.request.url.encodedPath.startsWith(expectedPathPrefix) ->
                 throw SessionExpiredException(
