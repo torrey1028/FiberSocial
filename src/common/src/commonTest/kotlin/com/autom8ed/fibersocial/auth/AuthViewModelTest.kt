@@ -33,6 +33,16 @@ class AuthViewModelTest {
     }
 
     @Test
+    fun `failLogin surfaces the message as an Error state`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = AuthViewModel(AuthRepository(mockOAuthClient(TOKEN_JSON), FakeTokenStorage()), this)
+        vm.failLogin("Login could not be verified. Please try again.")
+        assertEquals(
+            "Login could not be verified. Please try again.",
+            assertIs<AuthState.Error>(vm.state.value).message,
+        )
+    }
+
+    @Test
     fun `onAuthCodeReceived transitions to Authenticated on success`() =
         runTest(UnconfinedTestDispatcher()) {
             val vm = AuthViewModel(AuthRepository(mockOAuthClient(TOKEN_JSON), FakeTokenStorage()), this)
