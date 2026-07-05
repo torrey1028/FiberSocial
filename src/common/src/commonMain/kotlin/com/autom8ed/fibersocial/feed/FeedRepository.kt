@@ -41,6 +41,9 @@ class FeedRepository(private val apiClient: RavelryApiClient) {
     suspend fun getUserGroups(username: String): List<Group> =
         apiClient.getUserGroups(username)
 
+    /** @see RavelryApiClient.joinGroup */
+    suspend fun joinGroup(permalink: String) = apiClient.joinGroup(permalink)
+
     /**
      * Fetches one page of [group]'s topics (issue #106 — infinite scroll). The feed only
      * ever pages through whichever single group is currently selected.

@@ -343,6 +343,150 @@ class FeedViewModelTest {
             assertEquals(group, after.selectedGroup)
         }
 
+    /**
+     * Like [successRepo] but also answers the join flow: the homepage GET that scrapes the
+     * CSRF token, and the group-join POST. Lets a join succeed and reload.
+     */
+    private fun joinRepo(): FeedRepository =
+        FeedRepository(routingApiClient { path ->
+            when {
+                path.endsWith("/join") -> "ok"
+                path.isEmpty() || path == "/" -> TOKEN_PAGE_HTML
+                path.contains("/current_user") -> CURRENT_USER_JSON
+                path.contains("memberships") -> MEMBERSHIPS_HTML
+                path.contains("/groups/search") -> GROUPS_JSON
+                path.contains("/forums/") -> topicsJson(100L)
+                path.contains("/topics/") -> topicDetailJson(100L)
+                else -> error("Unexpected: $path")
+            }
+        })
+
+    @Test
+    fun `joinSupportGroup joins then reloads, ending Idle and Loaded`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val vm = FeedViewModel(joinRepo(), this, FakeGroupOrderStore())
+            vm.load()
+            awaitChildren(coroutineContext[Job]!!)
+            assertIs<FeedState.Loaded>(vm.state.value)
+
+            vm.joinSupportGroup("fibersocial-app-support")
+            awaitChildren(coroutineContext[Job]!!)
+            assertIs<JoinState.Idle>(vm.joinState.value)
+            assertIs<FeedState.Loaded>(vm.state.value)
+        }
+
+    @Test
+    fun `joinSupportGroup surfaces a failure as JoinState Error`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val vm = FeedViewModel(FeedRepository(errorApiClient()), this, FakeGroupOrderStore())
+            vm.joinSupportGroup("fibersocial-app-support")
+            awaitChildren(coroutineContext[Job]!!)
+            assertIs<JoinState.Error>(vm.joinState.value)
+            // A reopened drawer clears the stale error.
+            vm.acknowledgeJoinError()
+            assertIs<JoinState.Idle>(vm.joinState.value)
+        }
+
+    @Test
+    fun `joinSupportGroup routes a session expiry to login`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val vm = FeedViewModel(FeedRepository(sessionExpiredApiClient()), this, FakeGroupOrderStore())
+            vm.joinSupportGroup("fibersocial-app-support")
+            awaitChildren(coroutineContext[Job]!!)
+            assertIs<JoinState.Idle>(vm.joinState.value)
+            assertEquals(Unit, vm.sessionExpired.first())
+        }
+
+    @Test
+    fun `joinSupportGroup ignores a double-tap while already joining`() =
+        runTest(UnconfinedTestDispatcher()) {
+            // Gated so the "still joining" window is deterministic rather than dependent
+            // on whether the underlying fetch happens to suspend for real — platform-
+            // dependent (see the loadMore concurrency tests) and would make this flaky.
+            val gate = CompletableDeferred<Unit>()
+            var tokenFetchCount = 0
+            val repo = FeedRepository(
+                suspendableRoutingApiClient { url ->
+                    val path = url.encodedPath
+                    when {
+                        path.isEmpty() || path == "/" -> {
+                            tokenFetchCount++
+                            gate.await()
+                            TOKEN_PAGE_HTML
+                        }
+                        path.endsWith("/join") -> "ok"
+                        path.contains("/current_user") -> CURRENT_USER_JSON
+                        path.contains("memberships") -> MEMBERSHIPS_HTML
+                        path.contains("/groups/search") -> GROUPS_JSON
+                        path.contains("/forums/") -> topicsJson(100L)
+                        path.contains("/topics/") -> topicDetailJson(100L)
+                        else -> error("Unexpected: $path")
+                    }
+                },
+            )
+            val vm = FeedViewModel(repo, this, FakeGroupOrderStore())
+            vm.load()
+            awaitChildren(coroutineContext[Job]!!)
+
+            vm.joinSupportGroup("fibersocial-app-support")
+            assertIs<JoinState.Joining>(vm.joinState.value)
+            // Still parked on the token fetch — a second call must no-op, not double-join.
+            vm.joinSupportGroup("fibersocial-app-support")
+
+            gate.complete(Unit)
+            awaitChildren(coroutineContext[Job]!!)
+            assertEquals(1, tokenFetchCount)
+            assertIs<JoinState.Idle>(vm.joinState.value)
+        }
+
+    @Test
+    fun `joinSupportGroup resolves the selected group from stale state while Refreshing`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val gate = CompletableDeferred<Unit>()
+            var membershipFetchCount = 0
+            val repo = FeedRepository(
+                suspendableRoutingApiClient { url ->
+                    val path = url.encodedPath
+                    when {
+                        path.endsWith("/join") -> "ok"
+                        path.isEmpty() || path == "/" -> TOKEN_PAGE_HTML
+                        path.contains("/current_user") -> CURRENT_USER_JSON
+                        path.contains("memberships") -> {
+                            membershipFetchCount++
+                            // The first fetch (from refresh()) parks here so the test can
+                            // observe FeedState.Refreshing; later fetches (from load()'s
+                            // completion and joinSupportGroup's own reload) go straight through.
+                            if (membershipFetchCount == 2) gate.await()
+                            MEMBERSHIPS_HTML
+                        }
+                        path.contains("/groups/search") -> GROUPS_JSON
+                        path.contains("/forums/") -> topicsJson(100L)
+                        path.contains("/topics/") -> topicDetailJson(100L)
+                        else -> error("Unexpected: $path")
+                    }
+                },
+            )
+            val vm = FeedViewModel(repo, this, FakeGroupOrderStore())
+            vm.load()
+            awaitChildren(coroutineContext[Job]!!)
+            val loaded = assertIs<FeedState.Loaded>(vm.state.value)
+
+            // Starts refresh()'s own fetchFeed, which parks on the 2nd memberships fetch —
+            // state should be Refreshing(stale = loaded) by the time joinSupportGroup reads
+            // it below (not asserted directly here: observing it needs a second gate step,
+            // and the point of this test is the *resolution*, not the intermediate state).
+            vm.refresh()
+
+            // joinSupportGroup must resolve the group to reselect from stale.selectedGroup,
+            // not a direct FeedState.Loaded read (state isn't Loaded right now).
+            vm.joinSupportGroup("fibersocial-app-support")
+            gate.complete(Unit)
+            awaitChildren(coroutineContext[Job]!!)
+
+            val after = assertIs<FeedState.Loaded>(vm.state.value)
+            assertEquals(loaded.selectedGroup, after.selectedGroup)
+        }
+
     /** Two-page repo for the single group above: page 1 has topic 100, page 2 has topic 200. */
     private fun twoPageRepo(): FeedRepository {
         var forumCallCount = 0

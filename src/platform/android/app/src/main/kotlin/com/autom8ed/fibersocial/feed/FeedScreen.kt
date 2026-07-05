@@ -27,6 +27,8 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Edit
@@ -116,6 +118,7 @@ fun FeedScreen(
     val topicDetailState by viewModel.topicDetail.state.collectAsState()
     val eventsState by viewModel.events.state.collectAsState()
     val eventDetailState by viewModel.eventDetail.state.collectAsState()
+    val joinState by viewModel.feed.joinState.collectAsState()
     var selectedTopic by remember { mutableStateOf<FeedItem?>(null) }
     var selectedEventPermalink by remember { mutableStateOf<String?>(null) }
     var eventsGroup by remember { mutableStateOf<Group?>(null) }
@@ -206,7 +209,6 @@ fun FeedScreen(
             user = user,
             onBack = { showSettings = false },
             onSignOut = onLogout,
-            onSendFeedback = { sendingFeedback = true },
             pollCadence = pollCadence,
             onPollCadenceSelected = { cadence ->
                 pollCadence = cadence
@@ -343,6 +345,13 @@ fun FeedScreen(
                 selectedGroup = selectedGroup,
                 eventCounts = eventCounts,
                 user = user,
+                isFeedbackGroupMember = groups.any { it.permalink == SupportGroup.PERMALINK },
+                joinState = joinState,
+                onSendFeedback = {
+                    scope.launch { drawerState.close() }
+                    sendingFeedback = true
+                },
+                onJoinFeedbackGroup = { viewModel.feed.joinSupportGroup(SupportGroup.PERMALINK) },
                 onGroupSelected = { group ->
                     scope.launch { drawerState.close() }
                     viewModel.feed.selectGroup(group)
@@ -374,7 +383,10 @@ fun FeedScreen(
                         }
                     },
                     navigationIcon = {
-                        IconButton(onClick = { scope.launch { drawerState.open() } }) {
+                        IconButton(onClick = {
+                            viewModel.feed.acknowledgeJoinError()
+                            scope.launch { drawerState.open() }
+                        }) {
                             Icon(Icons.Default.Menu, contentDescription = "Select group")
                         }
                     },
@@ -603,6 +615,10 @@ internal fun GroupDrawer(
     selectedGroup: Group?,
     eventCounts: Map<Long, Int>,
     user: RavelryUser?,
+    isFeedbackGroupMember: Boolean = false,
+    joinState: JoinState = JoinState.Idle,
+    onSendFeedback: () -> Unit = {},
+    onJoinFeedbackGroup: () -> Unit = {},
     onGroupSelected: (Group) -> Unit,
     onGroupEventsClick: (Group) -> Unit,
     onSettingsClick: () -> Unit,
@@ -768,7 +784,77 @@ internal fun GroupDrawer(
                 item(key = "drawer-footer-spacer") { Spacer(Modifier.height(16.dp)) }
             }
             HorizontalDivider()
+            FeedbackDrawerAction(
+                isMember = isFeedbackGroupMember,
+                joinState = joinState,
+                onSendFeedback = onSendFeedback,
+                onJoin = onJoinFeedbackGroup,
+            )
+            HorizontalDivider()
             ProfileFooter(user = user, onClick = onSettingsClick)
+        }
+    }
+}
+
+/**
+ * Drawer row for app feedback (issue #57): "Send feedback" once the user is a member of the
+ * support group, or "Join feedback group" beforehand — joining is a prerequisite for posting.
+ * While a join is in flight the row shows a spinner; a failed join surfaces an inline message.
+ */
+@Composable
+private fun FeedbackDrawerAction(
+    isMember: Boolean,
+    joinState: JoinState,
+    onSendFeedback: () -> Unit,
+    onJoin: () -> Unit,
+) {
+    val joining = joinState is JoinState.Joining
+    val label = when {
+        isMember -> "Send feedback"
+        joining -> "Joining…"
+        else -> "Join feedback group"
+    }
+    Column {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(
+                    enabled = !joining,
+                    onClick = if (isMember) onSendFeedback else onJoin,
+                    onClickLabel = label,
+                    role = Role.Button,
+                )
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (joining) {
+                CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+            } else {
+                Icon(
+                    if (isMember) Icons.AutoMirrored.Filled.Send else Icons.Default.Add,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+            }
+            Spacer(Modifier.width(16.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(text = label, style = MaterialTheme.typography.bodyLarge)
+                if (!isMember && !joining) {
+                    Text(
+                        text = "Join to report bugs and request features",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+        if (joinState is JoinState.Error) {
+            Text(
+                text = joinState.message,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.padding(start = 56.dp, end = 16.dp, bottom = 8.dp),
+            )
         }
     }
 }

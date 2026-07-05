@@ -60,6 +60,21 @@ sealed class FeedState {
     data class Error(val message: String) : FeedState()
 }
 
+/** State of an in-flight "join the support group" action (the drawer's feedback button). */
+sealed class JoinState {
+    /** No join in flight. */
+    object Idle : JoinState()
+
+    /** A join request is in flight. */
+    object Joining : JoinState()
+
+    /**
+     * The join failed.
+     * @property message Human-readable error description.
+     */
+    data class Error(val message: String) : JoinState()
+}
+
 /**
  * Platform-agnostic ViewModel that drives the group feed screen.
  *
@@ -86,6 +101,45 @@ class FeedViewModel(
      * exactly once — no replay on re-subscription. Collect to navigate to login.
      */
     val sessionExpired: Flow<Unit> = _sessionExpired.receiveAsFlow()
+
+    private val _joinState = MutableStateFlow<JoinState>(JoinState.Idle)
+
+    /** Observable state of a "join the support group" action (see [joinSupportGroup]). */
+    val joinState: StateFlow<JoinState> = _joinState.asStateFlow()
+
+    /**
+     * Joins the current user to the group at [permalink] (the app support group, from the
+     * drawer's "Join feedback group" button), then reloads so the drawer reflects the new
+     * membership. Double-taps are ignored. A session expiry routes to login like any other
+     * feed action; other failures land in [JoinState.Error] for the button to surface.
+     */
+    fun joinSupportGroup(permalink: String) {
+        if (_joinState.value is JoinState.Joining) return
+        _joinState.value = JoinState.Joining
+        scope.launch {
+            try {
+                repository.joinGroup(permalink)
+                // Re-scrape memberships so the just-joined group appears and the button
+                // flips to "Send feedback"; keep whatever group the user was viewing.
+                val selected = (_state.value as? FeedState.Loaded)?.selectedGroup
+                    ?: (_state.value as? FeedState.Refreshing)?.stale?.selectedGroup
+                _state.value = fetchFeed(selectedGroup = selected)
+                _joinState.value = JoinState.Idle
+            } catch (e: SessionExpiredException) {
+                println("FiberSocial: joinSupportGroup session expired")
+                _joinState.value = JoinState.Idle
+                _sessionExpired.trySend(Unit)
+            } catch (e: Exception) {
+                println("FiberSocial: joinSupportGroup error: ${e.message}")
+                _joinState.value = JoinState.Error(e.message ?: "Couldn't join the group")
+            }
+        }
+    }
+
+    /** Clears a stale [JoinState.Error] (e.g. when the drawer reopens). No-op mid-join. */
+    fun acknowledgeJoinError() {
+        if (_joinState.value is JoinState.Error) _joinState.value = JoinState.Idle
+    }
 
     /** Sets the session-expired signal. Call only from platform debug tooling. */
     fun forceSessionExpiry() { _sessionExpired.trySend(Unit) }
