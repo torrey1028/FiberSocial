@@ -9,6 +9,15 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # Without this, two pushes to main close together run as fully independent,
+    # unordered jobs — if the older commit's job happens to finish after the
+    # newer one's (slower runner, cache miss), its "Publish latest release" step
+    # runs last and leaves "latest" pointing at the stale commit. Queuing runs
+    # per-ref (cancel-in-progress: false) guarantees whichever run's publish
+    # step executes last really is the most recently pushed one.
+    concurrency:
+      group: android-build-${{ github.ref }}
+      cancel-in-progress: false
     # Needed for the "Publish latest release" step to create/update a release
     # and its tag via the default GITHUB_TOKEN.
     permissions:
