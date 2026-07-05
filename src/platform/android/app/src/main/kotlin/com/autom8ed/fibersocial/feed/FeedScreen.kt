@@ -3,6 +3,8 @@ package com.autom8ed.fibersocial.feed
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -22,6 +24,7 @@ import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -52,6 +55,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.autom8ed.fibersocial.BuildConfig
 import com.autom8ed.fibersocial.debug.DebugPanel
@@ -325,16 +329,19 @@ fun FeedScreen(
                     contentAlignment = Alignment.Center,
                 ) { CircularProgressIndicator() }
 
-                is FeedState.Error -> Box(
-                    modifier = Modifier.fillMaxSize().padding(padding),
-                    contentAlignment = Alignment.Center,
+                // Recovery must go through load(), not refresh(): refresh() no-ops
+                // unless the state is Loaded, so from Error it can never leave the
+                // error screen (issue: feed stuck on "couldn't load" until the app
+                // was force-restarted).
+                is FeedState.Error -> PullToRefreshBox(
+                    refreshing = false,
+                    onRefresh = { viewModel.feed.load() },
+                    modifier = Modifier.padding(padding),
                 ) {
-                    val message = if (s.message.contains("403") || s.message.contains("401")) {
-                        "Session expired. Please log out and sign in again."
-                    } else {
-                        "Couldn't load the feed. Check your connection and try again."
-                    }
-                    Text(message, color = MaterialTheme.colorScheme.error)
+                    FeedErrorState(
+                        rawMessage = s.message,
+                        onRetry = { viewModel.feed.load() },
+                    )
                 }
 
                 is FeedState.Loaded -> PullToRefreshBox(
@@ -371,6 +378,7 @@ fun FeedScreen(
         val context = LocalContext.current
         DebugPanel(
             onForceSessionExpiry = { viewModel.debugForceSessionExpiry() },
+            onForceFeedError = { viewModel.debugForceFeedError() },
             onRunEventSync = { EventSyncWorker.runOnce(context) },
             onDismiss = { showDebugPanel = false },
         )
@@ -443,6 +451,41 @@ internal fun TopicDetailRoute(
  */
 internal fun trackReplySent(repliedThisVisit: Boolean, replyState: ReplyState): Boolean =
     repliedThisVisit || replyState is ReplyState.Sent
+
+/**
+ * Full-screen feed error with a working way out: a Retry button (and, via the
+ * surrounding [PullToRefreshBox], pull-to-refresh) that re-runs the initial load.
+ * The scroll modifier exists for the pull gesture — pull-to-refresh only engages on
+ * a nested-scrolling child, and this content never fills a screen on its own.
+ */
+@Composable
+internal fun FeedErrorState(
+    rawMessage: String,
+    onRetry: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val message = if (rawMessage.contains("403") || rawMessage.contains("401")) {
+        "Session expired. Please log out and sign in again."
+    } else {
+        "Couldn't load the feed. Check your connection and try again."
+    }
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState()),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Text(
+            text = message,
+            color = MaterialTheme.colorScheme.error,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(horizontal = 32.dp),
+        )
+        Spacer(Modifier.height(16.dp))
+        Button(onClick = onRetry) { Text("Retry") }
+    }
+}
 
 @Composable
 internal fun GroupDrawer(

@@ -84,6 +84,8 @@ class FeedAndroidViewModel(app: Application) : AndroidViewModel(app) {
 
     fun debugForceSessionExpiry() = feed.forceSessionExpiry()
 
+    fun debugForceFeedError() = feed.forceError()
+
     override fun onCleared() {
         super.onCleared()
         httpClient.close()
