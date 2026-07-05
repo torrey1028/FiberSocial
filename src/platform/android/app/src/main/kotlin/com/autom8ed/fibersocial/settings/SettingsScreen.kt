@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
-import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -47,7 +46,6 @@ import com.autom8ed.fibersocial.ui.UserAvatar
  * @param pollCadence Current background-sync cadence; null while loading (the row is
  *   hidden until known to avoid flashing a wrong value).
  * @param onPollCadenceSelected Invoked with the chosen cadence.
- * @param onSendFeedback Opens the "Send feedback" composer (issue #57).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -57,7 +55,6 @@ fun SettingsScreen(
     onSignOut: () -> Unit,
     pollCadence: PollCadence? = null,
     onPollCadenceSelected: (PollCadence) -> Unit = {},
-    onSendFeedback: () -> Unit = {},
 ) {
     BackHandler(onBack = onBack)
     Scaffold(
@@ -105,28 +102,6 @@ fun SettingsScreen(
                 )
                 HorizontalDivider()
             }
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable(onClick = onSendFeedback, onClickLabel = "Send feedback", role = Role.Button)
-                    .padding(horizontal = 16.dp, vertical = 16.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(Icons.AutoMirrored.Filled.Send, contentDescription = null)
-                Spacer(Modifier.width(16.dp))
-                Column {
-                    Text(
-                        text = "Send feedback",
-                        style = MaterialTheme.typography.bodyLarge,
-                    )
-                    Text(
-                        text = "Post to the FiberSocial App Support group",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-            HorizontalDivider()
             Row(
                 modifier = Modifier
                     .fillMaxWidth()

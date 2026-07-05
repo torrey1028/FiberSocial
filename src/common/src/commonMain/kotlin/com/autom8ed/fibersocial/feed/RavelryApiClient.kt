@@ -347,6 +347,52 @@ class RavelryApiClient(
     }
 
     /**
+     * Joins the current user to a group. The API exposes no join endpoint, so this replays
+     * the website's own request: the group page's "Join" button fires a Prototype.js
+     * `Ajax.Request('/groups/{permalink}/join', {method:'put'})`, which tunnels as a POST
+     * with a Rails `_method=put` override plus the session-stable `authenticity_token`
+     * (the same token [deletePost] uses). Only works for open ("anyone can join") groups;
+     * a moderated group would instead create a pending request.
+     *
+     * @param permalink The group's permalink, e.g. `fibersocial-app-support`.
+     * @throws SessionExpiredException if the session cookie is rejected (redirect to login).
+     * @throws ForbiddenException if Ravelry refuses the join (403).
+     * @throws IllegalStateException on any other rejection.
+     */
+    suspend fun joinGroup(permalink: String) {
+        val token = fetchAuthenticityToken()
+        val cookie = sessionCookie()
+        val response = httpClient.submitForm(
+            url = "$WWW_URL/groups/$permalink/join",
+            formParameters = parameters {
+                append("_method", "put")
+                append("authenticity_token", token)
+            },
+        ) {
+            header(HttpHeaders.Cookie, cookie)
+        }
+        println("FiberSocial: joinGroup($permalink) -> ${response.status}")
+        // Same redirect handling as deletePost: Ktor doesn't follow POST redirects, and an
+        // expired session bounces to the login page — matched on the redirect's path so a
+        // group permalink containing "login"/"account" can't false-positive.
+        val redirectPath = response.headers[HttpHeaders.Location]
+            ?.let { runCatching { Url(it).encodedPath }.getOrDefault(it) }
+            .orEmpty()
+        when {
+            redirectPath.startsWith("/login") || redirectPath.startsWith("/account") -> {
+                cachedAuthenticityToken = null
+                throw SessionExpiredException("Join of group $permalink redirected to login")
+            }
+            response.status == HttpStatusCode.Forbidden -> throw ForbiddenException(forbiddenMessage(response))
+            response.status.isSuccess() || response.status.value in 300..399 -> Unit
+            else -> {
+                cachedAuthenticityToken = null
+                error("Join of group $permalink rejected: HTTP ${response.status.value}")
+            }
+        }
+    }
+
+    /**
      * Resolves [permalink] to a [Group] by searching, trying progressively narrower
      * queries until a match is found. The full permalink-derived query misses for small
      * or local groups that rank low in Ravelry's search index (see [searchQueriesFor]).

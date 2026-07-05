@@ -343,6 +343,60 @@ class FeedViewModelTest {
             assertEquals(group, after.selectedGroup)
         }
 
+    /**
+     * Like [successRepo] but also answers the join flow: the homepage GET that scrapes the
+     * CSRF token, and the group-join POST. Lets a join succeed and reload.
+     */
+    private fun joinRepo(): FeedRepository =
+        FeedRepository(routingApiClient { path ->
+            when {
+                path.endsWith("/join") -> "ok"
+                path.isEmpty() || path == "/" -> TOKEN_PAGE_HTML
+                path.contains("/current_user") -> CURRENT_USER_JSON
+                path.contains("memberships") -> MEMBERSHIPS_HTML
+                path.contains("/groups/search") -> GROUPS_JSON
+                path.contains("/forums/") -> topicsJson(100L)
+                path.contains("/topics/") -> topicDetailJson(100L)
+                else -> error("Unexpected: $path")
+            }
+        })
+
+    @Test
+    fun `joinSupportGroup joins then reloads, ending Idle and Loaded`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val vm = FeedViewModel(joinRepo(), this, FakeGroupOrderStore())
+            vm.load()
+            awaitChildren(coroutineContext[Job]!!)
+            assertIs<FeedState.Loaded>(vm.state.value)
+
+            vm.joinSupportGroup("fibersocial-app-support")
+            awaitChildren(coroutineContext[Job]!!)
+            assertIs<JoinState.Idle>(vm.joinState.value)
+            assertIs<FeedState.Loaded>(vm.state.value)
+        }
+
+    @Test
+    fun `joinSupportGroup surfaces a failure as JoinState Error`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val vm = FeedViewModel(FeedRepository(errorApiClient()), this, FakeGroupOrderStore())
+            vm.joinSupportGroup("fibersocial-app-support")
+            awaitChildren(coroutineContext[Job]!!)
+            assertIs<JoinState.Error>(vm.joinState.value)
+            // A reopened drawer clears the stale error.
+            vm.acknowledgeJoinError()
+            assertIs<JoinState.Idle>(vm.joinState.value)
+        }
+
+    @Test
+    fun `joinSupportGroup routes a session expiry to login`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val vm = FeedViewModel(FeedRepository(sessionExpiredApiClient()), this, FakeGroupOrderStore())
+            vm.joinSupportGroup("fibersocial-app-support")
+            awaitChildren(coroutineContext[Job]!!)
+            assertIs<JoinState.Idle>(vm.joinState.value)
+            assertEquals(Unit, vm.sessionExpired.first())
+        }
+
     /** Two-page repo for the single group above: page 1 has topic 100, page 2 has topic 200. */
     private fun twoPageRepo(): FeedRepository {
         var forumCallCount = 0
