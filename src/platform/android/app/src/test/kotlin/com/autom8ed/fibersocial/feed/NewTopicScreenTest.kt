@@ -39,7 +39,7 @@ class NewTopicScreenTest {
                 initialGroup = null,
                 state = NewTopicState.Idle,
                 onBack = {},
-                onPost = { _, _, _ -> },
+                onPost = { _, _, _, _ -> },
                 onCreated = { _, _ -> },
             )
         }
@@ -55,24 +55,50 @@ class NewTopicScreenTest {
 
     @Test
     fun `drawer-selected group is preselected and post invokes onPost with it`() {
-        var posted: Triple<Group, String, String>? = null
+        data class Posted(val group: Group, val title: String, val body: String, val summary: String)
+        var posted: Posted? = null
         compose.setContent {
             NewTopicScreen(
                 groups = listOf(kalHub, circle),
                 initialGroup = circle,
                 state = NewTopicState.Idle,
                 onBack = {},
-                onPost = { group, title, body -> posted = Triple(group, title, body) },
+                onPost = { group, title, body, summary -> posted = Posted(group, title, body, summary) },
                 onCreated = { _, _ -> },
             )
         }
         compose.onNodeWithText("Fiber Circle").assertIsDisplayed()
         compose.onNodeWithText("Title").performTextInput("Show us your WIPs")
+        compose.onNodeWithText("Summary (optional)").performTextInput("Weekly photo thread")
         compose.onNodeWithText("Your post").performTextInput("Photos please!")
         compose.onNodeWithText("Post").performClick()
         compose.runOnIdle {
-            assertEquals(Triple(circle, "Show us your WIPs", "Photos please!"), posted)
+            assertEquals(
+                Posted(circle, "Show us your WIPs", "Photos please!", "Weekly photo thread"),
+                posted,
+            )
         }
+    }
+
+    @Test
+    fun `summary is optional - post stays enabled and passes empty summary when left blank`() {
+        var postedSummary: String? = null
+        compose.setContent {
+            NewTopicScreen(
+                groups = listOf(kalHub),
+                initialGroup = kalHub,
+                state = NewTopicState.Idle,
+                onBack = {},
+                onPost = { _, _, _, summary -> postedSummary = summary },
+                onCreated = { _, _ -> },
+            )
+        }
+        compose.onNodeWithText("Title").performTextInput("Show us your WIPs")
+        compose.onNodeWithText("Your post").performTextInput("Photos please!")
+        // No summary typed — Post is still enabled and fires with an empty summary.
+        compose.onNodeWithText("Post").assertIsEnabled()
+        compose.onNodeWithText("Post").performClick()
+        compose.runOnIdle { assertEquals("", postedSummary) }
     }
 
     @Test
@@ -84,7 +110,7 @@ class NewTopicScreenTest {
                 initialGroup = kalHub,
                 state = state,
                 onBack = {},
-                onPost = { _, _, _ -> },
+                onPost = { _, _, _, _ -> },
                 onCreated = { _, _ -> },
             )
         }
@@ -108,7 +134,7 @@ class NewTopicScreenTest {
                 initialGroup = kalHub,
                 state = state,
                 onBack = {},
-                onPost = { _, _, _ -> },
+                onPost = { _, _, _, _ -> },
                 onCreated = { topic, group -> created = topic to group },
             )
         }
@@ -126,7 +152,7 @@ class NewTopicScreenTest {
                 initialGroup = kalHub,
                 state = NewTopicState.Sending,
                 onBack = {},
-                onPost = { _, _, _ -> },
+                onPost = { _, _, _, _ -> },
                 onCreated = { _, _ -> },
             )
         }
@@ -144,7 +170,7 @@ class NewTopicScreenTest {
                 initialGroup = kalHub,
                 state = NewTopicState.Idle,
                 onBack = {},
-                onPost = { _, _, _ -> },
+                onPost = { _, _, _, _ -> },
                 onCreated = { _, _ -> },
             )
         }

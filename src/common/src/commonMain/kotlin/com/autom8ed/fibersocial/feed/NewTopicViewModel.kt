@@ -61,18 +61,20 @@ class NewTopicViewModel(
 
     /**
      * Creates a topic titled [title] with [body] as its opening post in forum [forumId].
-     * Blank titles/bodies and double-submits are ignored. Titles are clamped to
-     * [MAX_TITLE_LENGTH] (Ravelry's limit) as a backstop; the UI enforces it while typing.
-     * On failure the state carries the error and the composer keeps its fields.
+     * The optional [summary] is a short blurb shown in the forum's topic list; a blank
+     * one is dropped. Blank titles/bodies and double-submits are ignored. Titles are
+     * clamped to [MAX_TITLE_LENGTH] (Ravelry's limit) as a backstop; the UI enforces it
+     * while typing. On failure the state carries the error and the composer keeps its fields.
      */
-    fun create(forumId: Long, title: String, body: String) {
+    fun create(forumId: Long, title: String, body: String, summary: String? = null) {
         val trimmedTitle = title.trim().take(MAX_TITLE_LENGTH)
         val trimmedBody = body.trim()
+        val trimmedSummary = summary?.trim()?.takeIf { it.isNotEmpty() }
         if (trimmedTitle.isEmpty() || trimmedBody.isEmpty() || _state.value is NewTopicState.Sending) return
         _state.value = NewTopicState.Sending
         scope.launch {
             try {
-                val topic = apiClient.createTopic(forumId, trimmedTitle, trimmedBody)
+                val topic = apiClient.createTopic(forumId, trimmedTitle, trimmedBody, trimmedSummary)
                 println("FiberSocial: NewTopicViewModel created topic ${topic.id}")
                 _state.value = NewTopicState.Created(topic)
             } catch (e: CancellationException) {

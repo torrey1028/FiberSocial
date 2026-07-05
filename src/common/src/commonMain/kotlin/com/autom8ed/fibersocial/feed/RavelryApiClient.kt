@@ -531,9 +531,11 @@ class RavelryApiClient(
      * @param forumId Forum to create the topic in ([Group.forumId]).
      * @param title Topic title. Ravelry caps titles at 250 characters.
      * @param body Plain-text content of the opening post.
+     * @param summary Optional short topic summary shown in the forum's topic list.
+     *   Omitted from the request when null or blank.
      * @return The newly created topic as returned by Ravelry.
      */
-    suspend fun createTopic(forumId: Long, title: String, body: String): Topic {
+    suspend fun createTopic(forumId: Long, title: String, body: String, summary: String? = null): Topic {
         val raw = authenticatedRequest {
             httpClient.post("$BASE_URL/topics/create.json") {
                 header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
@@ -544,6 +546,8 @@ class RavelryApiClient(
                             append("forum_id", forumId.toString())
                             append("title", title)
                             append("body", body)
+                            // Optional: only sent when the author wrote one.
+                            summary?.takeIf { it.isNotBlank() }?.let { append("summary", it) }
                         },
                     ),
                 )

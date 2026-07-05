@@ -263,7 +263,9 @@ fun FeedScreen(
                 composingTopic = false
                 viewModel.newTopic.reset()
             },
-            onPost = { group, title, body -> viewModel.newTopic.create(group.forumId, title, body) },
+            onPost = { group, title, body, summary ->
+                viewModel.newTopic.create(group.forumId, title, body, summary)
+            },
             onCreated = { topic, group ->
                 composingTopic = false
                 viewModel.newTopic.acknowledgeCreated()

@@ -9,6 +9,19 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # Without this, two pushes to main close together run as fully independent,
+    # unordered jobs — if the older commit's job happens to finish after the
+    # newer one's (slower runner, cache miss), its "Publish latest release" step
+    # runs last and leaves "latest" pointing at the stale commit. Queuing runs
+    # per-ref (cancel-in-progress: false) guarantees whichever run's publish
+    # step executes last really is the most recently pushed one.
+    concurrency:
+      group: android-build-${{ github.ref }}
+      cancel-in-progress: false
+    # Needed for the "Publish latest release" step to create/update a release
+    # and its tag via the default GITHUB_TOKEN.
+    permissions:
+      contents: write
     # The `secrets` context isn't available in step `if:` conditionals — only in
     # `env:`/`with:` — so the release-signing steps below gate on this instead.
     env:
@@ -113,3 +126,21 @@ jobs:
           name: app-release
           path: src/platform/android/app/build/outputs/apk/release/app-release.apk
           retention-days: 7
+
+      # Gives a permanent, unauthenticated download link that always points at
+      # the newest main build: .../releases/latest/download/app-release.apk.
+      # Re-creates the "latest" tag/release each run (rather than editing one
+      # in place) so its target commit always matches what was just built.
+      - name: Publish "latest" release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && env.HAS_RELEASE_SIGNING == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete latest --cleanup-tag --yes --repo "$GITHUB_REPOSITORY" || true
+          gh release create latest \
+            src/platform/android/app/build/outputs/apk/release/app-release.apk \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "Latest build" \
+            --notes "Automatically published from $(git rev-parse --short HEAD)." \
+            --latest
