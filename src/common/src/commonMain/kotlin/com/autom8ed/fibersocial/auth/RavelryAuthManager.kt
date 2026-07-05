@@ -43,6 +43,22 @@ class RavelryAuthManager {
     fun consumeCodeVerifier(): String =
         codeVerifier?.also { codeVerifier = null } ?: error("No code verifier — call buildAuthUrl first")
 
+    /**
+     * Checks the `state` returned on the OAuth redirect against the one issued by the most
+     * recent [buildAuthUrl] call, consuming it (one-time use). Returns `true` only on an
+     * exact match — a mismatch, a missing returned value, or no issued state (a second call,
+     * or a redirect that arrives before any auth URL was built) all return `false`.
+     *
+     * This is the login-CSRF defense: without it, an attacker could trick a user into
+     * completing an auth flow the attacker initiated. Callers must reject the auth code
+     * when this returns `false` (issue #149).
+     */
+    fun validateState(returnedState: String?): Boolean {
+        val expected = state
+        state = null
+        return expected != null && expected == returnedState
+    }
+
     private fun generateState(): String = base64UrlEncode(secureRandomBytes(16))
 
     private fun generateCodeVerifier(): String = base64UrlEncode(secureRandomBytes(32))

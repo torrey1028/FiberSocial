@@ -60,60 +60,63 @@ class MainActivity : ComponentActivity() {
                 val authState by authVm.auth.state.collectAsState()
                 var showWebView by remember { mutableStateOf(false) }
 
-                when (authState) {
-                    is AuthState.Unauthenticated -> {
-                        if (showWebView) {
-                            val authUrl = remember { authVm.buildAuthUrl() }
-                            WebViewLoginScreen(
-                                authUrl = authUrl,
-                                onAuthComplete = { code, cookie ->
-                                    showWebView = false
-                                    authVm.handleAuthCode(code, cookie)
-                                },
-                            )
-                        } else {
+                // Checked ahead of the AuthState when-branch below so a retry from
+                // AuthState.Error (e.g. a rejected OAuth state, issue #149) re-opens the
+                // WebView instead of being silently swallowed by the Error branch, which
+                // has no showWebView check of its own.
+                if (showWebView) {
+                    val authUrl = remember { authVm.buildAuthUrl() }
+                    WebViewLoginScreen(
+                        authUrl = authUrl,
+                        onAuthComplete = { code, state, cookie ->
+                            showWebView = false
+                            authVm.handleAuthCode(code, state, cookie)
+                        },
+                    )
+                } else {
+                    when (authState) {
+                        is AuthState.Unauthenticated ->
                             LoginScreen(onLoginClick = { showWebView = true })
-                        }
-                    }
-                    is AuthState.Error ->
-                        LoginScreen(
-                            errorMessage = (authState as AuthState.Error).message,
-                            onLoginClick = { showWebView = true },
-                        )
-                    AuthState.Loading ->
-                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            CircularProgressIndicator()
-                        }
-                    is AuthState.Authenticated -> {
-                        LaunchedEffect(Unit) {
-                            feedVm.load()
-                            EventSyncWorker.schedulePeriodic(
-                                this@MainActivity,
-                                KeyValueNotificationSettingsStore(
-                                    plainKeyValueStore(this@MainActivity, NOTIFICATION_SETTINGS_PREFS_NAME),
-                                ).load().effectivePollCadence,
+                        is AuthState.Error ->
+                            LoginScreen(
+                                errorMessage = (authState as AuthState.Error).message,
+                                onLoginClick = { showWebView = true },
+                            )
+                        AuthState.Loading ->
+                            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                CircularProgressIndicator()
+                            }
+                        is AuthState.Authenticated -> {
+                            LaunchedEffect(Unit) {
+                                feedVm.load()
+                                EventSyncWorker.schedulePeriodic(
+                                    this@MainActivity,
+                                    KeyValueNotificationSettingsStore(
+                                        plainKeyValueStore(this@MainActivity, NOTIFICATION_SETTINGS_PREFS_NAME),
+                                    ).load().effectivePollCadence,
+                                )
+                            }
+                            // On session expiry: show WebView login before clearing auth so there's no
+                            // LoginScreen flash between the state change and the WebView appearing.
+                            LaunchedEffect(feedVm) {
+                                feedVm.sessionExpired.collect {
+                                    showWebView = true
+                                    authVm.auth.logout()
+                                }
+                            }
+                            val deepLink by deepLinkEvent.collectAsState()
+                            FeedScreen(
+                                viewModel = feedVm,
+                                // Reset first: the ViewModel outlives the session, and a
+                                // different account logging in next must not see this one's feed.
+                                onLogout = {
+                                    feedVm.reset()
+                                    authVm.auth.logout()
+                                },
+                                deepLinkEventPermalink = deepLink,
+                                onDeepLinkConsumed = { deepLinkEvent.value = null },
                             )
                         }
-                        // On session expiry: show WebView login before clearing auth so there's no
-                        // LoginScreen flash between the state change and the WebView appearing.
-                        LaunchedEffect(feedVm) {
-                            feedVm.sessionExpired.collect {
-                                showWebView = true
-                                authVm.auth.logout()
-                            }
-                        }
-                        val deepLink by deepLinkEvent.collectAsState()
-                        FeedScreen(
-                            viewModel = feedVm,
-                            // Reset first: the ViewModel outlives the session, and a
-                            // different account logging in next must not see this one's feed.
-                            onLogout = {
-                                feedVm.reset()
-                                authVm.auth.logout()
-                            },
-                            deepLinkEventPermalink = deepLink,
-                            onDeepLinkConsumed = { deepLinkEvent.value = null },
-                        )
                     }
                 }
             }
