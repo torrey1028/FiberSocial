@@ -4,7 +4,9 @@ import com.autom8ed.fibersocial.auth.SessionExpiredException
 import com.autom8ed.fibersocial.feed.models.Group
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertTrue
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -328,5 +330,95 @@ class FeedViewModelTest {
             awaitChildren(coroutineContext[Job]!!)
             val after = assertIs<FeedState.Loaded>(vm.state.value)
             assertEquals(group, after.selectedGroup)
+        }
+
+    /** Two-page repo for the single group above: page 1 has topic 100, page 2 has topic 200. */
+    private fun twoPageRepo(): FeedRepository {
+        var forumCallCount = 0
+        return FeedRepository(routingApiClient { path ->
+            when {
+                path.contains("/current_user") -> CURRENT_USER_JSON
+                path.contains("memberships") -> MEMBERSHIPS_HTML
+                path.contains("/groups/search") -> GROUPS_JSON
+                path.contains("/forums/") -> {
+                    forumCallCount++
+                    if (forumCallCount == 1) {
+                        """{"topics":[{"id":100,"title":"Topic 100"}],
+                            "paginator":{"page":1,"page_count":2,"results":2}}"""
+                    } else {
+                        """{"topics":[{"id":200,"title":"Topic 200"}],
+                            "paginator":{"page":2,"page_count":2,"results":2}}"""
+                    }
+                }
+                path.contains("/topics/") ->
+                    topicDetailJson(path.split("/topics/")[1].replace(".json", "").toLong())
+                else -> error("Unexpected: $path")
+            }
+        })
+    }
+
+    @Test
+    fun `load reports hasMore true when the first page is not the last`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val vm = FeedViewModel(twoPageRepo(), this, FakeGroupOrderStore())
+            vm.load()
+            awaitChildren(coroutineContext[Job]!!)
+            val state = assertIs<FeedState.Loaded>(vm.state.value)
+            assertEquals(listOf(100L), state.items.map { it.id })
+            assertTrue(state.hasMore)
+        }
+
+    @Test
+    fun `loadMore appends the next page and clears hasMore once exhausted`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val vm = FeedViewModel(twoPageRepo(), this, FakeGroupOrderStore())
+            vm.load()
+            awaitChildren(coroutineContext[Job]!!)
+
+            vm.loadMore()
+            awaitChildren(coroutineContext[Job]!!)
+            val after = assertIs<FeedState.Loaded>(vm.state.value)
+            assertEquals(listOf(100L, 200L), after.items.map { it.id })
+            assertFalse(after.hasMore)
+            assertFalse(after.loadingMore)
+        }
+
+    @Test
+    fun `loadMore is a no-op when hasMore is false`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = FeedViewModel(successRepo(), this, FakeGroupOrderStore())
+        vm.load()
+        awaitChildren(coroutineContext[Job]!!)
+        val before = assertIs<FeedState.Loaded>(vm.state.value)
+        assertFalse(before.hasMore)
+
+        vm.loadMore()
+        awaitChildren(coroutineContext[Job]!!)
+        assertEquals(before, vm.state.value)
+    }
+
+    @Test
+    fun `loadMore is a no-op when state is not Loaded`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = FeedViewModel(twoPageRepo(), this, FakeGroupOrderStore())
+        vm.loadMore()
+        awaitChildren(coroutineContext[Job]!!)
+        assertIs<FeedState.Loading>(vm.state.value)
+    }
+
+    @Test
+    fun `loadMore sets loadingMore synchronously so a second call is ignored while in flight`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val vm = FeedViewModel(twoPageRepo(), this, FakeGroupOrderStore())
+            vm.load()
+            awaitChildren(coroutineContext[Job]!!)
+
+            vm.loadMore()
+            val midFlight = assertIs<FeedState.Loaded>(vm.state.value)
+            assertTrue(midFlight.loadingMore)
+
+            // A second call while the first is still in flight must no-op, not double-fetch.
+            vm.loadMore()
+            awaitChildren(coroutineContext[Job]!!)
+            val after = assertIs<FeedState.Loaded>(vm.state.value)
+            assertEquals(listOf(100L, 200L), after.items.map { it.id })
         }
 }

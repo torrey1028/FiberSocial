@@ -365,4 +365,33 @@ class FeedRepositoryTest {
         assertEquals(200, item.latestReplyPreview?.length)
         assertEquals("y".repeat(200), item.latestReplyPreview)
     }
+
+    @Test
+    fun `getFeedItemsPage reports hasMore true when more pages remain`() = runTest {
+        val repo = repoWithRoute { path ->
+            when {
+                path.contains("/forums/") ->
+                    """{"topics":[{"id":100,"title":"Topic 100"}],"paginator":{"page":2,"page_count":3,"results":60}}"""
+                path.contains("/topics/") -> topicDetailJson(100L)
+                else -> error("Unexpected: $path")
+            }
+        }
+        val page = repo.getFeedItemsPage(group, page = 2)
+        assertEquals(1, page.items.size)
+        assertTrue(page.hasMore)
+    }
+
+    @Test
+    fun `getFeedItemsPage reports hasMore false on the last page`() = runTest {
+        val repo = repoWithRoute { path ->
+            when {
+                path.contains("/forums/") ->
+                    """{"topics":[{"id":100,"title":"Topic 100"}],"paginator":{"page":3,"page_count":3,"results":60}}"""
+                path.contains("/topics/") -> topicDetailJson(100L)
+                else -> error("Unexpected: $path")
+            }
+        }
+        val page = repo.getFeedItemsPage(group, page = 3)
+        assertFalse(page.hasMore)
+    }
 }

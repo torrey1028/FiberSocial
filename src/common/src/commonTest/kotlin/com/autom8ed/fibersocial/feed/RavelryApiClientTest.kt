@@ -202,30 +202,65 @@ class RavelryApiClientTest {
     @Test
     fun `getGroupTopics returns topics list`() = runTest {
         val client = routingApiClient { topicsJson(100L, 101L) }
-        val topics = client.getGroupTopics(42L)
-        assertEquals(2, topics.size)
-        assertEquals(100L, topics[0].id)
-        assertEquals(101L, topics[1].id)
+        val page = client.getGroupTopics(42L)
+        assertEquals(2, page.topics.size)
+        assertEquals(100L, page.topics[0].id)
+        assertEquals(101L, page.topics[1].id)
     }
 
     @Test
     fun `getGroupTopics defaults to empty when the response omits the topics field`() = runTest {
         val client = routingApiClient { "{}" }
-        assertEquals(emptyList(), client.getGroupTopics(42L))
+        assertEquals(emptyList(), client.getGroupTopics(42L).topics)
     }
 
     @Test
     fun `getGroupTopics tolerates a partial paginator object`() = runTest {
         val client = routingApiClient { """{"topics":[{"id":100,"title":"Topic 100"}],"paginator":{"page":2}}""" }
-        val topics = client.getGroupTopics(42L)
-        assertEquals(1, topics.size)
-        assertEquals(100L, topics[0].id)
+        val page = client.getGroupTopics(42L)
+        assertEquals(1, page.topics.size)
+        assertEquals(100L, page.topics[0].id)
     }
 
     @Test
     fun `getGroupTopics returns empty list when forum has no topics`() = runTest {
         val client = routingApiClient { """{"topics":[]}""" }
-        assertEquals(emptyList(), client.getGroupTopics(42L))
+        assertEquals(emptyList(), client.getGroupTopics(42L).topics)
+    }
+
+    @Test
+    fun `getGroupTopics reports hasMore true when more pages remain`() = runTest {
+        val client = routingApiClient {
+            """{"topics":[{"id":100,"title":"Topic 100"}],"paginator":{"page":1,"page_count":3,"results":60}}"""
+        }
+        val page = client.getGroupTopics(42L)
+        assertTrue(page.hasMore)
+        assertEquals(1, page.page)
+    }
+
+    @Test
+    fun `getGroupTopics reports hasMore false on the last page`() = runTest {
+        val client = routingApiClient {
+            """{"topics":[{"id":100,"title":"Topic 100"}],"paginator":{"page":3,"page_count":3,"results":60}}"""
+        }
+        val page = client.getGroupTopics(42L)
+        assertFalse(page.hasMore)
+        assertEquals(3, page.page)
+    }
+
+    @Test
+    fun `getGroupTopics reports hasMore false when the paginator is absent`() = runTest {
+        val client = routingApiClient { topicsJson(100L) }
+        assertFalse(client.getGroupTopics(42L).hasMore)
+    }
+
+    @Test
+    fun `getGroupTopics sends the requested page and page size`() = runTest {
+        var capturedUrl: io.ktor.http.Url? = null
+        val client = routingApiClientCapturing(onRequest = { capturedUrl = it }) { topicsJson(100L) }
+        client.getGroupTopics(42L, page = 2, pageSize = 50)
+        assertEquals("2", capturedUrl?.parameters?.get("page"))
+        assertEquals("50", capturedUrl?.parameters?.get("page_size"))
     }
 
     @Test

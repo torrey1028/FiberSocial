@@ -44,6 +44,13 @@ import kotlinx.serialization.json.Json
 
 private const val BASE_URL = "https://api.ravelry.com"
 private const val WWW_URL = "https://www.ravelry.com"
+
+/**
+ * Topics requested per [RavelryApiClient.getGroupTopics] page. Tunable knob for feed
+ * responsiveness (issue #106) — a smaller value returns the first screenful faster, a
+ * larger one means fewer round-trips while the user scrolls.
+ */
+const val DEFAULT_FEED_PAGE_SIZE = 25
 // coerceInputValues: a defensive safety net for when Ravelry returns an explicit JSON null
 // for a field our model declares non-nullable-with-default. kotlinx.serialization applies a
 // field default only when the key is ABSENT — an explicit null otherwise throws — so this
@@ -383,9 +390,14 @@ class RavelryApiClient(
      * @param forumId The `forum_id` from a [Group].
      * @param page 1-based page number.
      * @param pageSize Number of topics per page.
-     * @return Topics ordered by most-recently-replied first (Ravelry default).
+     * @return Topics for [page] (most-recently-replied first, Ravelry default) plus
+     *   whether any further pages remain.
      */
-    suspend fun getGroupTopics(forumId: Long, page: Int = 1, pageSize: Int = 25): List<Topic> {
+    suspend fun getGroupTopics(
+        forumId: Long,
+        page: Int = 1,
+        pageSize: Int = DEFAULT_FEED_PAGE_SIZE,
+    ): TopicsPage {
         val raw = authenticatedRequest {
             httpClient.get("$BASE_URL/forums/$forumId/topics.json") {
                 header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
@@ -395,7 +407,13 @@ class RavelryApiClient(
                 }
             }
         }
-        return lenientJson.decodeFromString<TopicsResponse>(raw).topics
+        val response = lenientJson.decodeFromString<TopicsResponse>(raw)
+        val paginator = response.paginator
+        return TopicsPage(
+            topics = response.topics,
+            page = paginator?.page ?: page,
+            hasMore = paginator != null && paginator.page < paginator.pageCount,
+        )
     }
 
     /**
@@ -673,4 +691,15 @@ class RavelryApiClient(
 data class VoteResult(
     val voteTotals: Map<String, Int>,
     val userVotes: List<String>,
+)
+
+/**
+ * One page of a forum's topics, as returned by [RavelryApiClient.getGroupTopics].
+ *
+ * @property hasMore Whether requesting `page + 1` would return further topics.
+ */
+data class TopicsPage(
+    val topics: List<Topic>,
+    val page: Int,
+    val hasMore: Boolean,
 )

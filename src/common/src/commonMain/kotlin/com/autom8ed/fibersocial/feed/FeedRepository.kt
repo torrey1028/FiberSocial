@@ -9,9 +9,20 @@ import com.autom8ed.fibersocial.feed.models.RavelryUser
 import com.autom8ed.fibersocial.feed.html.MarkdownPostParser
 import com.autom8ed.fibersocial.feed.models.Topic
 import com.fleeksoft.ksoup.Ksoup
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+
+/**
+ * One page of a single group's feed items, as returned by [FeedRepository.getFeedItemsPage].
+ *
+ * @property hasMore Whether requesting the next page would return further items.
+ */
+data class FeedItemsPage(
+    val items: List<FeedItem>,
+    val hasMore: Boolean,
+)
 
 /**
  * Translates raw Ravelry API data into [FeedItem]s ready for display.
@@ -40,29 +51,50 @@ class FeedRepository(private val apiClient: RavelryApiClient) {
      * @return Merged, sorted list of [FeedItem]s.
      */
     suspend fun getFeedItems(groups: List<Group>): List<FeedItem> = coroutineScope {
-        groups.flatMap { group ->
-            apiClient.getGroupTopics(group.forumId)
-                .map { topic ->
-                    async {
-                        val detail = apiClient.getTopicDetail(topic.id)
-                        // Sticky topics deliberately keep opening-post attribution (an
-                        // announcement is its opening post, not its latest comment — this
-                        // mirrors the website; FeedItem's init enforces it), and only
-                        // topics with replies have a latest reply distinct from the
-                        // opening post; skip the extra request otherwise. The !sticky
-                        // condition is load-bearing, not a leftover from the old card split.
-                        val wantsLatestReply = detail.postsCount > 1 && !detail.sticky
-                        val latestReply = if (wantsLatestReply) latestPostOrNull(detail.id) else null
-                        detail.toFeedItem(groupId = group.id, groupName = group.name, latestReply = latestReply)
-                    }
-                }
-                .awaitAll()
-        }.sortedWith(
+        groups.flatMap { group -> fetchTopicsPage(group, page = 1).items }.sortedWith(
             // Sticky topics are pinned to the top of a group's forum on the website;
             // mirror that here, then newest-reply-first within each band (issue #78).
             compareByDescending<FeedItem> { it.sticky }
                 .thenByDescending { it.lastPostAt },
         )
+    }
+
+    /**
+     * Fetches one page of [group]'s topics (issue #106 — infinite scroll). Unlike
+     * [getFeedItems], this never spans multiple groups: the feed only ever pages through
+     * whichever single group is currently selected.
+     *
+     * @param page 1-based page number.
+     * @return This page's items (already sorted sticky-first, newest-reply-first) plus
+     *   whether a further page remains.
+     */
+    suspend fun getFeedItemsPage(group: Group, page: Int): FeedItemsPage = coroutineScope {
+        fetchTopicsPage(group, page)
+    }
+
+    private suspend fun CoroutineScope.fetchTopicsPage(group: Group, page: Int): FeedItemsPage {
+        val topicsPage = apiClient.getGroupTopics(group.forumId, page = page)
+        val items = topicsPage.topics
+            .map { topic ->
+                async {
+                    val detail = apiClient.getTopicDetail(topic.id)
+                    // Sticky topics deliberately keep opening-post attribution (an
+                    // announcement is its opening post, not its latest comment — this
+                    // mirrors the website; FeedItem's init enforces it), and only
+                    // topics with replies have a latest reply distinct from the
+                    // opening post; skip the extra request otherwise. The !sticky
+                    // condition is load-bearing, not a leftover from the old card split.
+                    val wantsLatestReply = detail.postsCount > 1 && !detail.sticky
+                    val latestReply = if (wantsLatestReply) latestPostOrNull(detail.id) else null
+                    detail.toFeedItem(groupId = group.id, groupName = group.name, latestReply = latestReply)
+                }
+            }
+            .awaitAll()
+            .sortedWith(
+                compareByDescending<FeedItem> { it.sticky }
+                    .thenByDescending { it.lastPostAt },
+            )
+        return FeedItemsPage(items = items, hasMore = topicsPage.hasMore)
     }
 
     /**
