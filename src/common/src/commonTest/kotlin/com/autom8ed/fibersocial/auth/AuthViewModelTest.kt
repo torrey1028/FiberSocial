@@ -73,7 +73,7 @@ class AuthViewModelTest {
     fun `onAuthCodeReceived transitions to Error on network failure`() =
         runTest(UnconfinedTestDispatcher()) {
             val failClient = HttpClient(MockEngine {
-                throw java.io.IOException("Simulated network failure")
+                throw io.ktor.utils.io.errors.IOException("Simulated network failure")
             }) {
                 install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
             }

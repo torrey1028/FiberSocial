@@ -191,7 +191,7 @@ class TopicDetailViewModelTest {
     }
 
     @Test
-    fun `toggleVote computes direction from current state, not a stale post parameter`() = runTest {
+    fun `toggleVote computes direction from current state rather than a stale post parameter`() = runTest {
         val capturedVotedParams = mutableListOf<String?>()
         val engine = MockEngine { request ->
             if (request.url.encodedPath.contains("vote")) {

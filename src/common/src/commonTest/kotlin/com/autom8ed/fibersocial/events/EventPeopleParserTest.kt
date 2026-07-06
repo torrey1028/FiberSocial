@@ -50,7 +50,7 @@ class EventPeopleParserLenienceTest {
     }
 
     @Test
-    fun `protocol-relative avatar urls get the https scheme, not the ravelry origin`() {
+    fun `protocol-relative avatar urls get the https scheme rather than the ravelry origin`() {
         val html = card(
             avatar = """<a href="/people/x"><img src="//images4.ravelrycache.com/avatars/x.jpg" class="avatar__image"></a>""",
             details = """<a href="/people/x" class="login">x</a>""",

@@ -1,4 +1,5 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import org.jetbrains.kotlin.gradle.plugin.mpp.apple.XCFramework
 
 plugins {
     kotlin("multiplatform")
@@ -12,6 +13,17 @@ kotlin {
     androidTarget {
         compilerOptions {
             jvmTarget.set(JvmTarget.JVM_17)
+        }
+    }
+
+    // Exported as an XCFramework for the Xcode project (#117). Static linking:
+    // a single consumer, no dynamic-framework embedding needed.
+    val xcFramework = XCFramework("FiberSocialCommon")
+    listOf(iosArm64(), iosSimulatorArm64()).forEach { target ->
+        target.binaries.framework {
+            baseName = "FiberSocialCommon"
+            isStatic = true
+            xcFramework.add(this)
         }
     }
 
@@ -36,6 +48,9 @@ kotlin {
         }
         androidMain.dependencies {
             implementation("io.ktor:ktor-client-android:2.3.12")
+        }
+        iosMain.dependencies {
+            implementation("io.ktor:ktor-client-darwin:2.3.12")
         }
         jvmMain.dependencies {
             // Only used by the jvm() target's `ravelryHttpClient()` actual, which
