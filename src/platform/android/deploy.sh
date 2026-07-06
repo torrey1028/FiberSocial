@@ -37,12 +37,16 @@ if [ "$DEVICES" -eq 0 ]; then
 fi
 
 PACKAGE="com.autom8ed.fibersocial"
+# Explicitly initialized: an inherited environment variable must never decide
+# whether user data gets wiped below.
+CLEAR_AFTER_INSTALL=0
 
 # A debug APK can't update an installed release build (and vice versa): the
-# signatures differ, and on this setup the incompatible `adb install -r`
-# doesn't fail fast — it hangs for minutes mid-stream. Detect the mismatch
-# up front via the DEBUGGABLE flag and uninstall the old build first.
-INSTALLED_FLAGS=$(adb shell dumpsys package "$PACKAGE" 2>/dev/null | grep pkgFlags || true)
+# signatures differ, and on this setup the incompatible install doesn't fail
+# fast — it hangs for minutes mid-stream. Detect the mismatch up front via the
+# DEBUGGABLE flag and uninstall the old build first. Anchored to the pkgFlags
+# line: a bare "pkgFlags" grep would also scan privatePkgFlags.
+INSTALLED_FLAGS=$(adb shell dumpsys package "$PACKAGE" 2>/dev/null | grep -E '^[[:space:]]*pkgFlags=' || true)
 if [ -n "$INSTALLED_FLAGS" ]; then
     MISMATCH=0
     if [ "$BUILD_TYPE" = "debug" ]; then
@@ -54,8 +58,13 @@ if [ -n "$INSTALLED_FLAGS" ]; then
         INSTALLED_TYPE=$([ "$BUILD_TYPE" = "debug" ] && echo release || echo debug)
         echo ""
         echo "==> Installed app is a ${INSTALLED_TYPE} build; a ${BUILD_TYPE} APK can't update it in place."
-        echo "    Uninstalling it first. NOTE: this clears app data — you'll need to log in again."
-        adb uninstall "$PACKAGE"
+        echo "    Uninstalling it first. NOTE: this clears app data — login, drawer group order,"
+        echo "    and notification state are all lost (expect a re-login and possibly a burst of"
+        echo "    already-seen event notifications)."
+        # Tolerated failure: dumpsys can keep a pkgFlags line for uninstalled-but-
+        # record-kept packages, where adb uninstall reports Failure but a plain
+        # install succeeds. Dead-ending here would help nobody.
+        adb uninstall "$PACKAGE" || echo "    (uninstall reported failure; continuing — the install may still succeed)"
         CLEAR_AFTER_INSTALL=1
     fi
 fi
@@ -65,7 +74,8 @@ echo "Found $DEVICES device(s). Installing..."
 # versionCode in the millions while ordinary dev builds are versionCode 1, so
 # the first dev install after building on a tagged commit is a "downgrade".
 # Only works debug-over-debug; replacing an installed *release* build with a
-# debug one needs an uninstall anyway (different signing key).
+# debug one needs an uninstall (different signing key), which the mismatch
+# check above performs automatically.
 adb install -r -d "$APK_PATH"
 
 # Auto-backup restores the old build's app data right after an uninstall/reinstall
@@ -73,7 +83,7 @@ adb install -r -d "$APK_PATH"
 # no longer exists. The app then crashes on launch with AndroidKeysetManager/Tink
 # errors (see CLAUDE.md). Clearing data after the install guarantees a clean start;
 # the login was already lost to the uninstall anyway.
-if [ "${CLEAR_AFTER_INSTALL:-0}" -eq 1 ]; then
+if [ "$CLEAR_AFTER_INSTALL" -eq 1 ]; then
     echo "==> Clearing restored app data (stale encrypted-prefs keyset would crash on launch)..."
     adb shell pm clear "$PACKAGE"
 fi
