@@ -17,6 +17,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -66,12 +67,20 @@ class MainActivity : ComponentActivity() {
             // instantly, app-wide. null until the store loads; rendering with the
             // SYSTEM default in that gap matches the launch window theme, so there's
             // no visible flash for SYSTEM/matching users (and at worst one recompose
-            // for override users).
+            // for override users on first cold start).
+            //
+            // rememberSaveable, not remember: on a config change (rotation, system
+            // day/night toggle) the resolved mode is restored from the instance state,
+            // so an override user doesn't re-flash the SYSTEM default every rotation
+            // while the async reload runs. ThemeMode is a serializable enum, so the
+            // default saver handles the nullable value.
             val themeStore = remember {
                 KeyValueThemeSettingsStore(plainKeyValueStore(this, THEME_SETTINGS_PREFS_NAME))
             }
-            var themeMode by remember { mutableStateOf<ThemeMode?>(null) }
-            LaunchedEffect(Unit) { themeMode = themeStore.load().mode }
+            var themeMode by rememberSaveable { mutableStateOf<ThemeMode?>(null) }
+            // Only load when we don't already have a restored value, so a config change
+            // keeps rendering the restored mode instead of blinking through null.
+            LaunchedEffect(Unit) { if (themeMode == null) themeMode = themeStore.load().mode }
             val themeScope = rememberCoroutineScope()
 
             FiberSocialTheme(mode = themeMode ?: ThemeMode.SYSTEM) {

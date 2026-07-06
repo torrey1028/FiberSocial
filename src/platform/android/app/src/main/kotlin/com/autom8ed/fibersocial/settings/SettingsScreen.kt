@@ -104,15 +104,25 @@ fun SettingsScreen(
             }
             HorizontalDivider()
             if (themeMode != null) {
-                ThemeModeRow(
-                    themeMode = themeMode,
+                ChoiceSettingRow(
+                    icon = DarkModeIcon,
+                    title = "App theme",
+                    clickLabel = "Change app theme",
+                    options = ThemeMode.entries,
+                    selected = themeMode,
+                    optionLabel = ::themeModeLabel,
                     onSelected = onThemeModeSelected,
                 )
                 HorizontalDivider()
             }
             if (pollCadence != null) {
-                PollCadenceRow(
-                    pollCadence = pollCadence,
+                ChoiceSettingRow(
+                    icon = Icons.Default.Notifications,
+                    title = "Check for new events",
+                    clickLabel = "Change event check frequency",
+                    options = PollCadence.entries,
+                    selected = pollCadence,
+                    optionLabel = ::pollCadenceLabel,
                     onSelected = onPollCadenceSelected,
                 )
                 HorizontalDivider()
@@ -142,13 +152,20 @@ fun SettingsScreen(
 
 
 /**
- * "App theme" row: shows the current theme mode and opens a radio dialog offering
- * Follow system / Light / Dark (issue #153).
+ * A settings row that shows the current choice and opens a radio dialog to change it.
+ * Shared by the "App theme" and "Check for new events" rows so their layout, click
+ * semantics, and dialog behavior stay identical and can't drift apart in a later edit.
+ * Selection is applied on radio-row tap; the dialog's only button dismisses.
  */
 @Composable
-private fun ThemeModeRow(
-    themeMode: ThemeMode,
-    onSelected: (ThemeMode) -> Unit,
+private fun <T> ChoiceSettingRow(
+    icon: ImageVector,
+    title: String,
+    clickLabel: String,
+    options: List<T>,
+    selected: T,
+    optionLabel: (T) -> String,
+    onSelected: (T) -> Unit,
 ) {
     var showDialog by rememberSaveable { mutableStateOf(false) }
     Row(
@@ -156,21 +173,21 @@ private fun ThemeModeRow(
             .fillMaxWidth()
             .clickable(
                 onClick = { showDialog = true },
-                onClickLabel = "Change app theme",
+                onClickLabel = clickLabel,
                 role = Role.Button,
             )
             .padding(horizontal = 16.dp, vertical = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(DarkModeIcon, contentDescription = null)
+        Icon(icon, contentDescription = null)
         Spacer(Modifier.width(16.dp))
         Column {
             Text(
-                text = "App theme",
+                text = title,
                 style = MaterialTheme.typography.bodyLarge,
             )
             Text(
-                text = themeModeLabel(themeMode),
+                text = optionLabel(selected),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -180,10 +197,10 @@ private fun ThemeModeRow(
     if (showDialog) {
         AlertDialog(
             onDismissRequest = { showDialog = false },
-            title = { Text("App theme") },
+            title = { Text(title) },
             text = {
                 Column {
-                    ThemeMode.entries.forEach { mode ->
+                    options.forEach { option ->
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -191,18 +208,18 @@ private fun ThemeModeRow(
                                     role = Role.RadioButton,
                                     onClick = {
                                         showDialog = false
-                                        onSelected(mode)
+                                        onSelected(option)
                                     },
                                 )
                                 .padding(vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             RadioButton(
-                                selected = mode == themeMode,
+                                selected = option == selected,
                                 onClick = null,
                             )
                             Spacer(Modifier.width(8.dp))
-                            Text(themeModeLabel(mode))
+                            Text(optionLabel(option))
                         }
                     }
                 }
@@ -235,75 +252,3 @@ private val DarkModeIcon: ImageVector by lazy {
     }
 }
 
-/**
- * "Check for new events" row: shows the current cadence and opens a radio dialog with
- * the supported choices.
- */
-@Composable
-private fun PollCadenceRow(
-    pollCadence: PollCadence,
-    onSelected: (PollCadence) -> Unit,
-) {
-    var showDialog by rememberSaveable { mutableStateOf(false) }
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(
-                onClick = { showDialog = true },
-                onClickLabel = "Change event check frequency",
-                role = Role.Button,
-            )
-            .padding(horizontal = 16.dp, vertical = 16.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(Icons.Default.Notifications, contentDescription = null)
-        Spacer(Modifier.width(16.dp))
-        Column {
-            Text(
-                text = "Check for new events",
-                style = MaterialTheme.typography.bodyLarge,
-            )
-            Text(
-                text = pollCadenceLabel(pollCadence),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-    }
-
-    if (showDialog) {
-        AlertDialog(
-            onDismissRequest = { showDialog = false },
-            title = { Text("Check for new events") },
-            text = {
-                Column {
-                    PollCadence.entries.forEach { cadence ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable(
-                                    role = Role.RadioButton,
-                                    onClick = {
-                                        showDialog = false
-                                        onSelected(cadence)
-                                    },
-                                )
-                                .padding(vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            RadioButton(
-                                selected = cadence == pollCadence,
-                                onClick = null,
-                            )
-                            Spacer(Modifier.width(8.dp))
-                            Text(pollCadenceLabel(cadence))
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { showDialog = false }) { Text("Cancel") }
-            },
-        )
-    }
-}
