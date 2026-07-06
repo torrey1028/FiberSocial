@@ -98,6 +98,8 @@ import com.autom8ed.fibersocial.feed.models.RavelryUser
 import com.autom8ed.fibersocial.feed.models.VoteType
 import com.autom8ed.fibersocial.composeapp.resources.Res
 import com.autom8ed.fibersocial.composeapp.resources.app_logo_content_description
+import com.autom8ed.fibersocial.profile.UserProfileScreen
+import com.autom8ed.fibersocial.profile.UserProfileState
 import com.autom8ed.fibersocial.notifications.NotificationSettings
 import com.autom8ed.fibersocial.notifications.NotificationSettingsStore
 import com.autom8ed.fibersocial.notifications.PollCadence
@@ -160,6 +162,7 @@ fun FeedScreen(
             viewModel.newTopicImage.reset()
             viewModel.projectPicker.dismiss()
             viewModel.projectPage.dismiss()
+            viewModel.userProfile.dismiss()
             viewModel.eventDetail.load(deepLinkEventPermalink)
             selectedEventPermalink = deepLinkEventPermalink
             onDeepLinkConsumed()
@@ -213,6 +216,23 @@ fun FeedScreen(
             onPostErrorShown = { viewModel.projectPage.acknowledgePostError() },
             onDeleteComment = { viewModel.projectPage.deleteComment(it) },
             onPostAcknowledged = { viewModel.projectPage.acknowledgePosted() },
+        )
+        return
+    }
+
+    // Rendered before everything: a username can be tapped from a topic, a feed card,
+    // or an event's attendee list, and the profile must show over whichever is open —
+    // backing out returns there untouched.
+    val userProfileState by viewModel.userProfile.state.collectAsState()
+    if (userProfileState !is UserProfileState.Hidden) {
+        UserProfileScreen(
+            state = userProfileState,
+            onBack = { viewModel.userProfile.dismiss() },
+            onRetry = { viewModel.userProfile.retry() },
+            onGroupClick = { group ->
+                viewModel.userProfile.dismiss()
+                viewModel.feed.selectGroup(group)
+            },
         )
         return
     }

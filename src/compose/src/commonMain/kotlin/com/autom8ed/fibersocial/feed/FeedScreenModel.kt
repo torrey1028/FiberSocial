@@ -3,6 +3,7 @@ package com.autom8ed.fibersocial.feed
 import com.autom8ed.fibersocial.events.EventDetailViewModel
 import com.autom8ed.fibersocial.events.EventsViewModel
 import com.autom8ed.fibersocial.feedback.FeedbackViewModel
+import com.autom8ed.fibersocial.profile.UserProfileViewModel
 import com.autom8ed.fibersocial.projects.ProjectPageViewModel
 import com.autom8ed.fibersocial.projects.ProjectPhotoPickerViewModel
 
@@ -19,6 +20,7 @@ interface FeedScreenModel {
     val replyImage: ImageAttachmentViewModel
     val projectPicker: ProjectPhotoPickerViewModel
     val projectPage: ProjectPageViewModel
+    val userProfile: UserProfileViewModel
     val feedback: FeedbackViewModel
     val events: EventsViewModel
     val eventDetail: EventDetailViewModel

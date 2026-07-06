@@ -61,6 +61,7 @@ import com.autom8ed.fibersocial.feed.html.parseSummaryDocument
 import com.autom8ed.fibersocial.feed.models.FeedItem
 import com.autom8ed.fibersocial.feed.models.Post
 import com.autom8ed.fibersocial.ui.Avatar
+import com.autom8ed.fibersocial.profile.UsernameLink
 import com.autom8ed.fibersocial.feed.models.RavelryUser
 import com.autom8ed.fibersocial.feed.models.VoteType
 import com.autom8ed.fibersocial.feed.models.hasVoted
@@ -448,10 +449,12 @@ private fun AuthorRow(user: RavelryUser?, timestamp: String?) {
         Avatar(url = user?.avatarUrl, size = 32.dp)
         Spacer(Modifier.width(8.dp))
         Column {
-            Text(
-                text = "@${user?.username ?: "unknown"}",
-                style = MaterialTheme.typography.labelMedium,
-            )
+            val username = user?.username
+            if (username != null) {
+                UsernameLink(username = username, style = MaterialTheme.typography.labelMedium)
+            } else {
+                Text(text = "@unknown", style = MaterialTheme.typography.labelMedium)
+            }
             if (timestamp != null) {
                 Text(
                     text = relativeTime(timestamp),

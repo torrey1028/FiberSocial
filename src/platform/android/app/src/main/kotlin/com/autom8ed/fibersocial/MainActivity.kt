@@ -27,6 +27,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import com.autom8ed.fibersocial.feed.FeedScreen
 import com.autom8ed.fibersocial.feed.LocalProjectLinkOpener
 import com.autom8ed.fibersocial.feedback.deviceContext
+import com.autom8ed.fibersocial.profile.LocalProfileOpener
 import com.autom8ed.fibersocial.login.AuthAndroidViewModel
 import com.autom8ed.fibersocial.login.LoginScreen
 import com.autom8ed.fibersocial.login.WebViewLoginScreen
@@ -133,18 +134,20 @@ class MainActivity : ComponentActivity() {
                             // LoginScreen flash between the state change and the WebView appearing.
                             LaunchedEffect(feedVm) {
                                 feedVm.sessionExpired.collect {
-                                    // Dismiss the ViewModel-held project page so it can't
+                                    // Dismiss the ViewModel-held overlays so they can't
                                     // survive re-login into a different account's session.
                                     feedVm.projectPage.dismiss()
+                                    feedVm.userProfile.dismiss()
                                     showWebView = true
                                     authVm.auth.logout()
                                 }
                             }
                             val deepLink by deepLinkEvent.collectAsState()
-                            // Project links tapped anywhere in post content open the
-                            // in-app project page instead of the browser (issue #103).
+                            // Project links tapped in post content open the in-app project
+                            // page (issue #103); tapping a username opens the profile (#194).
                             CompositionLocalProvider(
                                 LocalProjectLinkOpener provides { link -> feedVm.projectPage.open(link) },
+                                LocalProfileOpener provides { username -> feedVm.userProfile.open(username) },
                             ) {
                             FeedScreen(
                                 viewModel = feedVm,
