@@ -86,17 +86,8 @@ sealed class ProjectPageState {
     /** Fetching [link]'s project. */
     data class Loading(val link: ProjectLink) : ProjectPageState()
 
-    /**
-     * Project loaded and displayable.
-     * @property pattern The linked pattern's info once resolved (best-effort, lazily
-     *   after the project loads), or null when the project has no database pattern or
-     *   its lookup failed.
-     */
-    data class Loaded(
-        val link: ProjectLink,
-        val project: ProjectDetail,
-        val pattern: PatternInfo? = null,
-    ) : ProjectPageState()
+    /** Project loaded and displayable. The linked pattern (if any) loads separately. */
+    data class Loaded(val link: ProjectLink, val project: ProjectDetail) : ProjectPageState()
 
     /**
      * The fetch failed — commonly a private/deleted project or a permissions wall.
@@ -145,12 +136,16 @@ class ProjectPageViewModel(
     private val scope: CoroutineScope,
 ) {
     private val _state = MutableStateFlow<ProjectPageState>(ProjectPageState.Hidden)
+    private val _pattern = MutableStateFlow<PatternInfo?>(null)
     private val _commentsState = MutableStateFlow<ProjectCommentsState>(ProjectCommentsState.Loading)
     private val _postState = MutableStateFlow<CommentPostState>(CommentPostState.Idle)
     private val _sessionExpired = Channel<Unit>(Channel.BUFFERED)
 
     /** Observable page state. */
     val state: StateFlow<ProjectPageState> = _state.asStateFlow()
+
+    /** The linked pattern's info once resolved (best-effort), or null. */
+    val pattern: StateFlow<PatternInfo?> = _pattern.asStateFlow()
 
     /** Observable comment-thread state. */
     val commentsState: StateFlow<ProjectCommentsState> = _commentsState.asStateFlow()
@@ -170,6 +165,7 @@ class ProjectPageViewModel(
     /** Opens the page for [link] and fetches its project (then pattern + comments). */
     fun open(link: ProjectLink) {
         _state.value = ProjectPageState.Loading(link)
+        _pattern.value = null
         _commentsState.value = ProjectCommentsState.Loading
         _postState.value = CommentPostState.Idle
         val gen = ++generation
@@ -203,12 +199,7 @@ class ProjectPageViewModel(
         scope.launch {
             try {
                 val pattern = apiClient.getPatternInfo(patternId)
-                // The generation guard already pins this to the current open — a new
-                // open bumps it — so the loaded project is necessarily this one's.
-                val current = _state.value
-                if (gen == generation && current is ProjectPageState.Loaded) {
-                    _state.value = current.copy(pattern = pattern)
-                }
+                if (gen == generation) _pattern.value = pattern
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -276,6 +267,42 @@ class ProjectPageViewModel(
                     _postState.value = CommentPostState.Error(e.message ?: "Couldn't post your comment")
                 }
             }
+        }
+    }
+
+    /**
+     * Deletes the signed-in user's own [comment] from the thread. Pessimistic: the
+     * comment is removed from the list only after Ravelry confirms the deletion, so a
+     * failure leaves the thread intact. A 403 (older token, or not the user's comment)
+     * surfaces the re-login prompt; other errors surface their message.
+     */
+    fun deleteComment(comment: ProjectComment) {
+        val gen = generation
+        scope.launch {
+            // Failure message set by the catch blocks; applied once, gen-guarded, below —
+            // so the "did this outlive its page" check lives in a single place.
+            var failure: String? = null
+            try {
+                apiClient.deleteComment(comment.id)
+                if (gen != generation) return@launch
+                val comments = _commentsState.value
+                if (comments is ProjectCommentsState.Loaded) {
+                    _commentsState.value =
+                        ProjectCommentsState.Loaded(comments.comments.filterNot { it.id == comment.id })
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: ForbiddenException) {
+                println("FiberSocial: ProjectPageViewModel.deleteComment forbidden: ${e.message}")
+                failure = COMMENT_PERMISSION_MESSAGE
+            } catch (e: SessionExpiredException) {
+                println("FiberSocial: ProjectPageViewModel.deleteComment session expired")
+                _sessionExpired.trySend(Unit)
+            } catch (e: Exception) {
+                println("FiberSocial: ProjectPageViewModel.deleteComment error: ${e.message}")
+                failure = e.message ?: "Couldn't delete the comment"
+            }
+            if (failure != null && gen == generation) _postState.value = CommentPostState.Error(failure)
         }
     }
 

@@ -40,19 +40,25 @@ class ProjectPageScreenTest {
         state: ProjectPageState,
         commentsState: ProjectCommentsState = ProjectCommentsState.Loaded(emptyList()),
         postState: CommentPostState = CommentPostState.Idle,
+        pattern: PatternInfo? = null,
+        currentUsername: String? = null,
         onBack: () -> Unit = {},
         onRetry: () -> Unit = {},
         onPostComment: (String) -> Unit = {},
         onPostErrorShown: () -> Unit = {},
+        onDeleteComment: (ProjectComment) -> Unit = {},
     ): @androidx.compose.runtime.Composable () -> Unit = {
         ProjectPageScreen(
             state = state,
             commentsState = commentsState,
             postState = postState,
+            pattern = pattern,
+            currentUsername = currentUsername,
             onBack = onBack,
             onRetry = onRetry,
             onPostComment = onPostComment,
             onPostErrorShown = onPostErrorShown,
+            onDeleteComment = onDeleteComment,
         )
     }
 
@@ -97,7 +103,7 @@ class ProjectPageScreenTest {
                 androidx.compose.ui.platform.LocalUriHandler provides object : androidx.compose.ui.platform.UriHandler {
                     override fun openUri(uri: String) { opened = uri }
                 },
-            ) { screen(ProjectPageState.Loaded(link, project, pattern = pattern))() }
+            ) { screen(ProjectPageState.Loaded(link, project), pattern = pattern)() }
         }
         compose.onNodeWithText("Vanilla Socks").performClick()
         compose.runOnIdle { assertEquals("https://www.ravelry.com/patterns/library/vanilla-socks", opened) }
@@ -142,6 +148,71 @@ class ProjectPageScreenTest {
         // Two "Project photo" nodes would exist once the viewer is open (thumb + full).
         compose.onAllNodesWithContentDescription("Project photo").assertCountEquals(1)
         compose.onAllNodesWithContentDescription("Project photo")[0].performClick()
+        compose.onNodeWithContentDescription("Close").assertIsDisplayed()
+    }
+
+    @Test
+    fun `own comment shows a delete affordance that confirms before deleting`() {
+        var deleted: ProjectComment? = null
+        val mine = ProjectComment(id = 1, commentHtml = "<p>my comment</p>",
+            user = com.autom8ed.fibersocial.feed.models.RavelryUser(username = "yarnie"))
+        compose.setContent {
+            screen(
+                // Minimal project so the comment sits near the top (on-screen).
+                ProjectPageState.Loaded(link, project.copy(photos = emptyList(), notes = null)),
+                commentsState = ProjectCommentsState.Loaded(listOf(mine)),
+                currentUsername = "yarnie",
+                onDeleteComment = { deleted = it },
+            )()
+        }
+        compose.onNodeWithContentDescription("Delete comment").performClick()
+        compose.waitForIdle()
+        // Confirmation required first.
+        compose.onNodeWithText("Delete this comment?").assertExists()
+        compose.runOnIdle { assertEquals(null, deleted) }
+        compose.onNodeWithText("Delete").performClick()
+        compose.runOnIdle { assertEquals(1L, deleted?.id) }
+    }
+
+    @Test
+    fun `others comments have no delete affordance`() {
+        val theirs = ProjectComment(id = 2, commentHtml = "<p>hi</p>",
+            user = com.autom8ed.fibersocial.feed.models.RavelryUser(username = "someone-else"))
+        compose.setContent {
+            screen(
+                ProjectPageState.Loaded(link, project.copy(photos = emptyList(), notes = null)),
+                commentsState = ProjectCommentsState.Loaded(listOf(theirs)),
+                currentUsername = "yarnie",
+            )()
+        }
+        compose.onNodeWithContentDescription("Delete comment").assertDoesNotExist()
+    }
+
+    @Test
+    fun `no delete affordance when the signed-in user is unknown`() {
+        val mine = ProjectComment(id = 1, commentHtml = "<p>hi</p>",
+            user = com.autom8ed.fibersocial.feed.models.RavelryUser(username = "yarnie"))
+        compose.setContent {
+            screen(
+                ProjectPageState.Loaded(link, project.copy(photos = emptyList(), notes = null)),
+                commentsState = ProjectCommentsState.Loaded(listOf(mine)),
+                currentUsername = null,
+            )()
+        }
+        compose.onNodeWithContentDescription("Delete comment").assertDoesNotExist()
+    }
+
+    @Test
+    fun `full-screen viewer shows a page counter for multiple photos`() {
+        val multi = project.copy(
+            photos = listOf(
+                ProjectPhoto(id = 1, medium2Url = "https://img/1.jpg"),
+                ProjectPhoto(id = 2, medium2Url = "https://img/2.jpg"),
+            ),
+        )
+        compose.setContent { screen(ProjectPageState.Loaded(link, multi))() }
+        compose.onAllNodesWithContentDescription("Project photo")[0].performClick()
+        compose.onNodeWithText("1 / 2").assertIsDisplayed()
         compose.onNodeWithContentDescription("Close").assertIsDisplayed()
     }
 

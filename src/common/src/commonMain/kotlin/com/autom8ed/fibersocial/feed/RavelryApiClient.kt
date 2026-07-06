@@ -27,6 +27,7 @@ import io.ktor.client.request.forms.FormDataContent
 import io.ktor.client.request.forms.MultiPartFormDataContent
 import io.ktor.client.request.forms.formData
 import io.ktor.client.request.forms.submitForm
+import io.ktor.client.request.delete
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
@@ -830,6 +831,22 @@ class RavelryApiClient(
         } catch (e: Exception) {
             println("FiberSocial: postProjectComment($projectId) unexpected response: ${raw.take(200)}")
             error("Unexpected Ravelry response — check the project before retrying, the comment may have posted.")
+        }
+    }
+
+    /**
+     * Deletes a comment the signed-in user authored (issue #103). Ravelry enforces
+     * ownership server-side; a delete of someone else's comment 403s.
+     *
+     * @param commentId Ravelry comment ID.
+     * @throws ForbiddenException when the token lacks `message-write`, or the comment
+     *   isn't the user's to delete.
+     */
+    suspend fun deleteComment(commentId: Long) {
+        authenticatedRequest {
+            httpClient.delete("$BASE_URL/comments/$commentId.json") {
+                header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
+            }
         }
     }
 

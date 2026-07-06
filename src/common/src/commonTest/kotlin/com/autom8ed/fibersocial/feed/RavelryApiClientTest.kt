@@ -1773,6 +1773,32 @@ class RavelryApiClientTest {
     }
 
     @Test
+    fun `deleteComment issues a DELETE to the comment endpoint`() = runTest {
+        var method: io.ktor.http.HttpMethod? = null
+        var path: String? = null
+        val engine = MockEngine { request ->
+            method = request.method
+            path = request.url.encodedPath
+            respond("", HttpStatusCode.OK, headersOf())
+        }
+        val client = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }.let { RavelryApiClient(it, FakeFeedTokenStorage()) }
+        client.deleteComment(55L)
+        assertEquals(io.ktor.http.HttpMethod.Delete, method)
+        assertEquals("/comments/55.json", path)
+    }
+
+    @Test
+    fun `deleteComment maps a 403 to ForbiddenException`() = runTest {
+        val engine = MockEngine { respond("", HttpStatusCode.Forbidden, headersOf()) }
+        val client = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }.let { RavelryApiClient(it, FakeFeedTokenStorage()) }
+        assertFailsWith<ForbiddenException> { client.deleteComment(55L) }
+    }
+
+    @Test
     fun `getPatternInfo parses permalink and author, and accepts the patterns key too`() = runTest {
         var captured: io.ktor.http.Url? = null
         val client = routingApiClientCapturing(onRequest = { captured = it }) {

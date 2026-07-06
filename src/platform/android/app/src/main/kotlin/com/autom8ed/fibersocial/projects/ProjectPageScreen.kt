@@ -16,6 +16,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -25,6 +28,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -80,6 +85,9 @@ fun ProjectPageScreen(
     onRetry: () -> Unit,
     onPostComment: (String) -> Unit,
     onPostErrorShown: () -> Unit,
+    pattern: PatternInfo? = null,
+    currentUsername: String? = null,
+    onDeleteComment: (ProjectComment) -> Unit = {},
 ) {
     if (state is ProjectPageState.Hidden) return
     val link = when (state) {
@@ -128,11 +136,14 @@ fun ProjectPageScreen(
 
             is ProjectPageState.Loaded -> ProjectContent(
                 loaded = state,
+                pattern = pattern,
                 commentsState = commentsState,
                 postState = postState,
+                currentUsername = currentUsername,
                 onOpenOnRavelry = { uriHandler.openUri(link.webUrl) },
                 onPostComment = onPostComment,
                 onPostErrorShown = onPostErrorShown,
+                onDeleteComment = onDeleteComment,
                 modifier = Modifier.padding(padding),
             )
 
@@ -144,11 +155,14 @@ fun ProjectPageScreen(
 @Composable
 private fun ProjectContent(
     loaded: ProjectPageState.Loaded,
+    pattern: PatternInfo?,
     commentsState: ProjectCommentsState,
     postState: CommentPostState,
+    currentUsername: String?,
     onOpenOnRavelry: () -> Unit,
     onPostComment: (String) -> Unit,
     onPostErrorShown: () -> Unit,
+    onDeleteComment: (ProjectComment) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val project = loaded.project
@@ -184,7 +198,7 @@ private fun ProjectContent(
         Text("by ${loaded.link.username}", style = MaterialTheme.typography.labelLarge)
         Spacer(Modifier.height(8.dp))
 
-        PatternRow(project = project, pattern = loaded.pattern, onOpenPattern = { uriHandler.openUri(it) })
+        PatternRow(project = project, pattern = pattern, onOpenPattern = { uriHandler.openUri(it) })
         FactRow("Status", listOfNotNull(project.statusName, project.progress?.let { "$it%" }).joinToString(" · ").ifBlank { null })
         FactRow("Craft", project.craftName)
         FactRow("Started", project.started)
@@ -224,8 +238,10 @@ private fun ProjectContent(
         CommentsSection(
             commentsState = commentsState,
             postState = postState,
+            currentUsername = currentUsername,
             onPostComment = onPostComment,
             onPostErrorShown = onPostErrorShown,
+            onDeleteComment = onDeleteComment,
         )
 
         Spacer(Modifier.height(16.dp))
@@ -300,8 +316,10 @@ private fun FactRow(label: String, value: String?) {
 private fun CommentsSection(
     commentsState: ProjectCommentsState,
     postState: CommentPostState,
+    currentUsername: String?,
     onPostComment: (String) -> Unit,
     onPostErrorShown: () -> Unit,
+    onDeleteComment: (ProjectComment) -> Unit,
 ) {
     Text("Comments", style = MaterialTheme.typography.titleSmall)
     Spacer(Modifier.height(8.dp))
@@ -321,7 +339,14 @@ private fun CommentsSection(
                 )
             } else {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    commentsState.comments.forEach { CommentRow(it) }
+                    commentsState.comments.forEach { comment ->
+                        val deletable = currentUsername != null &&
+                            comment.user?.username?.equals(currentUsername, ignoreCase = true) == true
+                        CommentRow(
+                            comment = comment,
+                            onDelete = if (deletable) ({ onDeleteComment(comment) }) else null,
+                        )
+                    }
                 }
             }
     }
@@ -331,11 +356,26 @@ private fun CommentsSection(
 }
 
 @Composable
-private fun CommentRow(comment: ProjectComment) {
+private fun CommentRow(comment: ProjectComment, onDelete: (() -> Unit)?) {
+    var confirming by remember { mutableStateOf(false) }
+    if (confirming) {
+        AlertDialog(
+            onDismissRequest = { confirming = false },
+            title = { Text("Delete this comment?") },
+            text = { Text("This removes your comment from the project for everyone. This can't be undone.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirming = false
+                    onDelete?.invoke()
+                }) { Text("Delete") }
+            },
+            dismissButton = { TextButton(onClick = { confirming = false }) { Text("Cancel") } },
+        )
+    }
     Row(verticalAlignment = Alignment.Top) {
         Avatar(url = comment.user?.avatarUrl, size = 32.dp)
         Spacer(Modifier.width(8.dp))
-        Column {
+        Column(modifier = Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     text = "@${comment.user?.username ?: "unknown"}",
@@ -353,6 +393,15 @@ private fun CommentRow(comment: ProjectComment) {
             // Comments have no Markdown source field, only the rendered HTML.
             val document = remember(comment.id) { HtmlPostParser.parse(comment.commentHtml) }
             PostBody(document = document)
+        }
+        if (onDelete != null) {
+            IconButton(onClick = { confirming = true }) {
+                Icon(
+                    Icons.Default.Delete,
+                    contentDescription = "Delete comment",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
     }
 }
@@ -406,34 +455,55 @@ private fun CommentComposer(
 }
 
 /**
- * Full-screen photo viewer: tapping a project photo opens it large over a scrim, tap
- * anywhere (or system back) to dismiss. Shows the largest available size.
+ * Full-screen photo viewer: tapping a project photo opens it large over a scrim, with a
+ * horizontal pager to swipe through all of the project's photos. Tap a photo (or system
+ * back / the close button) to dismiss. Shows the largest available size.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun FullScreenPhoto(photos: List<ProjectPhoto>, initialIndex: Int, onDismiss: () -> Unit) {
-    val photo = photos.getOrNull(initialIndex) ?: return
+    if (photos.isEmpty()) return
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
+        val pagerState = rememberPagerState(
+            initialPage = initialIndex.coerceIn(0, photos.size - 1),
+            pageCount = { photos.size },
+        )
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.92f))
-                .clickable(onClick = onDismiss),
+                .background(Color.Black.copy(alpha = 0.92f)),
             contentAlignment = Alignment.Center,
         ) {
-            AsyncImage(
-                model = photo.medium2Url ?: photo.mediumUrl ?: photo.smallUrl,
-                contentDescription = "Project photo",
-                contentScale = ContentScale.Fit,
-                modifier = Modifier.fillMaxWidth(),
-            )
+            HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { page ->
+                val photo = photos[page]
+                Box(
+                    modifier = Modifier.fillMaxSize().clickable(onClick = onDismiss),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    AsyncImage(
+                        model = photo.medium2Url ?: photo.mediumUrl ?: photo.smallUrl,
+                        contentDescription = "Project photo ${page + 1}",
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            }
             IconButton(
                 onClick = onDismiss,
                 modifier = Modifier.align(Alignment.TopEnd).padding(8.dp),
             ) {
                 Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White)
+            }
+            if (photos.size > 1) {
+                Text(
+                    text = "${pagerState.currentPage + 1} / ${photos.size}",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Color.White,
+                    modifier = Modifier.align(Alignment.BottomCenter).padding(16.dp),
+                )
             }
         }
     }

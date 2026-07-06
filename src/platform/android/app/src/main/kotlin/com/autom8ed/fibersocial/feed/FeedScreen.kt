@@ -194,14 +194,18 @@ fun FeedScreen(
     if (projectPageState !is ProjectPageState.Hidden) {
         val commentsState by viewModel.projectPage.commentsState.collectAsState()
         val postState by viewModel.projectPage.postState.collectAsState()
+        val pattern by viewModel.projectPage.pattern.collectAsState()
         ProjectPageScreen(
             state = projectPageState,
             commentsState = commentsState,
             postState = postState,
+            pattern = pattern,
+            currentUsername = loaded?.user?.username,
             onBack = { viewModel.projectPage.dismiss() },
             onRetry = { viewModel.projectPage.retry() },
             onPostComment = { viewModel.projectPage.postComment(it) },
             onPostErrorShown = { viewModel.projectPage.acknowledgePostError() },
+            onDeleteComment = { viewModel.projectPage.deleteComment(it) },
         )
         return
     }

@@ -121,9 +121,9 @@ class ProjectPageViewModelTest {
         val vm = ProjectPageViewModel(fullApiClient(), this)
         vm.open(link)
         awaitChildren(coroutineContext[Job]!!)
-        val loaded = assertIs<ProjectPageState.Loaded>(vm.state.value)
-        assertEquals("Vanilla Socks", loaded.pattern?.name)
-        assertEquals("Jane", loaded.pattern?.author?.name)
+        assertIs<ProjectPageState.Loaded>(vm.state.value)
+        assertEquals("Vanilla Socks", vm.pattern.value?.name)
+        assertEquals("Jane", vm.pattern.value?.author?.name)
         val comments = assertIs<ProjectCommentsState.Loaded>(vm.commentsState.value)
         assertEquals(listOf(1L), comments.comments.map { it.id })
     }
@@ -133,7 +133,8 @@ class ProjectPageViewModelTest {
         val vm = ProjectPageViewModel(fullApiClient(patternId = null), this)
         vm.open(link)
         awaitChildren(coroutineContext[Job]!!)
-        assertEquals(null, assertIs<ProjectPageState.Loaded>(vm.state.value).pattern)
+        assertIs<ProjectPageState.Loaded>(vm.state.value)
+        assertEquals(null, vm.pattern.value)
     }
 
     @Test
@@ -196,6 +197,182 @@ class ProjectPageViewModelTest {
         vm.postComment("mine")
         awaitChildren(coroutineContext[Job]!!)
         assertEquals(listOf(99L), assertIs<ProjectCommentsState.Loaded>(vm.commentsState.value).comments.map { it.id })
+    }
+
+    @Test
+    fun `deleteComment removes the comment on success`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = ProjectPageViewModel(
+            routingApiClient { path ->
+                when {
+                    path.endsWith("/comments.json") ->
+                        """{"comments":[{"id":1,"comment_html":"<p>a</p>"},{"id":2,"comment_html":"<p>b</p>"}]}"""
+                    path == "/comments/2.json" -> ""
+                    else -> """{"project":{"id":7,"name":"Autumn Socks"}}"""
+                }
+            },
+            this,
+        )
+        vm.open(link)
+        awaitChildren(coroutineContext[Job]!!)
+        vm.deleteComment(ProjectComment(id = 2, commentHtml = "<p>b</p>"))
+        awaitChildren(coroutineContext[Job]!!)
+        assertEquals(listOf(1L), assertIs<ProjectCommentsState.Loaded>(vm.commentsState.value).comments.map { it.id })
+    }
+
+    @Test
+    fun `deleteComment succeeding while comments are unloaded is a safe no-op`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = ProjectPageViewModel(
+            routingApiClient { path ->
+                when {
+                    path.endsWith("/comments.json") -> error("comments down")
+                    path == "/comments/1.json" -> ""
+                    else -> """{"project":{"id":7,"name":"Autumn Socks"}}"""
+                }
+            },
+            this,
+        )
+        vm.open(link)
+        awaitChildren(coroutineContext[Job]!!)
+        assertIs<ProjectCommentsState.Error>(vm.commentsState.value)
+        vm.deleteComment(ProjectComment(id = 1, commentHtml = "<p>a</p>"))
+        awaitChildren(coroutineContext[Job]!!)
+        // No Loaded thread to mutate; state stays as the load error, no crash.
+        assertIs<ProjectCommentsState.Error>(vm.commentsState.value)
+    }
+
+    @Test
+    fun `a 403 on deleteComment surfaces the re-login prompt`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = ProjectPageViewModel(
+            routingApiClient(route = { path ->
+                when {
+                    path.endsWith("/comments.json") -> """{"comments":[{"id":1,"comment_html":"<p>a</p>"}]}"""
+                    path == "/comments/1.json" ->
+                        throw com.autom8ed.fibersocial.auth.ForbiddenException("nope")
+                    else -> """{"project":{"id":7,"name":"Autumn Socks"}}"""
+                }
+            }),
+            this,
+        )
+        vm.open(link)
+        awaitChildren(coroutineContext[Job]!!)
+        vm.deleteComment(ProjectComment(id = 1, commentHtml = "<p>a</p>"))
+        awaitChildren(coroutineContext[Job]!!)
+        assertEquals(
+            ProjectPageViewModel.COMMENT_PERMISSION_MESSAGE,
+            assertIs<CommentPostState.Error>(vm.postState.value).message,
+        )
+        // The comment stays: deletion is pessimistic.
+        assertEquals(listOf(1L), assertIs<ProjectCommentsState.Loaded>(vm.commentsState.value).comments.map { it.id })
+    }
+
+    @Test
+    fun `a generic deleteComment failure reports the error`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = ProjectPageViewModel(
+            routingApiClient { path ->
+                when {
+                    path.endsWith("/comments.json") -> """{"comments":[{"id":1,"comment_html":"<p>a</p>"}]}"""
+                    path == "/comments/1.json" -> error("boom")
+                    else -> """{"project":{"id":7,"name":"Autumn Socks"}}"""
+                }
+            },
+            this,
+        )
+        vm.open(link)
+        awaitChildren(coroutineContext[Job]!!)
+        vm.deleteComment(ProjectComment(id = 1, commentHtml = "<p>a</p>"))
+        awaitChildren(coroutineContext[Job]!!)
+        assertEquals("boom", assertIs<CommentPostState.Error>(vm.postState.value).message)
+    }
+
+    @Test
+    fun `session expiry while deleting signals expiry`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = ProjectPageViewModel(
+            routingApiClient { path ->
+                when {
+                    path.endsWith("/comments.json") -> """{"comments":[{"id":1,"comment_html":"<p>a</p>"}]}"""
+                    path == "/comments/1.json" ->
+                        throw com.autom8ed.fibersocial.auth.SessionExpiredException("expired")
+                    else -> """{"project":{"id":7,"name":"Autumn Socks"}}"""
+                }
+            },
+            this,
+        )
+        vm.open(link)
+        awaitChildren(coroutineContext[Job]!!)
+        vm.deleteComment(ProjectComment(id = 1, commentHtml = "<p>a</p>"))
+        awaitChildren(coroutineContext[Job]!!)
+        assertEquals(Unit, vm.sessionExpired.first())
+    }
+
+    @Test
+    fun `comments that load after a re-open do not attach to the new page`() = runTest(UnconfinedTestDispatcher()) {
+        val gate = CompletableDeferred<Unit>()
+        var opens = 0
+        val vm = ProjectPageViewModel(
+            suspendableRoutingApiClient { url ->
+                when {
+                    url.encodedPath.endsWith("/comments.json") -> {
+                        gate.await()
+                        """{"comments":[{"id":1,"comment_html":"<p>stale</p>"}]}"""
+                    }
+                    else -> { opens++; """{"project":{"id":${opens},"name":"P$opens"}}""" }
+                }
+            },
+            this,
+        )
+        vm.open(link)                        // gen 1: comments gated
+        vm.open(ProjectLink("yarnie", "hat")) // gen 2: comments also gated
+        gate.complete(Unit)                  // both land; gen-1's is stale
+        awaitChildren(coroutineContext[Job]!!)
+        // The gen-2 comments won (its own gated load); gen-1's stale result was dropped.
+        assertIs<ProjectCommentsState.Loaded>(vm.commentsState.value)
+        assertEquals("P2", assertIs<ProjectPageState.Loaded>(vm.state.value).project.name)
+    }
+
+    @Test
+    fun `a delete error that lands after dismissal is dropped`() = runTest(UnconfinedTestDispatcher()) {
+        val gate = CompletableDeferred<Unit>()
+        val vm = ProjectPageViewModel(
+            suspendableRoutingApiClient { url ->
+                when {
+                    url.encodedPath.endsWith("/comments.json") -> """{"comments":[{"id":1,"comment_html":"<p>a</p>"}]}"""
+                    url.encodedPath == "/comments/1.json" -> { gate.await(); error("boom") }
+                    else -> """{"project":{"id":7,"name":"Autumn Socks"}}"""
+                }
+            },
+            this,
+        )
+        vm.open(link)
+        awaitChildren(coroutineContext[Job]!!)
+        vm.deleteComment(ProjectComment(id = 1, commentHtml = "<p>a</p>"))
+        vm.dismiss()             // bumps generation
+        gate.complete(Unit)      // delete fails against a stale generation
+        awaitChildren(coroutineContext[Job]!!)
+        // The stale failure must not raise a post-error on the dismissed page.
+        assertIs<ProjectPageState.Hidden>(vm.state.value)
+        assertIs<CommentPostState.Idle>(vm.postState.value)
+    }
+
+    @Test
+    fun `a delete that lands after dismissal is dropped`() = runTest(UnconfinedTestDispatcher()) {
+        val gate = CompletableDeferred<Unit>()
+        val vm = ProjectPageViewModel(
+            suspendableRoutingApiClient { url ->
+                when {
+                    url.encodedPath.endsWith("/comments.json") -> """{"comments":[{"id":1,"comment_html":"<p>a</p>"}]}"""
+                    url.encodedPath == "/comments/1.json" -> { gate.await(); "" }
+                    else -> """{"project":{"id":7,"name":"Autumn Socks"}}"""
+                }
+            },
+            this,
+        )
+        vm.open(link)
+        awaitChildren(coroutineContext[Job]!!)
+        vm.deleteComment(ProjectComment(id = 1, commentHtml = "<p>a</p>"))
+        vm.dismiss()
+        gate.complete(Unit)
+        awaitChildren(coroutineContext[Job]!!)
+        assertIs<ProjectPageState.Hidden>(vm.state.value)
     }
 
     @Test
