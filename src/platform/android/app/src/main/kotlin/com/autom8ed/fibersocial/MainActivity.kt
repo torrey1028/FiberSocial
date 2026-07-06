@@ -11,12 +11,13 @@ import androidx.activity.viewModels
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -30,9 +31,15 @@ import com.autom8ed.fibersocial.notifications.EXTRA_EVENT_PERMALINK
 import com.autom8ed.fibersocial.notifications.EventNotifier
 import com.autom8ed.fibersocial.notifications.EventSyncWorker
 import com.autom8ed.fibersocial.notifications.KeyValueNotificationSettingsStore
+import com.autom8ed.fibersocial.settings.KeyValueThemeSettingsStore
+import com.autom8ed.fibersocial.settings.ThemeMode
+import com.autom8ed.fibersocial.settings.ThemeSettings
 import com.autom8ed.fibersocial.storage.NOTIFICATION_SETTINGS_PREFS_NAME
+import com.autom8ed.fibersocial.storage.THEME_SETTINGS_PREFS_NAME
 import com.autom8ed.fibersocial.storage.plainKeyValueStore
+import com.autom8ed.fibersocial.ui.FiberSocialTheme
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
@@ -56,7 +63,27 @@ class MainActivity : ComponentActivity() {
             deepLinkEvent.value = intent.getStringExtra(EXTRA_EVENT_PERMALINK)
         }
         setContent {
-            MaterialTheme {
+            // Hoisted above the theme so the Settings screen's override applies
+            // instantly, app-wide. null until the store loads; rendering with the
+            // SYSTEM default in that gap matches the launch window theme, so there's
+            // no visible flash for SYSTEM/matching users (and at worst one recompose
+            // for override users on first cold start).
+            //
+            // rememberSaveable, not remember: on a config change (rotation, system
+            // day/night toggle) the resolved mode is restored from the instance state,
+            // so an override user doesn't re-flash the SYSTEM default every rotation
+            // while the async reload runs. ThemeMode is a serializable enum, so the
+            // default saver handles the nullable value.
+            val themeStore = remember {
+                KeyValueThemeSettingsStore(plainKeyValueStore(this, THEME_SETTINGS_PREFS_NAME))
+            }
+            var themeMode by rememberSaveable { mutableStateOf<ThemeMode?>(null) }
+            // Only load when we don't already have a restored value, so a config change
+            // keeps rendering the restored mode instead of blinking through null.
+            LaunchedEffect(Unit) { if (themeMode == null) themeMode = themeStore.load().mode }
+            val themeScope = rememberCoroutineScope()
+
+            FiberSocialTheme(mode = themeMode ?: ThemeMode.SYSTEM) {
                 val authState by authVm.auth.state.collectAsState()
                 var showWebView by remember { mutableStateOf(false) }
 
@@ -115,6 +142,11 @@ class MainActivity : ComponentActivity() {
                                 },
                                 deepLinkEventPermalink = deepLink,
                                 onDeepLinkConsumed = { deepLinkEvent.value = null },
+                                themeMode = themeMode,
+                                onThemeModeSelected = { mode ->
+                                    themeMode = mode
+                                    themeScope.launch { themeStore.save(ThemeSettings(mode = mode)) }
+                                },
                             )
                         }
                     }

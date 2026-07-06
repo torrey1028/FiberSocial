@@ -102,9 +102,11 @@ import com.autom8ed.fibersocial.feedback.FeedbackScreen
 import com.autom8ed.fibersocial.feedback.SupportGroup
 import com.autom8ed.fibersocial.feedback.deviceContext
 import com.autom8ed.fibersocial.settings.SettingsScreen
+import com.autom8ed.fibersocial.settings.ThemeMode
 import com.autom8ed.fibersocial.storage.NOTIFICATION_SETTINGS_PREFS_NAME
 import com.autom8ed.fibersocial.storage.plainKeyValueStore
 import com.autom8ed.fibersocial.ui.PullToRefreshBox
+import com.autom8ed.fibersocial.ui.appLogoResource
 import com.autom8ed.fibersocial.ui.UserAvatar
 import kotlinx.coroutines.launch
 
@@ -115,6 +117,8 @@ fun FeedScreen(
     onLogout: () -> Unit,
     deepLinkEventPermalink: String? = null,
     onDeepLinkConsumed: () -> Unit = {},
+    themeMode: ThemeMode? = null,
+    onThemeModeSelected: (ThemeMode) -> Unit = {},
 ) {
     val state by viewModel.feed.state.collectAsState()
     val topicDetailState by viewModel.topicDetail.state.collectAsState()
@@ -216,6 +220,8 @@ fun FeedScreen(
             user = user,
             onBack = { showSettings = false },
             onSignOut = onLogout,
+            themeMode = themeMode,
+            onThemeModeSelected = onThemeModeSelected,
             pollCadence = pollCadence,
             onPollCadenceSelected = { cadence ->
                 pollCadence = cadence
@@ -403,7 +409,7 @@ fun FeedScreen(
                     title = {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Image(
-                                painter = painterResource(R.drawable.fibersocial_logo),
+                                painter = painterResource(appLogoResource()),
                                 contentDescription = stringResource(R.string.app_logo_content_description),
                                 modifier = Modifier.size(28.dp),
                             )
