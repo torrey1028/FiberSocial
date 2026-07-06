@@ -11,7 +11,7 @@ class EventPageParserGoldenTest {
     private val detail = assertNotNull(EventPageParser.parse(EVENT_PAGE_HTML))
 
     @Test
-    fun `parses title from the page title, skipping the supertitle`() {
+    fun `parses title from the page title skipping the supertitle`() {
         assertEquals("Wednesday HH at Chainline", detail.title)
     }
 

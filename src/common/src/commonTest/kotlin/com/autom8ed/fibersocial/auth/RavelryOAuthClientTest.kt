@@ -4,6 +4,7 @@ import io.ktor.serialization.JsonConvertException
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertTrue
 import kotlin.test.assertNotEquals
 import kotlinx.coroutines.test.runTest
 
@@ -24,8 +25,8 @@ class RavelryOAuthClientTest {
         val token = client.exchangeAuthCode("code", "verifier", "https://redirect")
         // expires_in=3600 → expiresAt should be ~1 hour from now
         val after = kotlinx.datetime.Clock.System.now().toEpochMilliseconds()
-        assert(token.expiresAt > before)
-        assert(token.expiresAt <= after + 3600 * 1000L)
+        assertTrue(token.expiresAt > before)
+        assertTrue(token.expiresAt <= after + 3600 * 1000L)
     }
 
     @Test

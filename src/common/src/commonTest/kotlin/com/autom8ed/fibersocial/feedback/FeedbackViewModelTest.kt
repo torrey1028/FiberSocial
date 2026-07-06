@@ -104,7 +104,7 @@ class FeedbackViewModelTest {
     }
 
     @Test
-    fun `a 403 becomes NeedsMembership, not an error or login bounce`() =
+    fun `a 403 becomes NeedsMembership rather than an error or login bounce`() =
         runTest(UnconfinedTestDispatcher()) {
             val vm = FeedbackViewModel(statusApiClient(HttpStatusCode.Forbidden), this)
             vm.send("Can't post", "I can't post", "")

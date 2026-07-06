@@ -41,7 +41,7 @@ class HtmlPostParserGoldenTest {
     }
 
     @Test
-    fun `wrapper div is unwrapped, not rendered as a block`() {
+    fun `wrapper div is unwrapped rather than rendered as a block`() {
         // The capture is wrapped in <div class="body forum_post_body">; its children
         // must surface as top-level blocks.
         assertIs<PostBlock.Paragraph>(doc.blocks.first())

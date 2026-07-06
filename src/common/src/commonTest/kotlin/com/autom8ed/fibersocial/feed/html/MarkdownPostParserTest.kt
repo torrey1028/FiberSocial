@@ -105,7 +105,7 @@ class MarkdownPostParserTest {
     }
 
     @Test
-    fun `emoji substitute across headings, lists, quotes, and tables but not code blocks`() {
+    fun `emoji substitute across headings lists quotes and tables but not code blocks`() {
         val markdown = "# hey :purple_heart:\n\n- item :purple_heart:\n\n1. one :purple_heart:\n\n" +
             "> quote :purple_heart:\n\n---\n\n| a |\n| --- |\n| cell :purple_heart: |\n\n" +
             "```\ncode :purple_heart:\n```"
@@ -193,7 +193,7 @@ class MarkdownPostParserTest {
     }
 
     @Test
-    fun `plainText keeps a literal asterisk used as punctuation, not emphasis`() {
+    fun `plainText keeps a literal asterisk used as punctuation rather than emphasis`() {
         assertEquals("Rated C* and 3*4=12", MarkdownPostParser.plainText("Rated C* and 3*4=12"))
     }
 
@@ -214,7 +214,7 @@ class MarkdownPostParserTest {
     }
 
     @Test
-    fun `plainText flattens headings, code blocks, tables, and dividers`() {
+    fun `plainText flattens headings and code blocks and tables and dividers`() {
         val markdown = "# Heading\n\n```\ncode()\n```\n\n---\n\n| a | b |\n| --- | --- |\n| c | d |"
         assertEquals("Heading code() a b c d", MarkdownPostParser.plainText(markdown))
     }

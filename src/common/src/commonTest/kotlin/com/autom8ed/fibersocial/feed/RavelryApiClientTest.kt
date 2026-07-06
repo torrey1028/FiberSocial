@@ -347,7 +347,7 @@ class RavelryApiClientTest {
     }
 
     @Test
-    fun `getTopicPosts matches each post's own vote data by id, not another post's`() = runTest {
+    fun `getTopicPosts matches each post's own vote data by id rather than another post's`() = runTest {
         val client = routingApiClient {
             """{"posts":[
                 {"id":1,"body_html":"<p>A</p>","user":{"username":"user1"}},
@@ -1272,7 +1272,7 @@ class RavelryApiClientTest {
     }
 
     @Test
-    fun `joinGroup succeeds on a non-login redirect, such as permalink canonicalization`() = runTest {
+    fun `joinGroup succeeds on a non-login redirect such as permalink canonicalization`() = runTest {
         val engine = MockEngine { request ->
             if (request.method.value == "POST") {
                 respond("", HttpStatusCode.Found,
@@ -1328,7 +1328,7 @@ class RavelryApiClientTest {
     }
 
     @Test
-    fun `deletePost throws ForbiddenException on a 403, matching editPost's classification`() = runTest {
+    fun `deletePost throws ForbiddenException on a 403 matching editPost's classification`() = runTest {
         val engine = MockEngine { request ->
             if (request.method.value == "POST") {
                 respond("nope", HttpStatusCode.Forbidden)
@@ -1458,7 +1458,7 @@ class RavelryApiClientTest {
     }
 
     @Test
-    fun `postReply parses a null editable field as null (unknown), not a failure`() = runTest {
+    fun `postReply parses a null editable field as unknown rather than a failure`() = runTest {
         // Ravelry returns "editable": null on a freshly created reply. Post.editable is
         // nullable so this parses to null ("unknown"), which the edit UI treats optimistically
         // as editable — see Post.editable / issue #82.
@@ -1507,7 +1507,7 @@ class RavelryApiClientTest {
     }
 
     @Test
-    fun `uploadForumImage chains token, multipart upload and attachment`() = runTest {
+    fun `uploadForumImage chains token then multipart upload then attachment`() = runTest {
         val capture = mutableMapOf<String, HttpRequestData>()
         val client = uploadApiClient(capture = capture)
         val imagePath = client.uploadForumImage("photo.jpg", "image/jpeg", byteArrayOf(1, 2, 3))
