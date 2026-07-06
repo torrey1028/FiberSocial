@@ -147,22 +147,24 @@ class TopicDetailViewModel(
         scope.launch {
             println("FiberSocial: TopicDetailViewModel.load(topicId=$topicId)")
             _state.value = TopicDetailState.Loading
-            _state.value = try {
+            try {
                 val posts = apiClient.getTopicPosts(topicId)
                 println("FiberSocial: TopicDetailViewModel loaded ${posts.size} posts")
-                // Mark the topic read up to its newest post (issue #185). Best-effort and
-                // fire-and-forget: it advances Ravelry's own marker (so the website and
-                // the feed's unread count agree next refresh), but a failure must not
-                // block showing the thread the user just opened.
+                // Show the thread first, THEN mark it read (issue #185). The read POST is
+                // best-effort — it advances Ravelry's own marker so the website and the
+                // feed's unread count agree next refresh — but emitting Loaded before it
+                // means a slow or failed read POST can't delay rendering the thread the
+                // user just opened. It stays in this coroutine (which outlives a quick
+                // back-out, since the VM scope isn't cancelled) so the marker still syncs.
+                _state.value = TopicDetailState.Loaded(posts)
                 if (posts.isNotEmpty()) markReadBestEffort(topicId, posts.size)
-                TopicDetailState.Loaded(posts)
             } catch (e: SessionExpiredException) {
                 println("FiberSocial: TopicDetailViewModel session expired")
                 _sessionExpired.trySend(Unit)
-                TopicDetailState.Loading
+                _state.value = TopicDetailState.Loading
             } catch (e: Exception) {
                 println("FiberSocial: TopicDetailViewModel.load error: ${e.message}")
-                TopicDetailState.Error(e.message ?: "Failed to load replies")
+                _state.value = TopicDetailState.Error(e.message ?: "Failed to load replies")
             }
         }
     }
@@ -173,6 +175,13 @@ class TopicDetailViewModel(
             apiClient.markTopicRead(topicId, lastRead)
         } catch (e: CancellationException) {
             throw e
+        } catch (e: SessionExpiredException) {
+            // A best-effort read must not block the thread, but a genuine expiry still has
+            // to route to login rather than be silently swallowed — now that this runs in a
+            // detached coroutine, load()'s own catch no longer covers it (matches the
+            // session-expiry handling in sendReply/deletePost/editPost).
+            println("FiberSocial: markTopicRead($topicId) session expired")
+            _sessionExpired.trySend(Unit)
         } catch (e: Exception) {
             println("FiberSocial: markTopicRead($topicId) failed: ${e.message}")
         }

@@ -157,6 +157,32 @@ class TopicDetailViewModelTest {
     }
 
     @Test
+    fun `a session expiry while marking read still shows the thread and signals expiry`() =
+        runTest(UnconfinedTestDispatcher()) {
+            // Mark-read is best-effort, so the thread must still render — but a genuine
+            // expiry during it must route to login, not be swallowed (issue #185). A 401
+            // on read.json with no refresh token surfaces as SessionExpiredException.
+            val engine = MockEngine { request ->
+                if (request.url.encodedPath.endsWith("/read.json")) {
+                    respond("", HttpStatusCode.Unauthorized, headersOf())
+                } else {
+                    respond(postsJson(1L, 2L), HttpStatusCode.OK,
+                        headersOf("Content-Type", ContentType.Application.Json.toString()))
+                }
+            }
+            val httpClient = HttpClient(engine) {
+                install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+            }
+            val vm = TopicDetailViewModel(RavelryApiClient(httpClient, FakeFeedTokenStorage()), this)
+            vm.load(42L)
+            awaitChildren(coroutineContext[Job]!!)
+            // The thread the user opened still renders...
+            assertIs<TopicDetailState.Loaded>(vm.state.value)
+            // ...and the expiry was surfaced rather than silently swallowed.
+            vm.sessionExpired.first()
+        }
+
+    @Test
     fun `load error message falls back to default when exception has null message`() = runTest(UnconfinedTestDispatcher()) {
         val engine = MockEngine { throw RuntimeException() }
         val httpClient = HttpClient(engine) {
