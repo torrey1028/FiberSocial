@@ -85,6 +85,7 @@ fun TopicDetailScreen(
     attachment: ImageAttachmentState = ImageAttachmentState.Idle,
     onImagePicked: (Uri) -> Unit = {},
     onAttachmentInserted: () -> Unit = {},
+    onPickFromProjects: (() -> Unit)? = null,
 ) {
     var pendingDelete by remember { mutableStateOf<Post?>(null) }
     pendingDelete?.let { post ->
@@ -178,6 +179,7 @@ fun TopicDetailScreen(
                     attachment = attachment,
                     onImagePicked = onImagePicked,
                     onAttachmentInserted = onAttachmentInserted,
+                    onPickFromProjects = onPickFromProjects,
                 )
             }
         },
@@ -475,6 +477,7 @@ internal fun ReplyComposer(
     attachment: ImageAttachmentState = ImageAttachmentState.Idle,
     onImagePicked: (Uri) -> Unit = {},
     onAttachmentInserted: () -> Unit = {},
+    onPickFromProjects: (() -> Unit)? = null,
 ) {
     val sending = replyState is ReplyState.Sending
 
@@ -520,6 +523,7 @@ internal fun ReplyComposer(
                     attachment = attachment,
                     enabled = !sending,
                     onImagePicked = onImagePicked,
+                    onPickFromProjects = onPickFromProjects,
                 )
                 OutlinedTextField(
                     value = text,

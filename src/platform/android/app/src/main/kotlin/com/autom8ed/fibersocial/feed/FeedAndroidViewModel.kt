@@ -13,6 +13,7 @@ import com.autom8ed.fibersocial.net.ravelryApiClient
 import com.autom8ed.fibersocial.net.ravelryAuthRepository
 import com.autom8ed.fibersocial.net.ravelryHttpClient
 import com.autom8ed.fibersocial.notifications.EventSyncWorker
+import com.autom8ed.fibersocial.projects.ProjectPhotoPickerViewModel
 import com.autom8ed.fibersocial.storage.AUTH_PREFS_NAME
 import com.autom8ed.fibersocial.storage.encryptedKeyValueStore
 import kotlinx.coroutines.flow.Flow
@@ -39,6 +40,10 @@ class FeedAndroidViewModel(app: Application) : AndroidViewModel(app) {
     // can never deliver its markdown into the other's draft.
     val newTopicImage = ImageAttachmentViewModel(apiClient, viewModelScope)
     val replyImage = ImageAttachmentViewModel(apiClient, viewModelScope)
+
+    // Shared by both composers: only one is visible at a time, and the picked photo
+    // is routed to the visible composer's ImageAttachmentViewModel at the call site.
+    val projectPicker = ProjectPhotoPickerViewModel(apiClient, viewModelScope)
     val feedback = FeedbackViewModel(apiClient, viewModelScope)
     val events = EventsViewModel(apiClient, viewModelScope)
     val eventDetail = EventDetailViewModel(
@@ -57,6 +62,7 @@ class FeedAndroidViewModel(app: Application) : AndroidViewModel(app) {
         newTopic.sessionExpired,
         newTopicImage.sessionExpired,
         replyImage.sessionExpired,
+        projectPicker.sessionExpired,
         feedback.sessionExpired,
         events.sessionExpired,
         eventDetail.sessionExpired,

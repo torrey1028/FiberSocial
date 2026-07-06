@@ -83,6 +83,14 @@ class ImageAttachmentViewModelTest {
     }
 
     @Test
+    fun `attach failure without a message uses a fallback`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = ImageAttachmentViewModel(nullMessageApiClient(), this)
+        vm.attach("photo.jpg", "image/jpeg", byteArrayOf(1))
+        awaitChildren(coroutineContext[Job]!!)
+        assertEquals("Failed to upload the image", assertIs<ImageAttachmentState.Error>(vm.state.value).message)
+    }
+
+    @Test
     fun `session expiry resets to Idle and signals sessionExpired`() = runTest(UnconfinedTestDispatcher()) {
         val vm = ImageAttachmentViewModel(sessionExpiredApiClient(), this)
         vm.attach("photo.jpg", "image/jpeg", byteArrayOf(1))
@@ -148,6 +156,32 @@ class ImageAttachmentViewModelTest {
             awaitChildren(coroutineContext[Job]!!)
             assertIs<ImageAttachmentState.Idle>(vm.state.value)
         }
+
+    @Test
+    fun `insertExisting hands the composer ready markdown without a network call`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = ImageAttachmentViewModel(errorApiClient(), this)
+        vm.insertExisting("[![Socks](https://img.example/m.jpg)](https://www.ravelry.com/projects/yarnie/socks)")
+        val state = assertIs<ImageAttachmentState.Ready>(vm.state.value)
+        assertEquals("[![Socks](https://img.example/m.jpg)](https://www.ravelry.com/projects/yarnie/socks)", state.markdown)
+    }
+
+    @Test
+    fun `insertExisting and a second attach are ignored while an upload is in flight`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = ImageAttachmentViewModel(uploadFlowApiClient(), this)
+        val gate = CompletableDeferred<UploadableImage?>()
+        vm.attach { gate.await() }
+        assertIs<ImageAttachmentState.Uploading>(vm.state.value)
+        // A project-photo pick mid-upload must not clobber the in-flight result...
+        vm.insertExisting("![](/elsewhere.jpg)")
+        assertIs<ImageAttachmentState.Uploading>(vm.state.value)
+        // ...and neither may a second device pick double-submit.
+        vm.attach("other.jpg", "image/jpeg", byteArrayOf(2))
+        assertIs<ImageAttachmentState.Uploading>(vm.state.value)
+        gate.complete(UploadableImage("photo.jpg", "image/jpeg", byteArrayOf(1)))
+        awaitChildren(coroutineContext[Job]!!)
+        // The in-flight upload's own result wins.
+        assertEquals("![](/attached/yarnie/7.jpg)", assertIs<ImageAttachmentState.Ready>(vm.state.value).markdown)
+    }
 
     @Test
     fun `appendImageMarkdown starts a new paragraph and handles a blank draft`() {

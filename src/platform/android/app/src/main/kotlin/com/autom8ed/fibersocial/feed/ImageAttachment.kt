@@ -6,17 +6,24 @@ import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.materialIcon
 import androidx.compose.material.icons.materialPath
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
@@ -82,29 +89,55 @@ internal fun InsertAttachmentEffect(
 }
 
 /**
- * Attach-image control shared by the two composers: launches the system photo picker
- * (no storage permission needed) and hands the picked URI to [onImagePicked]. Swaps to
- * a progress spinner while the upload is in flight.
+ * Attach-image control shared by the two composers. Swaps to a progress spinner while
+ * an upload is in flight. With [onPickFromProjects] provided, tapping opens a menu
+ * offering a device upload (needs Ravelry Extras to post) or a photo from the user's
+ * projects (free); without it, tapping launches the system photo picker directly.
+ * The system picker needs no storage permission.
  */
 @Composable
 internal fun AttachImageButton(
     attachment: ImageAttachmentState,
     enabled: Boolean,
     onImagePicked: (Uri) -> Unit,
+    onPickFromProjects: (() -> Unit)? = null,
 ) {
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         uri?.let(onImagePicked)
     }
+    val launchPicker = {
+        picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+    }
     if (attachment is ImageAttachmentState.Uploading) {
         CircularProgressIndicator(modifier = Modifier.size(32.dp).padding(4.dp))
-    } else {
+        return
+    }
+    // Box: the DropdownMenu anchors to its parent layout node.
+    Box {
+        var menuOpen by remember { mutableStateOf(false) }
         IconButton(
-            onClick = {
-                picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-            },
+            onClick = { if (onPickFromProjects == null) launchPicker() else menuOpen = true },
             enabled = enabled,
         ) {
             Icon(AttachImageIcon, contentDescription = "Attach image")
+        }
+        if (onPickFromProjects != null) {
+            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                DropdownMenuItem(
+                    text = { Text("From your projects") },
+                    onClick = {
+                        menuOpen = false
+                        onPickFromProjects()
+                    },
+                )
+                DropdownMenuItem(
+                    text = { Text("Upload from device") },
+                    onClick = {
+                        menuOpen = false
+                        launchPicker()
+                    },
+                )
+            }
         }
     }
 }
