@@ -291,7 +291,26 @@ class MarkdownPostParserTest {
     }
 
     @Test
-    fun `parsePreviewDocument falls back to the summary without a reply`() {
+    fun `parsePreviewDocument prefers the opening post body over the summary`() {
+        val item = feedItem(
+            bodySummary = "stripped summary",
+            bodySummaryHtml = "<p>stripped summary</p>",
+        ).copy(openingPostHtml = "<p>Opening <em>italic</em> body</p>")
+        val paragraph = assertIs<PostBlock.Paragraph>(item.parsePreviewDocument().blocks.single())
+        val styled = paragraph.content.filterIsInstance<Inline.Styled>().single()
+        assertEquals(InlineStyle.ITALIC, styled.style)
+    }
+
+    @Test
+    fun `parsePreviewDocument treats blank reply and opening html as absent`() {
+        val item = feedItem(bodySummary = "the summary", bodySummaryHtml = "<p>the summary</p>")
+            .copy(latestReplyHtml = "", openingPostHtml = "   ".trim())
+        val paragraph = assertIs<PostBlock.Paragraph>(item.parsePreviewDocument().blocks.single())
+        assertEquals(listOf<Inline>(Inline.Text("the summary")), paragraph.content)
+    }
+
+    @Test
+    fun `parsePreviewDocument falls back to the summary without a reply or opening post`() {
         val item = feedItem(bodySummary = "opening post", bodySummaryHtml = "<p>opening post</p>")
         val paragraph = assertIs<PostBlock.Paragraph>(item.parsePreviewDocument().blocks.single())
         assertEquals(listOf<Inline>(Inline.Text("opening post")), paragraph.content)

@@ -62,15 +62,17 @@ class FeedRepository(private val apiClient: RavelryApiClient) {
             .map { topic ->
                 async {
                     val detail = apiClient.getTopicDetail(topic.id)
-                    // Sticky topics deliberately keep opening-post attribution (an
-                    // announcement is its opening post, not its latest comment — this
-                    // mirrors the website; FeedItem's init enforces it), and only
-                    // topics with replies have a latest reply distinct from the
-                    // opening post; skip the extra request otherwise. The !sticky
-                    // condition is load-bearing, not a leftover from the old card split.
-                    val wantsLatestReply = detail.postsCount > 1 && !detail.sticky
-                    val latestReply = if (wantsLatestReply) latestPostOrNull(detail.id) else null
-                    detail.toFeedItem(groupId = group.id, groupName = group.name, latestReply = latestReply)
+                    // Every card previews a real post body (issues #154/#185): the
+                    // newest post is the latest reply when the topic has replies, and
+                    // the opening post itself otherwise — Ravelry's topic summary is
+                    // unreliable about formatting and never carries images. The one
+                    // skip: sticky topics with replies. Sticky cards keep opening-post
+                    // attribution (an announcement is its opening post, not its latest
+                    // comment — mirrors the website; FeedItem's init enforces it), so
+                    // their newest post would be fetched only to be discarded.
+                    val wantsNewestPost = detail.postsCount <= 1 || !detail.sticky
+                    val newestPost = if (wantsNewestPost) latestPostOrNull(detail.id) else null
+                    detail.toFeedItem(groupId = group.id, groupName = group.name, newestPost = newestPost)
                 }
             }
             .awaitAll()
@@ -97,7 +99,11 @@ class FeedRepository(private val apiClient: RavelryApiClient) {
         null
     }
 
-    private fun Topic.toFeedItem(groupId: Long, groupName: String, latestReply: Post? = null): FeedItem {
+    private fun Topic.toFeedItem(groupId: Long, groupName: String, newestPost: Post? = null): FeedItem {
+        // With replies present the newest post is a reply; otherwise it IS the opening
+        // post, which previews under opening-post attribution rather than as a "reply".
+        val latestReply = newestPost?.takeIf { postsCount > 1 && !sticky }
+        val openingPost = newestPost?.takeIf { postsCount <= 1 }
         val attributableReply = latestReply?.takeIf { it.user != null }
         val author = createdByUser ?: RavelryUser(username = "unknown")
         val full = summary ?: ""
@@ -127,6 +133,7 @@ class FeedRepository(private val apiClient: RavelryApiClient) {
             latestReplyAuthor = attributableReply?.user,
             latestReplyPreview = attributableReply?.let { htmlPreview(it.bodyHtml) },
             latestReplyHtml = attributableReply?.bodyHtml,
+            openingPostHtml = openingPost?.bodyHtml.orEmpty(),
         )
     }
 

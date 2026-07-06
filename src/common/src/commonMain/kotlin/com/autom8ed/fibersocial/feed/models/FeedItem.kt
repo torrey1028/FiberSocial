@@ -32,6 +32,11 @@ package com.autom8ed.fibersocial.feed.models
  * @property latestReplyHtml Ravelry's HTML rendering of the most recent reply's body —
  *   the source for the card's rich preview (issue #154) — or `null` under the same
  *   conditions as [latestReplyAuthor].
+ * @property openingPostHtml Ravelry's HTML rendering of the opening post's body, fetched
+ *   for topics with no replies so their preview shows real formatting and images — the
+ *   topic summary is unreliable about both. Empty when the topic has replies (the
+ *   preview uses [latestReplyHtml] then) or the fetch failed. Allowed for sticky topics:
+ *   an announcement's opening post is exactly what its card should preview.
  */
 data class FeedItem(
     val id: Long,
@@ -48,6 +53,7 @@ data class FeedItem(
     val latestReplyAuthor: RavelryUser? = null,
     val latestReplyPreview: String? = null,
     val latestReplyHtml: String? = null,
+    val openingPostHtml: String = "",
 ) {
     init {
         require(!sticky || (latestReplyAuthor == null && latestReplyPreview == null && latestReplyHtml == null)) {

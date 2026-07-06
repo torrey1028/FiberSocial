@@ -195,9 +195,11 @@ fun FeedItem.parseSummaryDocument(): PostDocument =
 
 /**
  * Parses whatever the feed card should preview: the latest reply when one is attributed
- * (mirroring [FeedItem.displayPreview]'s reply-else-opener rule), otherwise the topic
- * summary via [parseSummaryDocument].
+ * (mirroring [FeedItem.displayPreview]'s reply-else-opener rule), else the opening
+ * post's rendered body when it was fetched (no-reply topics — real formatting and
+ * images, which the summary lacks), else the topic summary via [parseSummaryDocument].
  */
 fun FeedItem.parsePreviewDocument(): PostDocument =
     latestReplyHtml?.takeIf { it.isNotBlank() }?.let { HtmlPostParser.parse(it) }
+        ?: openingPostHtml.takeIf { it.isNotBlank() }?.let { HtmlPostParser.parse(it) }
         ?: parseSummaryDocument()

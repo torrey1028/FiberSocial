@@ -22,6 +22,37 @@ fun PostDocument.previewInlines(maxLength: Int = 200): List<Inline> {
     return collector.result()
 }
 
+/**
+ * The first content photo in this document, for the card's preview thumbnail
+ * (issue #154 — the old plain-text preview silently dropped images). Inline emoji
+ * don't count; links are looked into because Ravelry wraps post photos in links
+ * (`[![…](img)](project)`).
+ */
+fun PostDocument.previewImageUrl(): String? {
+    fun firstImage(content: List<Inline>): String? = content.firstNotNullOfOrNull { inline ->
+        when (inline) {
+            is Inline.Image -> inline.url.takeIf { !inline.isInlineEmoji }
+            is Inline.Styled -> firstImage(inline.children)
+            is Inline.Link -> firstImage(inline.children)
+            else -> null
+        }
+    }
+
+    fun firstImage(blocks: List<PostBlock>): String? = blocks.firstNotNullOfOrNull { block ->
+        when (block) {
+            is PostBlock.Paragraph -> firstImage(block.content)
+            is PostBlock.Heading -> firstImage(block.content)
+            is PostBlock.Quote -> firstImage(block.blocks)
+            is PostBlock.BulletList -> block.items.firstNotNullOfOrNull { firstImage(it) }
+            is PostBlock.OrderedList -> block.items.firstNotNullOfOrNull { firstImage(it) }
+            is PostBlock.Table -> null
+            is PostBlock.CodeBlock, PostBlock.Divider -> null
+        }
+    }
+
+    return firstImage(blocks)
+}
+
 private class PreviewCollector(private val maxLength: Int) {
     private val out = mutableListOf<Inline>()
     private var length = 0

@@ -3,6 +3,7 @@ package com.autom8ed.fibersocial.feed
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import com.autom8ed.fibersocial.feed.models.FeedItem
 import com.autom8ed.fibersocial.feed.models.RavelryUser
@@ -25,6 +26,7 @@ class TopicCardTest {
         bodySummaryHtml: String = "",
         latestReplyHtml: String? = null,
         latestReplyPreview: String? = null,
+        openingPostHtml: String = "",
     ) = FeedItem(
         id = 1L,
         groupId = 10L,
@@ -39,6 +41,7 @@ class TopicCardTest {
         latestReplyAuthor = latestReplyHtml?.let { RavelryUser(username = "replier") },
         latestReplyPreview = latestReplyPreview,
         latestReplyHtml = latestReplyHtml,
+        openingPostHtml = openingPostHtml,
     )
 
     @Test
@@ -89,6 +92,48 @@ class TopicCardTest {
             TopicCard(item = item(), onClick = {})
         }
         compose.onNodeWithText("Show us your WIPs").assertIsDisplayed()
+    }
+
+    @Test
+    fun `previews the opening post body over a stripped summary`() {
+        compose.setContent {
+            TopicCard(
+                item = item(
+                    bodySummaryHtml = "<p>stripped summary</p>",
+                    openingPostHtml = "<p>Test <em>italic</em> topic</p>",
+                ),
+                onClick = {},
+            )
+        }
+        compose.onNodeWithText("Test italic topic").assertIsDisplayed()
+        compose.onNodeWithText("stripped summary").assertDoesNotExist()
+    }
+
+    @Test
+    fun `shows a thumbnail for a post with a photo`() {
+        compose.setContent {
+            TopicCard(
+                item = item(
+                    openingPostHtml = """<p>my socks</p><p><img src="https://img.example/socks.jpg" alt=""/></p>""",
+                ),
+                onClick = {},
+            )
+        }
+        compose.onNodeWithText("my socks").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Preview photo").assertIsDisplayed()
+    }
+
+    @Test
+    fun `shows the thumbnail alone for an image-only post`() {
+        compose.setContent {
+            TopicCard(
+                item = item(
+                    openingPostHtml = """<p><img src="https://img.example/socks.jpg" alt=""/></p>""",
+                ),
+                onClick = {},
+            )
+        }
+        compose.onNodeWithContentDescription("Preview photo").assertIsDisplayed()
     }
 
     @Test

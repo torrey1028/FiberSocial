@@ -81,6 +81,7 @@ class PreviewInlinesTest {
                     ),
                 ),
                 PostBlock.Quote(listOf(PostBlock.Paragraph(listOf(Inline.Text("gauge matters"))))),
+                PostBlock.CodeBlock("k2tog\n"),
                 PostBlock.Divider,
                 PostBlock.Table(
                     headerRow = listOf(TableCell(listOf(Inline.Text("size")))),
@@ -88,7 +89,7 @@ class PreviewInlinesTest {
                 ),
             ),
         )
-        assertEquals("Supplies wool needles gauge matters size US 7", plain(doc.previewInlines()))
+        assertEquals("Supplies wool needles gauge matters k2tog size US 7", plain(doc.previewInlines()))
     }
 
     @Test
@@ -98,6 +99,112 @@ class PreviewInlinesTest {
         )
         val text = plain(doc.previewInlines(maxLength = 100))
         assertTrue(text.length in 100..130, "expected roughly the budget, got ${text.length}")
+    }
+
+    @Test
+    fun `previewImageUrl finds the first photo including inside a link`() {
+        // Ravelry wraps post photos in project links: [![alt](img)](project).
+        val doc = HtmlPostParser.parse(
+            """<p>look!</p><p><a href="https://www.ravelry.com/projects/y/socks">""" +
+                """<img src="https://img.example/socks.jpg" alt="socks"/></a></p>""",
+        )
+        assertEquals("https://img.example/socks.jpg", doc.previewImageUrl())
+    }
+
+    @Test
+    fun `previewImageUrl skips inline emoji and returns null without photos`() {
+        val emojiOnly = PostDocument(
+            listOf(
+                PostBlock.Paragraph(
+                    listOf(
+                        Inline.Text("hi "),
+                        Inline.Image(url = "https://img/smile.png", alt = "wink", cssClass = "emo"),
+                    ),
+                ),
+            ),
+        )
+        assertEquals(null, emojiOnly.previewImageUrl())
+        assertEquals(null, PostDocument(emptyList()).previewImageUrl())
+    }
+
+    @Test
+    fun `previewImageUrl looks inside quotes lists and styled runs`() {
+        val photo = Inline.Image(url = "https://img.example/found.jpg", alt = "")
+        val inQuoteStyled = PostDocument(
+            listOf(
+                PostBlock.Heading(2, listOf(Inline.Text("no image here"))),
+                PostBlock.Quote(
+                    listOf(PostBlock.Paragraph(listOf(Inline.Styled(InlineStyle.BOLD, listOf(photo))))),
+                ),
+            ),
+        )
+        assertEquals("https://img.example/found.jpg", inQuoteStyled.previewImageUrl())
+
+        val inBulletList = PostDocument(
+            listOf(
+                PostBlock.BulletList(
+                    items = listOf(
+                        listOf(PostBlock.Paragraph(listOf(Inline.Text("text only")))),
+                        listOf(PostBlock.Paragraph(listOf(photo))),
+                    ),
+                ),
+            ),
+        )
+        assertEquals("https://img.example/found.jpg", inBulletList.previewImageUrl())
+
+        val inOrderedList = PostDocument(
+            listOf(PostBlock.OrderedList(items = listOf(listOf(PostBlock.Paragraph(listOf(photo)))))),
+        )
+        assertEquals("https://img.example/found.jpg", inOrderedList.previewImageUrl())
+
+        // Code blocks, dividers and tables never contribute a thumbnail.
+        val nonImageBlocks = PostDocument(
+            listOf(
+                PostBlock.CodeBlock("val x = 1"),
+                PostBlock.Divider,
+                PostBlock.Table(
+                    headerRow = listOf(TableCell(listOf(photo))),
+                    rows = emptyList(),
+                ),
+            ),
+        )
+        assertEquals(null, nonImageBlocks.previewImageUrl())
+    }
+
+    @Test
+    fun `styled or linked runs that reduce to only photos are dropped`() {
+        val photo = Inline.Image(url = "https://img.example/p.jpg", alt = "")
+        val doc = PostDocument(
+            listOf(
+                PostBlock.Paragraph(
+                    listOf(
+                        Inline.Styled(InlineStyle.BOLD, listOf(photo)),
+                        Inline.Link("https://example.com", listOf(photo)),
+                    ),
+                ),
+            ),
+        )
+        assertEquals(emptyList(), doc.previewInlines())
+    }
+
+    @Test
+    fun `budget cuts stop inside styled and linked runs`() {
+        val doc = PostDocument(
+            listOf(
+                PostBlock.Paragraph(
+                    listOf(
+                        Inline.Text("x".repeat(60)),
+                        Inline.Styled(InlineStyle.BOLD, listOf(Inline.Text("y".repeat(60)))),
+                        Inline.Link("https://example.com", listOf(Inline.Text("z".repeat(60)))),
+                        Inline.Code("never reached"),
+                        Inline.HardBreak,
+                    ),
+                ),
+            ),
+        )
+        val text = plain(doc.previewInlines(maxLength = 80))
+        assertTrue("z" !in text && "never" !in text, "expected the tail cut, got: $text")
+        assertTrue(text.startsWith("x".repeat(60)), "head kept: $text")
     }
 
     @Test
