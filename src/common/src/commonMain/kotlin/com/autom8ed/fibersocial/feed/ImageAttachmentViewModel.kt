@@ -127,6 +127,17 @@ class ImageAttachmentViewModel(
         }
     }
 
+    /**
+     * Hands the composer ready-made [markdown] for an image that already lives on
+     * Ravelry (e.g. a picked project photo) — no upload needed, so this is free for
+     * everyone rather than gated on Extras. Ignored while an upload is in flight,
+     * same as [attach].
+     */
+    fun insertExisting(markdown: String) {
+        if (_state.value is ImageAttachmentState.Uploading) return
+        _state.value = ImageAttachmentState.Ready(markdown)
+    }
+
     /** Resets [state] from [ImageAttachmentState.Ready] back to Idle once the markdown is in the draft. */
     fun acknowledgeInserted() {
         if (_state.value is ImageAttachmentState.Ready) _state.value = ImageAttachmentState.Idle
