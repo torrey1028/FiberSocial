@@ -176,4 +176,96 @@ class NewTopicScreenTest {
         }
         compose.onNodeWithContentDescription("Back").assertIsEnabled()
     }
+
+    @Test
+    fun `Ready attachment appends its markdown to the body and acknowledges`() {
+        var inserted = 0
+        var posted: String? = null
+        var attachment by mutableStateOf<ImageAttachmentState>(ImageAttachmentState.Idle)
+        compose.setContent {
+            NewTopicScreen(
+                groups = listOf(kalHub),
+                initialGroup = kalHub,
+                state = NewTopicState.Idle,
+                onBack = {},
+                onPost = { _, _, body, _ -> posted = body },
+                onCreated = { _, _ -> },
+                attachment = attachment,
+                onAttachmentInserted = { inserted++ },
+            )
+        }
+        compose.onNodeWithText("Title").performTextInput("Show us your WIPs")
+        compose.onNodeWithText("Your post").performTextInput("Photos please!")
+        compose.runOnIdle { attachment = ImageAttachmentState.Ready("![](/attached/me/1.jpg)") }
+        compose.waitForIdle()
+        compose.runOnIdle { assertEquals(1, inserted) }
+        compose.onNodeWithText("Post").performClick()
+        compose.runOnIdle { assertEquals("Photos please!\n\n![](/attached/me/1.jpg)", posted) }
+    }
+
+    @Test
+    fun `attach image button is present and disabled while sending`() {
+        var state by mutableStateOf<NewTopicState>(NewTopicState.Idle)
+        compose.setContent {
+            NewTopicScreen(
+                groups = listOf(kalHub),
+                initialGroup = kalHub,
+                state = state,
+                onBack = {},
+                onPost = { _, _, _, _ -> },
+                onCreated = { _, _ -> },
+            )
+        }
+        compose.onNodeWithContentDescription("Attach image").assertIsEnabled()
+        compose.runOnIdle { state = NewTopicState.Sending }
+        compose.onNodeWithContentDescription("Attach image").assertIsNotEnabled()
+    }
+
+    @Test
+    fun `Post is disabled while an image upload is in flight`() {
+        var attachment by mutableStateOf<ImageAttachmentState>(ImageAttachmentState.Idle)
+        compose.setContent {
+            NewTopicScreen(
+                groups = listOf(kalHub),
+                initialGroup = kalHub,
+                state = NewTopicState.Idle,
+                onBack = {},
+                onPost = { _, _, _, _ -> },
+                onCreated = { _, _ -> },
+                attachment = attachment,
+            )
+        }
+        compose.onNodeWithText("Title").performTextInput("Show us your WIPs")
+        compose.onNodeWithText("Your post").performTextInput("Photos please!")
+        compose.onNodeWithText("Post").assertIsEnabled()
+        // Posting mid-upload would create the topic without the image.
+        compose.runOnIdle { attachment = ImageAttachmentState.Uploading }
+        compose.onNodeWithText("Post").assertIsNotEnabled()
+        compose.runOnIdle { attachment = ImageAttachmentState.Ready("![](/attached/me/1.jpg)") }
+        compose.waitForIdle()
+        compose.onNodeWithText("Post").assertIsEnabled()
+    }
+
+    @Test
+    fun `attachment error message is shown and the fields are kept`() {
+        var attachment by mutableStateOf<ImageAttachmentState>(ImageAttachmentState.Idle)
+        compose.setContent {
+            NewTopicScreen(
+                groups = listOf(kalHub),
+                initialGroup = kalHub,
+                state = NewTopicState.Idle,
+                onBack = {},
+                onPost = { _, _, _, _ -> },
+                onCreated = { _, _ -> },
+                attachment = attachment,
+            )
+        }
+        compose.onNodeWithText("Your post").performTextInput("my precious draft")
+        compose.runOnIdle {
+            attachment = ImageAttachmentState.Error(ImageAttachmentViewModel.EXTRAS_REQUIRED_MESSAGE)
+        }
+        compose.waitForIdle()
+        compose.onNodeWithText(ImageAttachmentViewModel.EXTRAS_REQUIRED_MESSAGE).assertIsDisplayed()
+        compose.onNodeWithText("my precious draft").assertIsDisplayed()
+    }
 }
