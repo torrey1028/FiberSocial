@@ -302,6 +302,20 @@ class MarkdownPostParserTest {
     }
 
     @Test
+    fun `parsePreviewDocument parses the markdown source over the html rendering`() {
+        // The on-device regression behind issue #154's follow-up: Ravelry's rendering
+        // left the emphasis syntax literal, while the source parses to real italics —
+        // exactly the parseBodyDocument contract, now applied to the card.
+        val item = feedItem(bodySummary = "unused", bodySummaryHtml = "<p>unused</p>").copy(
+            openingPostBody = "Test *italic* topic",
+            openingPostHtml = "<p>Test *italic* topic</p>",
+        )
+        val paragraph = assertIs<PostBlock.Paragraph>(item.parsePreviewDocument().blocks.single())
+        val styled = paragraph.content.filterIsInstance<Inline.Styled>().single()
+        assertEquals(InlineStyle.ITALIC, styled.style)
+    }
+
+    @Test
     fun `parsePreviewDocument treats blank reply and opening html as absent`() {
         val item = feedItem(bodySummary = "the summary", bodySummaryHtml = "<p>the summary</p>")
             .copy(latestReplyHtml = "", openingPostHtml = "   ".trim())

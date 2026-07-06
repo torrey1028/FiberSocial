@@ -365,6 +365,7 @@ class FeedRepositoryTest {
                 path.contains("/forums/") -> topicsJson(100L)
                 path.contains("/posts.json") -> latestPostJson(
                     username = "yarnie",
+                    body = "Opening *italic* body",
                     bodyHtml = "<p>Opening <em>italic</em> body</p>",
                 )
                 path.contains("/topics/") -> topicDetailJson(100L, postsCount = 1)
@@ -372,6 +373,9 @@ class FeedRepositoryTest {
             }
         }
         val item = repo.singlePageItems().single()
+        // Both fields carried: the Markdown source is canonical, the rendering
+        // resolves emoji (same contract as Post.parseBodyDocument).
+        assertEquals("Opening *italic* body", item.openingPostBody)
         assertEquals("<p>Opening <em>italic</em> body</p>", item.openingPostHtml)
         // The opening post is not a "reply": attribution stays with the opener.
         assertEquals(null, item.latestReplyAuthor)
@@ -409,7 +413,9 @@ class FeedRepositoryTest {
         }
         val item = repo.singlePageItems().single()
         assertEquals("", item.openingPostHtml)
+        assertEquals("", item.openingPostBody)
         assertEquals("replier", item.latestReplyAuthor?.username)
+        assertEquals("Latest **reply** text", item.latestReplyBody)
     }
 
 

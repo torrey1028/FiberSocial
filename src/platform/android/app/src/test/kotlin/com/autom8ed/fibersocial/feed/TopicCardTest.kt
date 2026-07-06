@@ -26,6 +26,7 @@ class TopicCardTest {
         bodySummaryHtml: String = "",
         latestReplyHtml: String? = null,
         latestReplyPreview: String? = null,
+        openingPostBody: String = "",
         openingPostHtml: String = "",
     ) = FeedItem(
         id = 1L,
@@ -41,6 +42,7 @@ class TopicCardTest {
         latestReplyAuthor = latestReplyHtml?.let { RavelryUser(username = "replier") },
         latestReplyPreview = latestReplyPreview,
         latestReplyHtml = latestReplyHtml,
+        openingPostBody = openingPostBody,
         openingPostHtml = openingPostHtml,
     )
 
@@ -107,6 +109,22 @@ class TopicCardTest {
         }
         compose.onNodeWithText("Test italic topic").assertIsDisplayed()
         compose.onNodeWithText("stripped summary").assertDoesNotExist()
+    }
+
+    @Test
+    fun `renders italics from the markdown source when the rendering leaves them literal`() {
+        compose.setContent {
+            TopicCard(
+                item = item(
+                    openingPostBody = "Test *italic* topic",
+                    openingPostHtml = "<p>Test *italic* topic</p>",
+                ),
+                onClick = {},
+            )
+        }
+        // Styled from the source: no literal asterisks on the card.
+        compose.onNodeWithText("Test italic topic").assertIsDisplayed()
+        compose.onNodeWithText("Test *italic* topic").assertDoesNotExist()
     }
 
     @Test

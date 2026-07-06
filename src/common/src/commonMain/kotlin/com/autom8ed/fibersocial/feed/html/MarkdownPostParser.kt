@@ -196,10 +196,21 @@ fun FeedItem.parseSummaryDocument(): PostDocument =
 /**
  * Parses whatever the feed card should preview: the latest reply when one is attributed
  * (mirroring [FeedItem.displayPreview]'s reply-else-opener rule), else the opening
- * post's rendered body when it was fetched (no-reply topics — real formatting and
- * images, which the summary lacks), else the topic summary via [parseSummaryDocument].
+ * post when it was fetched (no-reply topics — real formatting and images, which the
+ * summary lacks), else the topic summary via [parseSummaryDocument]. Post content
+ * parses exactly like [Post.parseBodyDocument]: the Markdown source is canonical and
+ * the HTML rendering only resolves emoji — Ravelry's rendering has been seen dropping
+ * content and leaving syntax unrendered (issues #102/#144), which is how a card can
+ * otherwise lose formatting its own topic view displays.
  */
-fun FeedItem.parsePreviewDocument(): PostDocument =
-    latestReplyHtml?.takeIf { it.isNotBlank() }?.let { HtmlPostParser.parse(it) }
-        ?: openingPostHtml.takeIf { it.isNotBlank() }?.let { HtmlPostParser.parse(it) }
-        ?: parseSummaryDocument()
+fun FeedItem.parsePreviewDocument(): PostDocument = when {
+    !latestReplyBody.isNullOrBlank() || !latestReplyHtml.isNullOrBlank() ->
+        parsePostContent(latestReplyBody.orEmpty(), latestReplyHtml.orEmpty())
+    openingPostBody.isNotBlank() || openingPostHtml.isNotBlank() ->
+        parsePostContent(openingPostBody, openingPostHtml)
+    else -> parseSummaryDocument()
+}
+
+private fun parsePostContent(body: String, renderedHtml: String): PostDocument =
+    if (body.isNotBlank()) MarkdownPostParser.parse(body, renderedHtml = renderedHtml)
+    else HtmlPostParser.parse(renderedHtml)
