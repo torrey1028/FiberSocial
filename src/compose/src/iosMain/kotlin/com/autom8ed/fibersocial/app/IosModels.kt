@@ -13,6 +13,7 @@ import com.autom8ed.fibersocial.feed.KeyValueGroupOrderStore
 import com.autom8ed.fibersocial.feed.NewTopicViewModel
 import com.autom8ed.fibersocial.feed.TopicDetailViewModel
 import com.autom8ed.fibersocial.feedback.FeedbackViewModel
+import com.autom8ed.fibersocial.profile.UserProfileViewModel
 import com.autom8ed.fibersocial.net.ravelryApiClient
 import com.autom8ed.fibersocial.net.ravelryAuthRepository
 import com.autom8ed.fibersocial.net.ravelryHttpClient
@@ -119,6 +120,9 @@ class IosFeedModel(scope: CoroutineScope) : FeedScreenModel {
 
     // In-app project page for tapped ravelry.com/projects links (issue #103).
     override val projectPage = ProjectPageViewModel(apiClient, scope)
+
+    // In-app user profile for tapped usernames (issue #194).
+    override val userProfile = UserProfileViewModel(apiClient, scope)
     override val feedback = FeedbackViewModel(apiClient, scope)
     override val events = EventsViewModel(apiClient, scope)
     override val eventDetail = EventDetailViewModel(
@@ -138,6 +142,7 @@ class IosFeedModel(scope: CoroutineScope) : FeedScreenModel {
         replyImage.sessionExpired,
         projectPicker.sessionExpired,
         projectPage.sessionExpired,
+        userProfile.sessionExpired,
         feedback.sessionExpired,
         events.sessionExpired,
         eventDetail.sessionExpired,
@@ -165,7 +170,13 @@ class IosFeedModel(scope: CoroutineScope) : FeedScreenModel {
 
     fun load() = feed.load()
 
-    fun reset() = feed.reset()
+    fun reset() {
+        feed.reset()
+        // Dismiss the model-held project page too: this model lives for the whole process
+        // (never recreated), so without this a re-logged-in (possibly different) user would
+        // see the previous session's project page over their feed. Mirrors Android's reset().
+        projectPage.dismiss()
+    }
 
     override fun debugForceSessionExpiry() = feed.forceSessionExpiry()
 

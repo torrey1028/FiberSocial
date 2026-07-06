@@ -22,6 +22,7 @@ import com.autom8ed.fibersocial.auth.AuthState
 import com.autom8ed.fibersocial.auth.KeyValueTokenStorage
 import com.autom8ed.fibersocial.feed.FeedScreen
 import com.autom8ed.fibersocial.feed.LocalProjectLinkOpener
+import com.autom8ed.fibersocial.profile.LocalProfileOpener
 import com.autom8ed.fibersocial.login.LoginScreen
 import com.autom8ed.fibersocial.login.WebViewLoginScreen
 import com.autom8ed.fibersocial.notifications.KeyValueNotificationSettingsStore
@@ -156,17 +157,19 @@ private fun IosApp(authModel: IosAuthModel, feedModel: IosFeedModel) {
                     // there's no LoginScreen flash (same as MainActivity).
                     LaunchedEffect(feedModel) {
                         feedModel.sessionExpired.collect {
-                            // Dismiss the ViewModel-held project page so it can't
+                            // Dismiss the ViewModel-held overlays so they can't
                             // survive re-login into a different account's session.
                             feedModel.projectPage.dismiss()
+                            feedModel.userProfile.dismiss()
                             showWebView = true
                             authModel.auth.logout()
                         }
                     }
-                    // Project links tapped anywhere in post content open the in-app
-                    // project page instead of the browser (issue #103).
+                    // Project links tapped in post content open the in-app project page
+                    // (issue #103); tapping a username opens the profile (issue #194).
                     CompositionLocalProvider(
                         LocalProjectLinkOpener provides { link -> feedModel.projectPage.open(link) },
+                        LocalProfileOpener provides { username -> feedModel.userProfile.open(username) },
                     ) {
                         FeedScreen(
                             viewModel = feedModel,
