@@ -42,6 +42,33 @@ class RavelryApiClientTest {
     }
 
     @Test
+    fun `getUserProfile hits the people endpoint and parses the profile`() = runTest {
+        var captured: io.ktor.http.Url? = null
+        val client = routingApiClientCapturing(onRequest = { captured = it }) {
+            """{"user":{"id":9,"username":"yarnie","first_name":"Yarnie","location":"Seattle",
+                "about_me_html":"<p>hi</p>","large_photo_url":"https://img/l.jpg",
+                "photo_url":"https://img/p.jpg","small_photo_url":"https://img/s.jpg"}}"""
+        }
+        val profile = client.getUserProfile("yarnie")
+        assertEquals("/people/yarnie.json", captured?.encodedPath)
+        assertEquals("yarnie", profile.username)
+        assertEquals("Yarnie", profile.firstName)
+        assertEquals("Seattle", profile.location)
+        assertEquals("https://img/l.jpg", profile.avatarUrl)
+    }
+
+    @Test
+    fun `getUserProfile avatar falls back through the photo sizes`() = runTest {
+        val client = routingApiClient { """{"user":{"id":9,"username":"yarnie","small_photo_url":"https://img/s.jpg"}}""" }
+        assertEquals("https://img/s.jpg", client.getUserProfile("yarnie").avatarUrl)
+    }
+
+    @Test
+    fun `getUserProfile fails loudly when the response is missing the user`() = runTest {
+        assertFailsWith<Exception> { routingApiClient { "{}" }.getUserProfile("yarnie") }
+    }
+
+    @Test
     fun `getUserGroups scrapes memberships HTML and resolves groups via search`() = runTest {
         val client = routingApiClient { path ->
             when {
