@@ -56,11 +56,22 @@ if [ -n "$INSTALLED_FLAGS" ]; then
         echo "==> Installed app is a ${INSTALLED_TYPE} build; a ${BUILD_TYPE} APK can't update it in place."
         echo "    Uninstalling it first. NOTE: this clears app data — you'll need to log in again."
         adb uninstall "$PACKAGE"
+        CLEAR_AFTER_INSTALL=1
     fi
 fi
 
 echo "Found $DEVICES device(s). Installing..."
 adb install -r "$APK_PATH"
+
+# Auto-backup restores the old build's app data right after an uninstall/reinstall
+# cycle — including the EncryptedSharedPreferences keyset, whose Keystore master key
+# no longer exists. The app then crashes on launch with AndroidKeysetManager/Tink
+# errors (see CLAUDE.md). Clearing data after the install guarantees a clean start;
+# the login was already lost to the uninstall anyway.
+if [ "${CLEAR_AFTER_INSTALL:-0}" -eq 1 ]; then
+    echo "==> Clearing restored app data (stale encrypted-prefs keyset would crash on launch)..."
+    adb shell pm clear "$PACKAGE"
+fi
 
 echo ""
 echo "Done! FiberSocial installed on device."
