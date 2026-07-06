@@ -10,6 +10,7 @@ import com.autom8ed.fibersocial.feed.FeedScreenModel
 import com.autom8ed.fibersocial.feed.FeedViewModel
 import com.autom8ed.fibersocial.feed.ImageAttachmentViewModel
 import com.autom8ed.fibersocial.feed.KeyValueGroupOrderStore
+import com.autom8ed.fibersocial.feed.readPickedImage
 import com.autom8ed.fibersocial.feed.NewTopicViewModel
 import com.autom8ed.fibersocial.feed.TopicDetailViewModel
 import com.autom8ed.fibersocial.feedback.FeedbackViewModel
@@ -160,15 +161,14 @@ class IosFeedModel(scope: CoroutineScope) : FeedScreenModel {
         }
     }
 
-    // Device photo uploads need the PHPicker bridge (#119); unreachable until
-    // rememberImagePicker's iOS actual launches a real picker.
-    override fun attachNewTopicImage(uri: String) {
-        println("FiberSocial: attachNewTopicImage($uri) — device uploads not wired up on iOS yet (#119)")
-    }
+    /** Reads the picked image behind [uri] (a tmp-file path from the PHPicker
+     *  bridge) and uploads it for the new-topic composer. */
+    override fun attachNewTopicImage(uri: String) =
+        newTopicImage.attach { readPickedImage(uri) }
 
-    override fun attachReplyImage(uri: String) {
-        println("FiberSocial: attachReplyImage($uri) — device uploads not wired up on iOS yet (#119)")
-    }
+    /** Reads the picked image behind [uri] and uploads it for the reply composer. */
+    override fun attachReplyImage(uri: String) =
+        replyImage.attach { readPickedImage(uri) }
 
     fun load() = feed.load()
 

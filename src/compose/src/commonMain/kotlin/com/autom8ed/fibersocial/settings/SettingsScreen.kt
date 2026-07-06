@@ -128,6 +128,13 @@ fun SettingsScreen(
                     optionLabel = ::pollCadenceLabel,
                     onSelected = onPollCadenceSelected,
                 )
+                Text(
+                    text = pollCadencePlatformNote,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    // Aligns with the row title (icon 24 + spacing 16 + padding 16).
+                    modifier = Modifier.padding(start = 56.dp, end = 16.dp, bottom = 12.dp),
+                )
                 HorizontalDivider()
             }
             Row(
