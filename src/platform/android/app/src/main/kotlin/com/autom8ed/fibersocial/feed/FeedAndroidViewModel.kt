@@ -20,7 +20,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.launch
 
-class FeedAndroidViewModel(app: Application) : AndroidViewModel(app) {
+class FeedAndroidViewModel(app: Application) : AndroidViewModel(app), FeedScreenModel {
 
     private val httpClient = ravelryHttpClient()
     private val tokenStorage = KeyValueTokenStorage(encryptedKeyValueStore(app, AUTH_PREFS_NAME))
@@ -32,21 +32,21 @@ class FeedAndroidViewModel(app: Application) : AndroidViewModel(app) {
     )
     private val apiClient = ravelryApiClient(httpClient, tokenStorage, authRepository)
     private val repository = FeedRepository(apiClient)
-    val feed = FeedViewModel(repository, viewModelScope, AndroidGroupOrderStore(app))
-    val topicDetail = TopicDetailViewModel(apiClient, viewModelScope)
-    val newTopic = NewTopicViewModel(apiClient, viewModelScope)
+    override val feed = FeedViewModel(repository, viewModelScope, AndroidGroupOrderStore(app))
+    override val topicDetail = TopicDetailViewModel(apiClient, viewModelScope)
+    override val newTopic = NewTopicViewModel(apiClient, viewModelScope)
 
     // One attach-image flow per composer, so an upload finishing for one composer
     // can never deliver its markdown into the other's draft.
-    val newTopicImage = ImageAttachmentViewModel(apiClient, viewModelScope)
-    val replyImage = ImageAttachmentViewModel(apiClient, viewModelScope)
+    override val newTopicImage = ImageAttachmentViewModel(apiClient, viewModelScope)
+    override val replyImage = ImageAttachmentViewModel(apiClient, viewModelScope)
 
     // Shared by both composers: only one is visible at a time, and the picked photo
     // is routed to the visible composer's ImageAttachmentViewModel at the call site.
-    val projectPicker = ProjectPhotoPickerViewModel(apiClient, viewModelScope)
-    val feedback = FeedbackViewModel(apiClient, viewModelScope)
-    val events = EventsViewModel(apiClient, viewModelScope)
-    val eventDetail = EventDetailViewModel(
+    override val projectPicker = ProjectPhotoPickerViewModel(apiClient, viewModelScope)
+    override val feedback = FeedbackViewModel(apiClient, viewModelScope)
+    override val events = EventsViewModel(apiClient, viewModelScope)
+    override val eventDetail = EventDetailViewModel(
         apiClient,
         viewModelScope,
         // RSVP changes resync notifications immediately: reminders for a fresh RSVP are
@@ -79,18 +79,20 @@ class FeedAndroidViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** Reads the picked image behind [uri] and uploads it for the new-topic composer. */
-    fun attachNewTopicImage(uri: Uri) = newTopicImage.attach { readImageForUpload(getApplication(), uri) }
+    override fun attachNewTopicImage(uri: String) =
+        newTopicImage.attach { readImageForUpload(getApplication(), Uri.parse(uri)) }
 
     /** Reads the picked image behind [uri] and uploads it for the reply composer. */
-    fun attachReplyImage(uri: Uri) = replyImage.attach { readImageForUpload(getApplication(), uri) }
+    override fun attachReplyImage(uri: String) =
+        replyImage.attach { readImageForUpload(getApplication(), Uri.parse(uri)) }
 
     fun load() = feed.load()
 
     fun reset() = feed.reset()
 
-    fun debugForceSessionExpiry() = feed.forceSessionExpiry()
+    override fun debugForceSessionExpiry() = feed.forceSessionExpiry()
 
-    fun debugForceFeedError() = feed.forceError()
+    override fun debugForceFeedError() = feed.forceError()
 
     override fun onCleared() {
         super.onCleared()

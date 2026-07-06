@@ -15,8 +15,8 @@ not sibling source modules). See #156.
 
 This script catches it before merge: it enumerates every top-level type
 (`class`/`interface`/`object`/`enum class`/`typealias`) declared in each module's
-Android-merged source and fails if any fully-qualified name is declared in *both*
-`:common` and `:app`.
+Android-merged source and fails if any fully-qualified name is declared in
+more than one module (`:common`, `:composeApp`, `:app`).
 
 Only cross-*module* collisions are flagged, so a KMP `expect`/`actual` pair (which
 lives entirely inside `:common`, in `commonMain` + `androidMain`) is never a false
@@ -42,6 +42,10 @@ MODULE_ROOTS = {
     ":common": [
         "src/common/src/commonMain/kotlin",
         "src/common/src/androidMain/kotlin",
+    ],
+    ":composeApp": [
+        "src/compose/src/commonMain/kotlin",
+        "src/compose/src/androidMain/kotlin",
     ],
     ":app": [
         "src/platform/android/app/src/main/kotlin",

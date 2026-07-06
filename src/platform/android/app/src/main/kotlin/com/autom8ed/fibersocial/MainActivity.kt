@@ -24,6 +24,7 @@ import androidx.compose.ui.Modifier
 import com.autom8ed.fibersocial.auth.AuthState
 import com.autom8ed.fibersocial.feed.FeedAndroidViewModel
 import com.autom8ed.fibersocial.feed.FeedScreen
+import com.autom8ed.fibersocial.feedback.deviceContext
 import com.autom8ed.fibersocial.login.AuthAndroidViewModel
 import com.autom8ed.fibersocial.login.LoginScreen
 import com.autom8ed.fibersocial.login.WebViewLoginScreen
@@ -114,13 +115,16 @@ class MainActivity : ComponentActivity() {
                                 CircularProgressIndicator()
                             }
                         is AuthState.Authenticated -> {
+                            val notificationSettingsStore = remember {
+                                KeyValueNotificationSettingsStore(
+                                    plainKeyValueStore(this@MainActivity, NOTIFICATION_SETTINGS_PREFS_NAME),
+                                )
+                            }
                             LaunchedEffect(Unit) {
                                 feedVm.load()
                                 EventSyncWorker.schedulePeriodic(
                                     this@MainActivity,
-                                    KeyValueNotificationSettingsStore(
-                                        plainKeyValueStore(this@MainActivity, NOTIFICATION_SETTINGS_PREFS_NAME),
-                                    ).load().effectivePollCadence,
+                                    notificationSettingsStore.load().effectivePollCadence,
                                 )
                             }
                             // On session expiry: show WebView login before clearing auth so there's no
@@ -147,6 +151,14 @@ class MainActivity : ComponentActivity() {
                                     themeMode = mode
                                     themeScope.launch { themeStore.save(ThemeSettings(mode = mode)) }
                                 },
+                                notificationSettingsStore = notificationSettingsStore,
+                                // UPDATE policy re-registers the periodic sync at the new cadence.
+                                onPollCadenceChanged = { cadence ->
+                                    EventSyncWorker.schedulePeriodic(this@MainActivity, cadence)
+                                },
+                                debugPanelEnabled = BuildConfig.DEBUG,
+                                onRunEventSync = { EventSyncWorker.runOnce(this@MainActivity) },
+                                deviceInfo = deviceContext(),
                             )
                         }
                     }

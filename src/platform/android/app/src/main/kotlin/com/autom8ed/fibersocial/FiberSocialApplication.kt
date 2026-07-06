@@ -1,8 +1,10 @@
 package com.autom8ed.fibersocial
 
 import android.app.Application
-import coil.ImageLoader
-import coil.ImageLoaderFactory
+import coil3.ImageLoader
+import coil3.PlatformContext
+import coil3.SingletonImageLoader
+import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import com.autom8ed.fibersocial.auth.KeyValueTokenStorage
 import com.autom8ed.fibersocial.storage.AUTH_PREFS_NAME
 import com.autom8ed.fibersocial.storage.encryptedKeyValueStore
@@ -21,24 +23,28 @@ import okhttp3.Response
  * OAuth login (the same cookie the group-membership scraper uses) to ravelry.com
  * requests, so gated post photos resolve like they do on the website.
  */
-class FiberSocialApplication : Application(), ImageLoaderFactory {
+class FiberSocialApplication : Application(), SingletonImageLoader.Factory {
 
-    override fun newImageLoader(): ImageLoader {
+    override fun newImageLoader(context: PlatformContext): ImageLoader {
         // Deferred to first use: EncryptedSharedPreferences creation isn't free, and the
         // cookie lambda runs on OkHttp dispatcher threads, not the main thread.
         val tokenStorage by lazy { KeyValueTokenStorage(encryptedKeyValueStore(this, AUTH_PREFS_NAME)) }
-        return ImageLoader.Builder(this)
-            .okHttpClient {
-                OkHttpClient.Builder()
-                    // Network (not application) interceptor: it runs per redirect hop,
-                    // so the cookie goes to ravelry.com hosts only and is never carried
-                    // onto the public image CDN a gated URL redirects to.
-                    .addNetworkInterceptor(
-                        RavelrySessionCookieInterceptor {
-                            runBlocking { tokenStorage.load()?.sessionCookie }
-                        },
-                    )
-                    .build()
+        return ImageLoader.Builder(context)
+            .components {
+                add(
+                    OkHttpNetworkFetcherFactory(callFactory = {
+                        OkHttpClient.Builder()
+                            // Network (not application) interceptor: it runs per redirect hop,
+                            // so the cookie goes to ravelry.com hosts only and is never carried
+                            // onto the public image CDN a gated URL redirects to.
+                            .addNetworkInterceptor(
+                                RavelrySessionCookieInterceptor {
+                                    runBlocking { tokenStorage.load()?.sessionCookie }
+                                },
+                            )
+                            .build()
+                    }),
+                )
             }
             .build()
     }

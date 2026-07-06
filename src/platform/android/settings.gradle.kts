@@ -16,3 +16,5 @@ rootProject.name = "FiberSocial"
 include(":app")
 include(":common")
 project(":common").projectDir = file("../../common")
+include(":composeApp")
+project(":composeApp").projectDir = file("../../compose")
