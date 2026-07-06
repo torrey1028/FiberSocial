@@ -58,4 +58,31 @@ class FiberSocialThemeTest {
     fun `LIGHT override wins over a dark device setting`() {
         assertEquals(lightColorScheme().background, backgroundFor(ThemeMode.LIGHT))
     }
+
+    private fun logoFor(mode: ThemeMode): Int {
+        var logo: Int? = null
+        compose.setContent {
+            FiberSocialTheme(mode) { logo = appLogoResource() }
+        }
+        compose.waitForIdle()
+        return logo!!
+    }
+
+    @Test
+    fun `logo resource is the light asset under the light theme`() {
+        assertEquals(com.autom8ed.fibersocial.R.drawable.fibersocial_logo, logoFor(ThemeMode.LIGHT))
+    }
+
+    @Test
+    @Config(sdk = [33], qualifiers = "night")
+    fun `dark logo follows the in-app override even though resources follow the system`() {
+        // qualifiers=night + LIGHT override: resource -night selection would pick wrong;
+        // the explicit LocalDarkTheme selection must not.
+        assertEquals(com.autom8ed.fibersocial.R.drawable.fibersocial_logo, logoFor(ThemeMode.LIGHT))
+    }
+
+    @Test
+    fun `logo resource is the dark asset under the dark theme`() {
+        assertEquals(com.autom8ed.fibersocial.R.drawable.fibersocial_logo_dark, logoFor(ThemeMode.DARK))
+    }
 }

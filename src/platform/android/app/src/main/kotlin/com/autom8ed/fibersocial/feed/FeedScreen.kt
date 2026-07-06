@@ -105,6 +105,7 @@ import com.autom8ed.fibersocial.settings.ThemeMode
 import com.autom8ed.fibersocial.storage.NOTIFICATION_SETTINGS_PREFS_NAME
 import com.autom8ed.fibersocial.storage.plainKeyValueStore
 import com.autom8ed.fibersocial.ui.PullToRefreshBox
+import com.autom8ed.fibersocial.ui.appLogoResource
 import com.autom8ed.fibersocial.ui.UserAvatar
 import kotlinx.coroutines.launch
 
@@ -399,7 +400,7 @@ fun FeedScreen(
                     title = {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Image(
-                                painter = painterResource(R.drawable.fibersocial_logo),
+                                painter = painterResource(appLogoResource()),
                                 contentDescription = stringResource(R.string.app_logo_content_description),
                                 modifier = Modifier.size(28.dp),
                             )
