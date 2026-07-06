@@ -23,8 +23,18 @@ fun releaseTagVersion(): Triple<Int, Int, Int>? {
         isIgnoreExitValue = true
     }.standardOutput.asText.get().trim()
     val match = Regex("""^v(\d+)\.(\d+)\.(\d+)$""").matchEntire(describe) ?: return null
-    val (major, minor, patch) = match.destructured
-    return Triple(major.toInt(), minor.toInt(), patch.toInt())
+    val (major, minor, patch) = match.destructured.toList().map {
+        it.toIntOrNull() ?: error("Release tag $describe has a component out of Int range")
+    }
+    // The versionCode packing below gives minor/patch three digits each, so
+    // out-of-range components would silently collide with a neighboring
+    // version's code (v1.2.1000 == v1.3.0), major >= 2147 overflows Int, and
+    // v0.0.0 packs to versionCode 0 which Android rejects. Fail the build
+    // instead of shipping a colliding code.
+    require(major in 0..2146 && minor in 0..999 && patch in 0..999 && major + minor + patch > 0) {
+        "Release tag $describe doesn't fit the versionCode scheme (major <= 2146, minor/patch <= 999, above v0.0.0)"
+    }
+    return Triple(major, minor, patch)
 }
 
 val releaseTag = releaseTagVersion()
