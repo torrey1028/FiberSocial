@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Excludes the auth prefs from Google cloud backup and device-to-device transfer (issue #188).
+  fibersocial_auth holds the OAuth access/refresh token, the www.ravelry.com session cookie,
+  and the device-bound Tink keyset that encrypts them. Backing it up both leaks those secrets
+  off-device AND guarantees a corrupt restore: the Tink master key lives in the Android Keystore
+  and never leaves the device, so a restored keyset is undecryptable on the new device/install
+  (the root cause of the keyset-corruption crash #182 self-heals). Excluding it makes the
+  always-required re-login explicit and keeps the secrets on-device.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="sharedpref" path="fibersocial_auth.xml"/>
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" path="fibersocial_auth.xml"/>
+    </device-transfer>
+</data-extraction-rules>
