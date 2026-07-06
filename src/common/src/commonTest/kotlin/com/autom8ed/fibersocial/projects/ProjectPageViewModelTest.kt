@@ -12,6 +12,7 @@ import kotlin.test.assertIs
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
 
@@ -99,6 +100,25 @@ class ProjectPageViewModelTest {
         assertEquals(Unit, vm.sessionExpired.first())
     }
 
+    @Test
+    fun `session expiry from an open dropped after dismissal does not signal expiry`() = runTest(UnconfinedTestDispatcher()) {
+        val gate = CompletableDeferred<Unit>()
+        val vm = ProjectPageViewModel(
+            suspendableRoutingApiClient { _ ->
+                gate.await()
+                throw com.autom8ed.fibersocial.auth.SessionExpiredException("expired")
+            },
+            this,
+        )
+        vm.open(link)
+        vm.dismiss()          // supersedes the open (generation++)
+        gate.complete(Unit)   // the now-stale open throws SessionExpiredException
+        awaitChildren(coroutineContext[Job]!!)
+        assertIs<ProjectPageState.Hidden>(vm.state.value)
+        // A load the user already dismissed must not yank them to the login screen.
+        assertEquals(null, withTimeoutOrNull(1_000) { vm.sessionExpired.first() })
+    }
+
     /** Routes project detail, pattern, and comments by path for the fuller flows. */
     private fun fullApiClient(
         patternId: Long? = 5L,
@@ -171,9 +191,13 @@ class ProjectPageViewModelTest {
         awaitChildren(coroutineContext[Job]!!)
         vm.postComment("mine")
         awaitChildren(coroutineContext[Job]!!)
-        assertIs<CommentPostState.Idle>(vm.postState.value)
+        // Success is signalled as Posted (the composer clears its text on it), then the
+        // composer acknowledges back to Idle.
+        assertIs<CommentPostState.Posted>(vm.postState.value)
         val comments = assertIs<ProjectCommentsState.Loaded>(vm.commentsState.value)
         assertEquals(listOf(99L), comments.comments.map { it.id })
+        vm.acknowledgePosted()
+        assertIs<CommentPostState.Idle>(vm.postState.value)
     }
 
     @Test
@@ -217,6 +241,34 @@ class ProjectPageViewModelTest {
         vm.deleteComment(ProjectComment(id = 2, commentHtml = "<p>b</p>"))
         awaitChildren(coroutineContext[Job]!!)
         assertEquals(listOf(1L), assertIs<ProjectCommentsState.Loaded>(vm.commentsState.value).comments.map { it.id })
+    }
+
+    @Test
+    fun `a double-tapped delete only fires one request for the comment`() = runTest(UnconfinedTestDispatcher()) {
+        // Deletion is pessimistic (the row lingers), so a second confirm before the first
+        // returns would fire a second DELETE that 403s on the gone comment and shows a
+        // misleading re-login prompt. The in-flight guard must drop the repeat.
+        var deletes = 0
+        val gate = CompletableDeferred<Unit>()
+        val vm = ProjectPageViewModel(
+            suspendableRoutingApiClient { url ->
+                when {
+                    url.encodedPath.endsWith("/comments.json") -> """{"comments":[{"id":2,"comment_html":"<p>b</p>"}]}"""
+                    url.encodedPath == "/comments/2.json" -> { deletes++; gate.await(); "" }
+                    else -> """{"project":{"id":7,"name":"Autumn Socks"}}"""
+                }
+            },
+            this,
+        )
+        vm.open(link)
+        awaitChildren(coroutineContext[Job]!!)
+        val comment = ProjectComment(id = 2, commentHtml = "<p>b</p>")
+        vm.deleteComment(comment) // in flight, blocked on the gate
+        vm.deleteComment(comment) // must be ignored while the first is in flight
+        gate.complete(Unit)
+        awaitChildren(coroutineContext[Job]!!)
+        assertEquals(1, deletes)
+        assertEquals(emptyList(), assertIs<ProjectCommentsState.Loaded>(vm.commentsState.value).comments)
     }
 
     @Test
@@ -302,6 +354,32 @@ class ProjectPageViewModelTest {
         vm.deleteComment(ProjectComment(id = 1, commentHtml = "<p>a</p>"))
         awaitChildren(coroutineContext[Job]!!)
         assertEquals(Unit, vm.sessionExpired.first())
+    }
+
+    @Test
+    fun `session expiry from a delete dropped after dismissal does not signal expiry`() = runTest(UnconfinedTestDispatcher()) {
+        val gate = CompletableDeferred<Unit>()
+        val vm = ProjectPageViewModel(
+            suspendableRoutingApiClient { url ->
+                when {
+                    url.encodedPath.endsWith("/comments.json") -> """{"comments":[{"id":1,"comment_html":"<p>a</p>"}]}"""
+                    url.encodedPath == "/comments/1.json" -> {
+                        gate.await()
+                        throw com.autom8ed.fibersocial.auth.SessionExpiredException("expired")
+                    }
+                    else -> """{"project":{"id":7,"name":"Autumn Socks"}}"""
+                }
+            },
+            this,
+        )
+        vm.open(link)
+        awaitChildren(coroutineContext[Job]!!)
+        vm.deleteComment(ProjectComment(id = 1, commentHtml = "<p>a</p>"))
+        vm.dismiss() // supersedes the delete (generation++)
+        gate.complete(Unit) // the now-stale delete throws SessionExpiredException
+        awaitChildren(coroutineContext[Job]!!)
+        // A delete the user already dismissed must not yank them to the login screen.
+        assertEquals(null, withTimeoutOrNull(1_000) { vm.sessionExpired.first() })
     }
 
     @Test
@@ -398,6 +476,32 @@ class ProjectPageViewModelTest {
         postGate.complete(Unit)  // post resolves against a stale generation
         awaitChildren(coroutineContext[Job]!!)
         assertIs<ProjectPageState.Hidden>(vm.state.value)
+    }
+
+    @Test
+    fun `session expiry from a post dropped after dismissal does not signal expiry`() = runTest(UnconfinedTestDispatcher()) {
+        val postGate = CompletableDeferred<Unit>()
+        val vm = ProjectPageViewModel(
+            suspendableRoutingApiClient { url ->
+                when {
+                    url.encodedPath.endsWith("/comments.json") -> """{"comments":[]}"""
+                    url.encodedPath == "/comments/create.json" -> {
+                        postGate.await()
+                        throw com.autom8ed.fibersocial.auth.SessionExpiredException("expired")
+                    }
+                    else -> """{"project":{"id":7,"name":"Autumn Socks"}}"""
+                }
+            },
+            this,
+        )
+        vm.open(link)
+        awaitChildren(coroutineContext[Job]!!)
+        vm.postComment("mine")  // in flight, gated
+        vm.dismiss()            // supersedes the post (generation++)
+        postGate.complete(Unit) // the now-stale post throws SessionExpiredException
+        awaitChildren(coroutineContext[Job]!!)
+        // A post the user already dismissed must not yank them to the login screen.
+        assertEquals(null, withTimeoutOrNull(1_000) { vm.sessionExpired.first() })
     }
 
     @Test

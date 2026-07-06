@@ -794,6 +794,10 @@ class RavelryApiClient(
             httpClient.get("$BASE_URL/projects/$username/$projectId/comments.json") {
                 header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
                 url.parameters.append("sort", "time")
+                // Ravelry paginates comments at page_size=25 (max 100). Only the first
+                // page is fetched, so ask for the max — a project with >100 comments
+                // would still truncate; full pagination is a follow-up.
+                url.parameters.append("page_size", "100")
             }
         }
         return lenientJson.decodeFromString<ProjectCommentsResponse>(raw).comments

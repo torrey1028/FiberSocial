@@ -91,7 +91,13 @@ class FeedAndroidViewModel(app: Application) : AndroidViewModel(app) {
 
     fun load() = feed.load()
 
-    fun reset() = feed.reset()
+    fun reset() {
+        feed.reset()
+        // Dismiss the ViewModel-held project page too: it survives across logout/re-login
+        // on the reused ViewModel, so without this a re-logged-in (possibly different)
+        // user would see the previous session's project page over their feed.
+        projectPage.dismiss()
+    }
 
     fun debugForceSessionExpiry() = feed.forceSessionExpiry()
 

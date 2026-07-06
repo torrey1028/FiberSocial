@@ -207,6 +207,7 @@ fun FeedScreen(
             onPostComment = { viewModel.projectPage.postComment(it) },
             onPostErrorShown = { viewModel.projectPage.acknowledgePostError() },
             onDeleteComment = { viewModel.projectPage.deleteComment(it) },
+            onPostAcknowledged = { viewModel.projectPage.acknowledgePosted() },
         )
         return
     }

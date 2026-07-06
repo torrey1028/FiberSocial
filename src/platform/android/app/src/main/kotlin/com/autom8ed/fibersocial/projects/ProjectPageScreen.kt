@@ -43,6 +43,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -88,6 +89,7 @@ fun ProjectPageScreen(
     pattern: PatternInfo? = null,
     currentUsername: String? = null,
     onDeleteComment: (ProjectComment) -> Unit = {},
+    onPostAcknowledged: () -> Unit = {},
 ) {
     if (state is ProjectPageState.Hidden) return
     val link = when (state) {
@@ -144,6 +146,7 @@ fun ProjectPageScreen(
                 onPostComment = onPostComment,
                 onPostErrorShown = onPostErrorShown,
                 onDeleteComment = onDeleteComment,
+                onPostAcknowledged = onPostAcknowledged,
                 modifier = Modifier.padding(padding),
             )
 
@@ -163,11 +166,14 @@ private fun ProjectContent(
     onPostComment: (String) -> Unit,
     onPostErrorShown: () -> Unit,
     onDeleteComment: (ProjectComment) -> Unit,
+    onPostAcknowledged: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val project = loaded.project
     val uriHandler = LocalUriHandler.current
-    var fullScreenPhoto by remember { mutableStateOf<Int?>(null) }
+    // rememberSaveable so an open full-screen photo survives rotation, matching the
+    // composer text below (which is also saveable).
+    var fullScreenPhoto by rememberSaveable { mutableStateOf<Int?>(null) }
 
     Column(
         modifier = modifier
@@ -242,6 +248,7 @@ private fun ProjectContent(
             onPostComment = onPostComment,
             onPostErrorShown = onPostErrorShown,
             onDeleteComment = onDeleteComment,
+            onPostAcknowledged = onPostAcknowledged,
         )
 
         Spacer(Modifier.height(16.dp))
@@ -320,6 +327,7 @@ private fun CommentsSection(
     onPostComment: (String) -> Unit,
     onPostErrorShown: () -> Unit,
     onDeleteComment: (ProjectComment) -> Unit,
+    onPostAcknowledged: () -> Unit,
 ) {
     Text("Comments", style = MaterialTheme.typography.titleSmall)
     Spacer(Modifier.height(8.dp))
@@ -352,7 +360,12 @@ private fun CommentsSection(
     }
 
     Spacer(Modifier.height(12.dp))
-    CommentComposer(postState = postState, onPost = onPostComment, onErrorShown = onPostErrorShown)
+    CommentComposer(
+        postState = postState,
+        onPost = onPostComment,
+        onErrorShown = onPostErrorShown,
+        onPosted = onPostAcknowledged,
+    )
 }
 
 @Composable
@@ -411,9 +424,19 @@ private fun CommentComposer(
     postState: CommentPostState,
     onPost: (String) -> Unit,
     onErrorShown: () -> Unit,
+    onPosted: () -> Unit,
 ) {
     var text by rememberSaveable { mutableStateOf("") }
     val sending = postState is CommentPostState.Sending
+
+    // Clear the field only once the comment actually posts — not eagerly on tap — so a
+    // failed post keeps the user's text (which CommentPostState.Error documents).
+    LaunchedEffect(postState) {
+        if (postState is CommentPostState.Posted) {
+            text = ""
+            onPosted()
+        }
+    }
 
     Column(modifier = Modifier.fillMaxWidth().imePadding()) {
         if (postState is CommentPostState.Error) {
@@ -441,10 +464,7 @@ private fun CommentComposer(
                 CircularProgressIndicator(modifier = Modifier.size(32.dp).padding(4.dp))
             } else {
                 IconButton(
-                    onClick = {
-                        onPost(text)
-                        text = ""
-                    },
+                    onClick = { onPost(text) },
                     enabled = text.isNotBlank(),
                 ) {
                     Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Post comment")

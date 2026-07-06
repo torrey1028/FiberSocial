@@ -129,6 +129,9 @@ class MainActivity : ComponentActivity() {
                             // LoginScreen flash between the state change and the WebView appearing.
                             LaunchedEffect(feedVm) {
                                 feedVm.sessionExpired.collect {
+                                    // Dismiss the ViewModel-held project page so it can't
+                                    // survive re-login into a different account's session.
+                                    feedVm.projectPage.dismiss()
                                     showWebView = true
                                     authVm.auth.logout()
                                 }

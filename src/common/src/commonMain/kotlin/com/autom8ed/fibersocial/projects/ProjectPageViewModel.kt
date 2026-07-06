@@ -118,6 +118,13 @@ sealed class CommentPostState {
     object Sending : CommentPostState()
 
     /**
+     * The comment posted; the composer clears its text and acknowledges via
+     * [ProjectPageViewModel.acknowledgePosted]. Clearing on this signal (not eagerly on
+     * tap) is what keeps the text if the post instead fails.
+     */
+    object Posted : CommentPostState()
+
+    /**
      * Submission failed; the composer keeps its text so nothing is lost.
      * @property message Human-readable error description.
      */
@@ -162,6 +169,9 @@ class ProjectPageViewModel(
     /** A monotonically increasing token; results from a dismissed page may not surface. */
     private var generation = 0
 
+    /** Comment ids with a delete in flight, to drop a double-tapped repeat delete. */
+    private val deletingIds = mutableSetOf<Long>()
+
     /** Opens the page for [link] and fetches its project (then pattern + comments). */
     fun open(link: ProjectLink) {
         _state.value = ProjectPageState.Loading(link)
@@ -183,8 +193,10 @@ class ProjectPageViewModel(
                 throw e
             } catch (e: SessionExpiredException) {
                 println("FiberSocial: ProjectPageViewModel.open session expired")
-                if (gen == generation) _state.value = ProjectPageState.Hidden
-                _sessionExpired.trySend(Unit)
+                if (gen == generation) {
+                    _state.value = ProjectPageState.Hidden
+                    _sessionExpired.trySend(Unit)
+                }
             } catch (e: Exception) {
                 println("FiberSocial: ProjectPageViewModel.open error: ${e.message}")
                 if (gen == generation) {
@@ -217,8 +229,10 @@ class ProjectPageViewModel(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: SessionExpiredException) {
-                if (gen == generation) _commentsState.value = ProjectCommentsState.Loading
-                _sessionExpired.trySend(Unit)
+                if (gen == generation) {
+                    _commentsState.value = ProjectCommentsState.Loading
+                    _sessionExpired.trySend(Unit)
+                }
             } catch (e: Exception) {
                 println("FiberSocial: ProjectPageViewModel.loadComments($projectId) failed: ${e.message}")
                 if (gen == generation) {
@@ -250,7 +264,7 @@ class ProjectPageViewModel(
                 } else {
                     _commentsState.value = ProjectCommentsState.Loaded(listOf(comment))
                 }
-                _postState.value = CommentPostState.Idle
+                _postState.value = CommentPostState.Posted
             } catch (e: CancellationException) {
                 throw e
             } catch (e: ForbiddenException) {
@@ -259,8 +273,10 @@ class ProjectPageViewModel(
                 if (gen == generation) _postState.value = CommentPostState.Error(COMMENT_PERMISSION_MESSAGE)
             } catch (e: SessionExpiredException) {
                 println("FiberSocial: ProjectPageViewModel.postComment session expired")
-                if (gen == generation) _postState.value = CommentPostState.Idle
-                _sessionExpired.trySend(Unit)
+                if (gen == generation) {
+                    _postState.value = CommentPostState.Idle
+                    _sessionExpired.trySend(Unit)
+                }
             } catch (e: Exception) {
                 println("FiberSocial: ProjectPageViewModel.postComment error: ${e.message}")
                 if (gen == generation) {
@@ -277,6 +293,11 @@ class ProjectPageViewModel(
      * surfaces the re-login prompt; other errors surface their message.
      */
     fun deleteComment(comment: ProjectComment) {
+        // Deletion is pessimistic (the row stays until the server confirms), so a
+        // double-tap could fire two DELETEs for the same id — the second 403s on an
+        // already-gone comment and shows a misleading re-login prompt. Ignore a repeat
+        // while one is in flight for that id.
+        if (!deletingIds.add(comment.id)) return
         val gen = generation
         scope.launch {
             // Failure message set by the catch blocks; applied once, gen-guarded, below —
@@ -297,10 +318,12 @@ class ProjectPageViewModel(
                 failure = COMMENT_PERMISSION_MESSAGE
             } catch (e: SessionExpiredException) {
                 println("FiberSocial: ProjectPageViewModel.deleteComment session expired")
-                _sessionExpired.trySend(Unit)
+                if (gen == generation) _sessionExpired.trySend(Unit)
             } catch (e: Exception) {
                 println("FiberSocial: ProjectPageViewModel.deleteComment error: ${e.message}")
                 failure = e.message ?: "Couldn't delete the comment"
+            } finally {
+                deletingIds.remove(comment.id)
             }
             if (failure != null && gen == generation) _postState.value = CommentPostState.Error(failure)
         }
@@ -309,6 +332,11 @@ class ProjectPageViewModel(
     /** Clears a [CommentPostState.Error] after the UI has shown it. */
     fun acknowledgePostError() {
         if (_postState.value is CommentPostState.Error) _postState.value = CommentPostState.Idle
+    }
+
+    /** Resets [CommentPostState.Posted] to Idle once the composer has cleared its text. */
+    fun acknowledgePosted() {
+        if (_postState.value is CommentPostState.Posted) _postState.value = CommentPostState.Idle
     }
 
     /** Refetches after an [ProjectPageState.Error]. No-op in other states. */

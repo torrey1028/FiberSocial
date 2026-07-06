@@ -1748,6 +1748,8 @@ class RavelryApiClientTest {
         }
         val comments = client.getProjectComments("yarnie", 7L)
         assertEquals("/projects/yarnie/7/comments.json", captured?.encodedPath)
+        // Ask for the max page (Ravelry defaults to 25) so short threads aren't truncated.
+        assertEquals("100", captured?.parameters?.get("page_size"))
         assertEquals(listOf(1L, 2L), comments.map { it.id })
         assertEquals("fan", comments[0].user?.username)
         assertEquals("https://img/f.jpg", comments[0].user?.avatarUrl)
@@ -1814,7 +1816,7 @@ class RavelryApiClientTest {
     }
 
     @Test
-    fun `getPatternInfo parses permalink and author, and accepts the patterns key too`() = runTest {
+    fun `getPatternInfo parses permalink and author and accepts the patterns key too`() = runTest {
         var captured: io.ktor.http.Url? = null
         val client = routingApiClientCapturing(onRequest = { captured = it }) {
             """{"pattern":{"id":42,"name":"Vanilla Socks","permalink":"vanilla-socks",
