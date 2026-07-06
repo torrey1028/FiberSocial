@@ -24,7 +24,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
@@ -62,6 +61,8 @@ import com.autom8ed.fibersocial.feed.models.FeedItem
 import com.autom8ed.fibersocial.feed.models.Post
 import com.autom8ed.fibersocial.ui.Avatar
 import com.autom8ed.fibersocial.profile.UsernameLink
+import com.autom8ed.fibersocial.ui.DeleteConfirmDialog
+import com.autom8ed.fibersocial.ui.MessageComposer
 import com.autom8ed.fibersocial.feed.models.RavelryUser
 import com.autom8ed.fibersocial.feed.models.VoteType
 import com.autom8ed.fibersocial.feed.models.hasVoted
@@ -92,19 +93,11 @@ fun TopicDetailScreen(
 ) {
     var pendingDelete by remember { mutableStateOf<Post?>(null) }
     pendingDelete?.let { post ->
-        AlertDialog(
-            onDismissRequest = { pendingDelete = null },
-            title = { Text("Delete this post?") },
-            text = { Text("This removes your post from the topic for everyone. This can't be undone.") },
-            confirmButton = {
-                TextButton(onClick = {
-                    onDeletePost(post)
-                    pendingDelete = null
-                }) { Text("Delete") }
-            },
-            dismissButton = {
-                TextButton(onClick = { pendingDelete = null }) { Text("Cancel") }
-            },
+        DeleteConfirmDialog(
+            itemLabel = "post",
+            container = "topic",
+            onConfirm = { onDeletePost(post) },
+            onDismiss = { pendingDelete = null },
         )
     }
     if (deleteState is DeleteState.Error) {
@@ -500,58 +493,33 @@ internal fun ReplyComposer(
     )
 
     Surface(tonalElevation = 3.dp) {
-        // imePadding keeps the composer above the on-screen keyboard while typing.
-        Column(
+        MessageComposer(
+            text = text,
+            onTextChange = onTextChange,
+            sending = sending,
+            placeholder = "Write a reply…",
+            sendContentDescription = "Send reply",
+            onSend = { onSend(text) },
+            // imePadding keeps the composer above the on-screen keyboard while typing.
             modifier = Modifier
                 .fillMaxWidth()
                 .imePadding()
                 .padding(horizontal = 12.dp, vertical = 8.dp),
-        ) {
-            if (replyState is ReplyState.Error) {
-                Text(
-                    text = replyState.message.ifBlank { "Couldn't post your reply. Try again." },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.padding(bottom = 4.dp),
-                )
-            }
-            if (attachment is ImageAttachmentState.Error) {
-                Text(
-                    text = attachment.message,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.padding(bottom = 4.dp),
-                )
-            }
-            Row(verticalAlignment = Alignment.Bottom) {
+            errorTexts = listOfNotNull(
+                (replyState as? ReplyState.Error)?.message?.ifBlank { "Couldn't post your reply. Try again." },
+                (attachment as? ImageAttachmentState.Error)?.message,
+            ),
+            // Gated on the upload too: sending mid-upload would post without the image
+            // and the markdown would land in the cleared draft.
+            sendEnabled = text.isNotBlank() && attachment !is ImageAttachmentState.Uploading,
+            leading = {
                 AttachImageButton(
                     attachment = attachment,
                     enabled = !sending,
                     onImagePicked = onImagePicked,
                     onPickFromProjects = onPickFromProjects,
                 )
-                OutlinedTextField(
-                    value = text,
-                    onValueChange = onTextChange,
-                    placeholder = { Text("Write a reply…") },
-                    enabled = !sending,
-                    modifier = Modifier.weight(1f),
-                    maxLines = 4,
-                )
-                Spacer(Modifier.width(8.dp))
-                if (sending) {
-                    CircularProgressIndicator(modifier = Modifier.size(32.dp).padding(4.dp))
-                } else {
-                    IconButton(
-                        onClick = { onSend(text) },
-                        // Gated on the upload too: sending mid-upload would post without
-                        // the image and the markdown would land in the cleared draft.
-                        enabled = text.isNotBlank() && attachment !is ImageAttachmentState.Uploading,
-                    ) {
-                        Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send reply")
-                    }
-                }
-            }
-        }
+            },
+        )
     }
 }

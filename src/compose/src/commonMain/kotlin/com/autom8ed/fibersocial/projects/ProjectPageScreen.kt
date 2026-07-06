@@ -29,10 +29,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -40,7 +38,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -71,6 +68,8 @@ import com.autom8ed.fibersocial.feed.html.HtmlPostParser
 import com.autom8ed.fibersocial.feed.html.MarkdownPostParser
 import com.autom8ed.fibersocial.feed.relativeTime
 import com.autom8ed.fibersocial.ui.Avatar
+import com.autom8ed.fibersocial.ui.DeleteConfirmDialog
+import com.autom8ed.fibersocial.ui.MessageComposer
 
 /**
  * In-app page for a Ravelry project (issue #103): opened when a
@@ -375,17 +374,11 @@ private fun CommentsSection(
 private fun CommentRow(comment: ProjectComment, onDelete: (() -> Unit)?) {
     var confirming by remember { mutableStateOf(false) }
     if (confirming) {
-        AlertDialog(
-            onDismissRequest = { confirming = false },
-            title = { Text("Delete this comment?") },
-            text = { Text("This removes your comment from the project for everyone. This can't be undone.") },
-            confirmButton = {
-                TextButton(onClick = {
-                    confirming = false
-                    onDelete?.invoke()
-                }) { Text("Delete") }
-            },
-            dismissButton = { TextButton(onClick = { confirming = false }) { Text("Cancel") } },
+        DeleteConfirmDialog(
+            itemLabel = "comment",
+            container = "project",
+            onConfirm = { onDelete?.invoke() },
+            onDismiss = { confirming = false },
         )
     }
     Row(verticalAlignment = Alignment.Top) {
@@ -441,40 +434,19 @@ private fun CommentComposer(
         }
     }
 
-    Column(modifier = Modifier.fillMaxWidth().imePadding()) {
-        if (postState is CommentPostState.Error) {
-            Text(
-                text = postState.message,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error,
-                modifier = Modifier.padding(bottom = 4.dp),
-            )
-        }
-        Row(verticalAlignment = Alignment.Bottom) {
-            OutlinedTextField(
-                value = text,
-                onValueChange = {
-                    text = it
-                    if (postState is CommentPostState.Error) onErrorShown()
-                },
-                placeholder = { Text("Add a comment…") },
-                enabled = !sending,
-                modifier = Modifier.weight(1f),
-                maxLines = 4,
-            )
-            Spacer(Modifier.width(8.dp))
-            if (sending) {
-                CircularProgressIndicator(modifier = Modifier.size(32.dp).padding(4.dp))
-            } else {
-                IconButton(
-                    onClick = { onPost(text) },
-                    enabled = text.isNotBlank(),
-                ) {
-                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Post comment")
-                }
-            }
-        }
-    }
+    MessageComposer(
+        text = text,
+        onTextChange = {
+            text = it
+            if (postState is CommentPostState.Error) onErrorShown()
+        },
+        sending = sending,
+        placeholder = "Add a comment…",
+        sendContentDescription = "Post comment",
+        onSend = { onPost(text) },
+        modifier = Modifier.fillMaxWidth().imePadding(),
+        errorTexts = listOfNotNull((postState as? CommentPostState.Error)?.message),
+    )
 }
 
 /**
