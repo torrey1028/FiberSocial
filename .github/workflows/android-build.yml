@@ -1,8 +1,11 @@
 name: Android Build
 
 on:
+  # `push` only on main (post-merge verification). Branch CI comes from the
+  # pull_request trigger below. Listing feat/** here too would fire both events
+  # for the same commit on every feat PR, building twice.
   push:
-    branches: ["main", "feat/**"]
+    branches: ["main"]
   pull_request:
     branches: ["main"]
 
