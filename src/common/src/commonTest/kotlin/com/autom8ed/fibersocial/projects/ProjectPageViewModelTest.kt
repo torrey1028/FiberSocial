@@ -387,7 +387,6 @@ class ProjectPageViewModelTest {
     @Test
     fun `comments that load after a re-open do not attach to the new page`() = runTest(UnconfinedTestDispatcher()) {
         val gate = CompletableDeferred<Unit>()
-        var opens = 0
         val vm = ProjectPageViewModel(
             suspendableRoutingApiClient { url ->
                 when {
@@ -395,7 +394,13 @@ class ProjectPageViewModelTest {
                         gate.await()
                         """{"comments":[{"id":1,"comment_html":"<p>stale</p>"}]}"""
                     }
-                    else -> { opens++; """{"project":{"id":${opens},"name":"P$opens"}}""" }
+                    // Name the project after its own permalink — deterministic regardless of
+                    // which open's project resolves first (the generation guard, not resolve
+                    // order, decides the winner; a mutable counter would race).
+                    else -> {
+                        val permalink = url.encodedPath.substringAfterLast('/').removeSuffix(".json")
+                        """{"project":{"id":${permalink.length},"name":"$permalink"}}"""
+                    }
                 }
             },
             this,
@@ -406,7 +411,7 @@ class ProjectPageViewModelTest {
         awaitChildren(coroutineContext[Job]!!)
         // The gen-2 comments won (its own gated load); gen-1's stale result was dropped.
         assertIs<ProjectCommentsState.Loaded>(vm.commentsState.value)
-        assertEquals("P2", assertIs<ProjectPageState.Loaded>(vm.state.value).project.name)
+        assertEquals("hat", assertIs<ProjectPageState.Loaded>(vm.state.value).project.name)
     }
 
     @Test
