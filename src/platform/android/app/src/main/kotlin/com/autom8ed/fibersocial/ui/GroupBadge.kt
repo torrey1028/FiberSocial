@@ -47,10 +47,22 @@ fun GroupBadge(group: Group, size: Dp, modifier: Modifier = Modifier) {
                 .testTag("GroupBadgeMonogram"),
         ) {
             Text(
-                text = group.name.trim().take(1).uppercase().ifEmpty { "#" },
+                text = monogramOf(group.name),
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.onSecondaryContainer,
             )
         }
     }
+}
+
+/**
+ * First user-perceived character of [name], uppercased, for the monogram tile — or "#"
+ * when the name is blank. Takes a whole Unicode codepoint, not a single UTF-16 char, so
+ * an emoji-prefixed group name (common on Ravelry) renders the emoji rather than a lone
+ * surrogate that draws as a tofu box.
+ */
+private fun monogramOf(name: String): String {
+    val trimmed = name.trim()
+    if (trimmed.isEmpty()) return "#"
+    return String(Character.toChars(trimmed.codePointAt(0))).uppercase()
 }

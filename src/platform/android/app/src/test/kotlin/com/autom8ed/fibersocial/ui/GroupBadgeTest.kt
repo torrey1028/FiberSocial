@@ -48,4 +48,14 @@ class GroupBadgeTest {
         }
         compose.onNodeWithText("#").assertIsDisplayed()
     }
+
+    @Test
+    fun `an emoji-prefixed name monograms to the whole emoji, not a broken surrogate`() {
+        // "🧶" is an astral-plane codepoint (a surrogate pair); take(1) would keep only the
+        // high surrogate and draw a tofu box. The monogram must be the whole codepoint.
+        compose.setContent {
+            GroupBadge(group = group(name = "🧶 Yarn Lovers"), size = 28.dp)
+        }
+        compose.onNodeWithText("🧶").assertIsDisplayed()
+    }
 }

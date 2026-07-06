@@ -57,6 +57,21 @@ class RavelryApiClientTest {
     }
 
     @Test
+    fun `getUserGroups carries badge_url through to Group badgeUrl`() = runTest {
+        // Guards the badge_url field name end-to-end (issue #167 drawer badge): the search
+        // response carries it and it must survive deserialization to Group.badgeUrl.
+        val client = routingApiClient { path ->
+            when {
+                path.contains("memberships") -> MEMBERSHIPS_HTML
+                path.contains("groups/search") ->
+                    """{"groups":[{"id":10,"name":"KAL Hub","permalink":"kal-hub","forum_id":42,"badge_url":"https://img.example/kal.png"}]}"""
+                else -> """{"groups":[]}"""
+            }
+        }
+        assertEquals("https://img.example/kal.png", client.getUserGroups("yarnie").single().badgeUrl)
+    }
+
+    @Test
     fun `getUserGroups returns empty list when memberships page has no group links`() = runTest {
         val client = routingApiClient { path ->
             when {
