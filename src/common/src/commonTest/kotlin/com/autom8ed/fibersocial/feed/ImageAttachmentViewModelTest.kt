@@ -12,6 +12,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -111,11 +112,42 @@ class ImageAttachmentViewModelTest {
     }
 
     @Test
-    fun `reportUnreadable surfaces a read error`() = runTest(UnconfinedTestDispatcher()) {
+    fun `an unreadable image (null from the loader) surfaces a read error`() = runTest(UnconfinedTestDispatcher()) {
         val vm = ImageAttachmentViewModel(errorApiClient(), this)
-        vm.reportUnreadable()
-        assertIs<ImageAttachmentState.Error>(vm.state.value)
+        vm.attach { null }
+        awaitChildren(coroutineContext[Job]!!)
+        val state = assertIs<ImageAttachmentState.Error>(vm.state.value)
+        assertTrue("read" in state.message, "unexpected message: ${state.message}")
     }
+
+    @Test
+    fun `state is Uploading while the image is still being loaded`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = ImageAttachmentViewModel(uploadFlowApiClient(), this)
+        val gate = CompletableDeferred<UploadableImage?>()
+        vm.attach { gate.await() }
+        // The spinner must show (and double-picks be ignored) from the tap, not only
+        // once the byte read finishes.
+        assertIs<ImageAttachmentState.Uploading>(vm.state.value)
+        gate.complete(UploadableImage("photo.jpg", "image/jpeg", byteArrayOf(1)))
+        awaitChildren(coroutineContext[Job]!!)
+        assertIs<ImageAttachmentState.Ready>(vm.state.value)
+    }
+
+    @Test
+    fun `reset cancels an in-flight upload so its result cannot land in a later draft`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val vm = ImageAttachmentViewModel(uploadFlowApiClient(), this)
+            val gate = CompletableDeferred<UploadableImage?>()
+            vm.attach { gate.await() }
+            assertIs<ImageAttachmentState.Uploading>(vm.state.value)
+            vm.reset()
+            assertIs<ImageAttachmentState.Idle>(vm.state.value)
+            // Even if the load completes afterwards, the cancelled upload must not
+            // deliver a Ready state.
+            gate.complete(UploadableImage("photo.jpg", "image/jpeg", byteArrayOf(1)))
+            awaitChildren(coroutineContext[Job]!!)
+            assertIs<ImageAttachmentState.Idle>(vm.state.value)
+        }
 
     @Test
     fun `appendImageMarkdown starts a new paragraph and handles a blank draft`() {

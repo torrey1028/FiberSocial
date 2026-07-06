@@ -222,6 +222,31 @@ class NewTopicScreenTest {
     }
 
     @Test
+    fun `Post is disabled while an image upload is in flight`() {
+        var attachment by mutableStateOf<ImageAttachmentState>(ImageAttachmentState.Idle)
+        compose.setContent {
+            NewTopicScreen(
+                groups = listOf(kalHub),
+                initialGroup = kalHub,
+                state = NewTopicState.Idle,
+                onBack = {},
+                onPost = { _, _, _, _ -> },
+                onCreated = { _, _ -> },
+                attachment = attachment,
+            )
+        }
+        compose.onNodeWithText("Title").performTextInput("Show us your WIPs")
+        compose.onNodeWithText("Your post").performTextInput("Photos please!")
+        compose.onNodeWithText("Post").assertIsEnabled()
+        // Posting mid-upload would create the topic without the image.
+        compose.runOnIdle { attachment = ImageAttachmentState.Uploading }
+        compose.onNodeWithText("Post").assertIsNotEnabled()
+        compose.runOnIdle { attachment = ImageAttachmentState.Ready("![](/attached/me/1.jpg)") }
+        compose.waitForIdle()
+        compose.onNodeWithText("Post").assertIsEnabled()
+    }
+
+    @Test
     fun `attachment error message is shown and the fields are kept`() {
         var attachment by mutableStateOf<ImageAttachmentState>(ImageAttachmentState.Idle)
         compose.setContent {

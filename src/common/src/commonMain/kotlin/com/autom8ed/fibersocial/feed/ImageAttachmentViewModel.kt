@@ -4,6 +4,7 @@ import com.autom8ed.fibersocial.auth.ForbiddenException
 import com.autom8ed.fibersocial.auth.SessionExpiredException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -37,14 +38,23 @@ sealed class ImageAttachmentState {
 }
 
 /**
+ * An image loaded from the device, ready to upload.
+ *
+ * @property fileName Display name of the picked file, sent as the multipart filename.
+ * @property contentType MIME type of the image.
+ * @property bytes Raw image data.
+ */
+class UploadableImage(val fileName: String, val contentType: String, val bytes: ByteArray)
+
+/**
  * Drives one composer's attach-image flow: uploads picked image bytes via
  * [RavelryApiClient.uploadForumImage] and exposes the resulting markdown for the
  * composer to insert into its draft.
  *
  * Each composer (new topic, reply) gets its own instance so an upload for one can
  * never deliver its markdown into the other's draft. The host screen calls [reset]
- * when the composer opens or closes so a result that lands after navigating away
- * isn't inserted into a later draft.
+ * when the composer opens or closes; that cancels any in-flight upload, so a result
+ * belonging to an abandoned draft can never be inserted into a later one.
  *
  * @param apiClient Used to upload the image and create the attachment.
  * @param scope Coroutine scope tied to the host ViewModel's lifecycle.
@@ -55,6 +65,7 @@ class ImageAttachmentViewModel(
 ) {
     private val _state = MutableStateFlow<ImageAttachmentState>(ImageAttachmentState.Idle)
     private val _sessionExpired = Channel<Unit>(Channel.BUFFERED)
+    private var uploadJob: Job? = null
 
     /** Observable state of the current attachment upload. */
     val state: StateFlow<ImageAttachmentState> = _state.asStateFlow()
@@ -65,46 +76,54 @@ class ImageAttachmentViewModel(
      */
     val sessionExpired: Flow<Unit> = _sessionExpired.receiveAsFlow()
 
+    /** Uploads an already-loaded image; see [attach] with a loader for the full contract. */
+    fun attach(fileName: String, contentType: String, bytes: ByteArray) =
+        attach { UploadableImage(fileName, contentType, bytes) }
+
     /**
-     * Uploads [bytes] as an image attachment. Double-submits are ignored while an upload
-     * is in flight. Oversized images are rejected locally — Ravelry caps an upload POST
-     * at 50 MB and would answer 413 anyway. A missing Extras subscription (the server's
-     * 403 on `extras/create_attachment`) surfaces as a self-explanatory [ImageAttachmentState.Error].
+     * Loads an image via [loadImage] and uploads it as an attachment. State flips to
+     * [ImageAttachmentState.Uploading] immediately — before the (possibly slow) load —
+     * so the UI shows progress from the tap and a second pick made during the load is
+     * ignored like any other double-submit, not silently dropped mid-flow. A `null`
+     * from [loadImage] reports an unreadable image. Oversized images are rejected
+     * locally — Ravelry caps an upload POST at 50 MB and would answer 413 anyway.
+     * A missing Extras subscription (the server's 403 on `extras/create_attachment`)
+     * surfaces as a self-explanatory [ImageAttachmentState.Error].
      */
-    fun attach(fileName: String, contentType: String, bytes: ByteArray) {
+    fun attach(loadImage: suspend () -> UploadableImage?) {
         if (_state.value is ImageAttachmentState.Uploading) return
-        if (bytes.size > MAX_UPLOAD_BYTES) {
-            _state.value = ImageAttachmentState.Error("That image is larger than Ravelry's 50 MB upload limit.")
-            return
-        }
         _state.value = ImageAttachmentState.Uploading
-        scope.launch {
-            try {
-                val imagePath = apiClient.uploadForumImage(fileName, contentType, bytes)
-                println("FiberSocial: ImageAttachmentViewModel uploaded $fileName -> $imagePath")
-                _state.value = ImageAttachmentState.Ready("![]($imagePath)")
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: SessionExpiredException) {
-                println("FiberSocial: ImageAttachmentViewModel.attach session expired")
-                _state.value = ImageAttachmentState.Idle
-                _sessionExpired.trySend(Unit)
-            } catch (e: ForbiddenException) {
-                // Attachment hosting is a Ravelry Extras feature; the API answers 403
-                // for accounts without the subscription.
-                println("FiberSocial: ImageAttachmentViewModel.attach forbidden: ${e.message}")
-                _state.value = ImageAttachmentState.Error(EXTRAS_REQUIRED_MESSAGE)
-            } catch (e: Exception) {
-                println("FiberSocial: ImageAttachmentViewModel.attach error: ${e.message}")
-                _state.value = ImageAttachmentState.Error(e.message ?: "Failed to upload the image")
+        uploadJob = scope.launch {
+            val image = loadImage()
+            when {
+                image == null ->
+                    _state.value = ImageAttachmentState.Error("Couldn't read that image from your device.")
+                image.bytes.size > MAX_UPLOAD_BYTES ->
+                    _state.value = ImageAttachmentState.Error("That image is larger than Ravelry's 50 MB upload limit.")
+                else -> upload(image)
             }
         }
     }
 
-    /** Reports a picked image that couldn't be read from the device (no upload attempted). */
-    fun reportUnreadable() {
-        if (_state.value !is ImageAttachmentState.Uploading) {
-            _state.value = ImageAttachmentState.Error("Couldn't read that image from your device.")
+    private suspend fun upload(image: UploadableImage) {
+        try {
+            val imagePath = apiClient.uploadForumImage(image.fileName, image.contentType, image.bytes)
+            println("FiberSocial: ImageAttachmentViewModel uploaded ${image.fileName} -> $imagePath")
+            _state.value = ImageAttachmentState.Ready("![]($imagePath)")
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: SessionExpiredException) {
+            println("FiberSocial: ImageAttachmentViewModel.attach session expired")
+            _state.value = ImageAttachmentState.Idle
+            _sessionExpired.trySend(Unit)
+        } catch (e: ForbiddenException) {
+            // Attachment hosting is a Ravelry Extras feature; the API answers 403
+            // for accounts without the subscription.
+            println("FiberSocial: ImageAttachmentViewModel.attach forbidden: ${e.message}")
+            _state.value = ImageAttachmentState.Error(EXTRAS_REQUIRED_MESSAGE)
+        } catch (e: Exception) {
+            println("FiberSocial: ImageAttachmentViewModel.attach error: ${e.message}")
+            _state.value = ImageAttachmentState.Error(e.message ?: "Failed to upload the image")
         }
     }
 
@@ -114,12 +133,15 @@ class ImageAttachmentViewModel(
     }
 
     /**
-     * Clears a stale [ImageAttachmentState.Ready] or [ImageAttachmentState.Error] when the
-     * composer opens or closes. No-op mid-upload: the in-flight result still needs to land
-     * somewhere (and [attach] ignores submits while Uploading).
+     * Clears the flow when the composer opens or closes: cancels any in-flight upload
+     * and returns to [ImageAttachmentState.Idle]. Cancelling (rather than letting the
+     * upload land) is what guarantees a result belonging to an abandoned draft can
+     * never be inserted into a different draft later.
      */
     fun reset() {
-        if (_state.value !is ImageAttachmentState.Uploading) _state.value = ImageAttachmentState.Idle
+        uploadJob?.cancel()
+        uploadJob = null
+        _state.value = ImageAttachmentState.Idle
     }
 
     companion object {

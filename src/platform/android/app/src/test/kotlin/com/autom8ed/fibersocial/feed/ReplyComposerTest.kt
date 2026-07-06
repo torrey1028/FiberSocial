@@ -82,6 +82,25 @@ class ReplyComposerTest {
     }
 
     @Test
+    fun `send is disabled while an image upload is in flight`() {
+        var attachment by mutableStateOf<ImageAttachmentState>(ImageAttachmentState.Idle)
+        compose.setContent {
+            StatefulReplyComposer(
+                replyState = ReplyState.Idle,
+                onSend = {},
+                onSent = {},
+                attachment = attachment,
+            )
+        }
+        compose.onNodeWithText("Write a reply…").performTextInput("look at my socks")
+        compose.onNodeWithContentDescription("Send reply").assertIsEnabled()
+        // Sending mid-upload would post without the image and strand its markdown
+        // in the cleared draft.
+        compose.runOnIdle { attachment = ImageAttachmentState.Uploading }
+        compose.onNodeWithContentDescription("Send reply").assertIsNotEnabled()
+    }
+
+    @Test
     fun `Ready attachment appends its markdown to the draft and acknowledges`() {
         var inserted = 0
         var attachment by mutableStateOf<ImageAttachmentState>(ImageAttachmentState.Idle)

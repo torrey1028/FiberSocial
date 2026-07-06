@@ -73,21 +73,10 @@ class FeedAndroidViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** Reads the picked image behind [uri] and uploads it for the new-topic composer. */
-    fun attachNewTopicImage(uri: Uri) = attachImage(uri, newTopicImage)
+    fun attachNewTopicImage(uri: Uri) = newTopicImage.attach { readImageForUpload(getApplication(), uri) }
 
     /** Reads the picked image behind [uri] and uploads it for the reply composer. */
-    fun attachReplyImage(uri: Uri) = attachImage(uri, replyImage)
-
-    private fun attachImage(uri: Uri, target: ImageAttachmentViewModel) {
-        viewModelScope.launch {
-            val image = readImageForUpload(getApplication(), uri)
-            if (image == null) {
-                target.reportUnreadable()
-            } else {
-                target.attach(image.fileName, image.contentType, image.bytes)
-            }
-        }
-    }
+    fun attachReplyImage(uri: Uri) = replyImage.attach { readImageForUpload(getApplication(), uri) }
 
     fun load() = feed.load()
 

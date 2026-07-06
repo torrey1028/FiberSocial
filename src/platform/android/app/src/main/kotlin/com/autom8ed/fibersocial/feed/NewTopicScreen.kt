@@ -73,12 +73,11 @@ fun NewTopicScreen(
     // still observing it).
     BackHandler(enabled = !sending, onBack = onBack)
 
-    LaunchedEffect(attachment) {
-        if (attachment is ImageAttachmentState.Ready) {
-            body = appendImageMarkdown(body, attachment.markdown)
-            onAttachmentInserted()
-        }
-    }
+    InsertAttachmentEffect(
+        attachment = attachment,
+        onInsert = { body = appendImageMarkdown(body, it) },
+        onInserted = onAttachmentInserted,
+    )
 
     LaunchedEffect(state) {
         if (state is NewTopicState.Created) {
@@ -105,7 +104,11 @@ fun NewTopicScreen(
                     } else {
                         TextButton(
                             onClick = { group?.let { onPost(it, title, body, summary) } },
-                            enabled = group != null && title.isNotBlank() && body.isNotBlank(),
+                            // Gated on the upload too: posting mid-upload would create the
+                            // topic without the image, and the markdown would land in a
+                            // draft that no longer exists.
+                            enabled = group != null && title.isNotBlank() && body.isNotBlank() &&
+                                attachment !is ImageAttachmentState.Uploading,
                         ) { Text("Post") }
                     }
                 },

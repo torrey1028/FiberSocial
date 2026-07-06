@@ -1476,14 +1476,16 @@ class RavelryApiClientTest {
      */
     private fun uploadApiClient(
         uploadsJson: String = """{"uploads":{"file0":{"image_id":16}}}""",
+        tokenStatus: HttpStatusCode = HttpStatusCode.OK,
         attachmentStatus: HttpStatusCode = HttpStatusCode.OK,
+        attachmentBody: String = """{"image_path":"/attached/yarnie/16.jpg"}""",
         capture: MutableMap<String, HttpRequestData> = mutableMapOf(),
     ): RavelryApiClient {
         val engine = MockEngine { request ->
             capture[request.url.encodedPath] = request
             when (request.url.encodedPath) {
                 "/upload/request_token.json" -> respond(
-                    """{"upload_token":"tok-abc"}""", HttpStatusCode.OK,
+                    """{"upload_token":"tok-abc"}""", tokenStatus,
                     headersOf("Content-Type", ContentType.Application.Json.toString()),
                 )
                 "/upload/image.json" -> respond(
@@ -1491,7 +1493,7 @@ class RavelryApiClientTest {
                     headersOf("Content-Type", ContentType.Application.Json.toString()),
                 )
                 "/extras/create_attachment.json" -> respond(
-                    """{"image_path":"/attached/yarnie/16.jpg"}""", attachmentStatus,
+                    attachmentBody, attachmentStatus,
                     headersOf("Content-Type", ContentType.Application.Json.toString()),
                 )
                 else -> error("Unexpected request: ${request.url}")
@@ -1563,6 +1565,42 @@ class RavelryApiClientTest {
         uploadApiClient(capture = capture).uploadForumImage("""my "best" photo.jpg""", "image/jpeg", byteArrayOf(1))
         val multipart = capture.getValue("/upload/image.json").body.toByteArray().decodeToString()
         assertTrue("filename=\"my best photo.jpg\"" in multipart, "quotes not stripped: $multipart")
+    }
+
+    @Test
+    fun `uploadForumImage strips control characters and backslashes from the filename`() = runTest {
+        // A hostile provider's DISPLAY_NAME with CR/LF would make Ktor's header
+        // validation throw before any request is made; backslashes would escape the
+        // quoted header parameter.
+        val capture = mutableMapOf<String, HttpRequestData>()
+        uploadApiClient(capture = capture).uploadForumImage("bad\r\nname\\photo.jpg", "image/jpeg", byteArrayOf(1))
+        val multipart = capture.getValue("/upload/image.json").body.toByteArray().decodeToString()
+        assertTrue("filename=\"badnamephoto.jpg\"" in multipart, "control chars not stripped: $multipart")
+    }
+
+    @Test
+    fun `uploadForumImage does not report a request_token 403 as ForbiddenException`() = runTest {
+        // Only create_attachment's 403 means "no Extras subscription"; a 403 on the
+        // token request must not be mapped to the Extras upsell message by callers.
+        val client = uploadApiClient(tokenStatus = HttpStatusCode.Forbidden)
+        val e = assertFailsWith<IllegalStateException> {
+            client.uploadForumImage("p.jpg", "image/jpeg", byteArrayOf(1))
+        }
+        assertTrue("upload token" in e.message.orEmpty(), "unexpected message: ${e.message}")
+    }
+
+    @Test
+    fun `uploadForumImage turns a garbage create_attachment body into a readable error`() = runTest {
+        // authenticatedRequest passes non-401/403 error bodies through; the decode
+        // failure must not leak raw SerializationException text into the UI.
+        val client = uploadApiClient(
+            attachmentStatus = HttpStatusCode.InternalServerError,
+            attachmentBody = "<html>Server Error</html>",
+        )
+        val e = assertFailsWith<IllegalStateException> {
+            client.uploadForumImage("p.jpg", "image/jpeg", byteArrayOf(1))
+        }
+        assertTrue("Ravelry" in e.message.orEmpty(), "unexpected message: ${e.message}")
     }
 }
 

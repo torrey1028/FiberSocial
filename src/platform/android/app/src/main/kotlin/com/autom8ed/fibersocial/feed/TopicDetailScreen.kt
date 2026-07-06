@@ -485,12 +485,11 @@ internal fun ReplyComposer(
         }
     }
 
-    LaunchedEffect(attachment) {
-        if (attachment is ImageAttachmentState.Ready) {
-            onTextChange(appendImageMarkdown(text, attachment.markdown))
-            onAttachmentInserted()
-        }
-    }
+    InsertAttachmentEffect(
+        attachment = attachment,
+        onInsert = { onTextChange(appendImageMarkdown(text, it)) },
+        onInserted = onAttachmentInserted,
+    )
 
     Surface(tonalElevation = 3.dp) {
         // imePadding keeps the composer above the on-screen keyboard while typing.
@@ -536,7 +535,9 @@ internal fun ReplyComposer(
                 } else {
                     IconButton(
                         onClick = { onSend(text) },
-                        enabled = text.isNotBlank(),
+                        // Gated on the upload too: sending mid-upload would post without
+                        // the image and the markdown would land in the cleared draft.
+                        enabled = text.isNotBlank() && attachment !is ImageAttachmentState.Uploading,
                     ) {
                         Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send reply")
                     }

@@ -746,12 +746,26 @@ class RavelryApiClient(
      *   attachment hosting is an Extras feature, per the `extras/create_attachment` docs.
      */
     suspend fun uploadForumImage(fileName: String, contentType: String, bytes: ByteArray): String {
-        val tokenRaw = authenticatedRequest {
-            httpClient.post("$BASE_URL/upload/request_token.json") {
-                header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
+        val tokenRaw = try {
+            authenticatedRequest {
+                httpClient.post("$BASE_URL/upload/request_token.json") {
+                    header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
+                }
             }
+        } catch (e: ForbiddenException) {
+            // Only create_attachment's 403 means "no Extras subscription" (which callers
+            // map to an upsell message); a 403 here is some other authorization problem
+            // and must not masquerade as one.
+            error("Ravelry denied the upload token request (HTTP 403).")
         }
-        val uploadToken = lenientJson.decodeFromString<UploadTokenResponse>(tokenRaw).uploadToken
+        val uploadToken = runCatching { lenientJson.decodeFromString<UploadTokenResponse>(tokenRaw).uploadToken }
+            .getOrElse {
+                // authenticatedRequest passes non-401/403 error bodies (500s, HTML) through;
+                // decode failures here would otherwise surface raw SerializationException
+                // text in the composer.
+                println("FiberSocial: uploadForumImage unexpected token response: ${tokenRaw.take(200)}")
+                error("Unexpected Ravelry response requesting an upload token.")
+            }
 
         // Deliberately NOT via authenticatedRequest: the docs state upload/image takes no
         // OAuth headers — the one-time upload_token alone authorizes it — so a 401/403
@@ -766,9 +780,12 @@ class RavelryApiClient(
                             bytes,
                             Headers.build {
                                 append(HttpHeaders.ContentType, contentType)
-                                // Quotes stripped rather than escaped: a quote inside a
-                                // filename would terminate the header parameter early.
-                                append(HttpHeaders.ContentDisposition, "filename=\"${fileName.replace("\"", "")}\"")
+                                // Stripped rather than escaped: a quote or backslash inside a
+                                // filename would terminate/escape the header parameter early,
+                                // and control characters (CR/LF from a hostile provider's
+                                // DISPLAY_NAME) make Ktor's header validation throw.
+                                val safeName = fileName.filter { it.code >= 0x20 && it != '"' && it != '\\' }
+                                append(HttpHeaders.ContentDisposition, "filename=\"$safeName\"")
                             },
                         )
                     },
@@ -786,7 +803,11 @@ class RavelryApiClient(
                 setBody(FormDataContent(Parameters.build { append("image_id", imageId.toString()) }))
             }
         }
-        return lenientJson.decodeFromString<AttachmentResponse>(attachmentRaw).imagePath
+        return runCatching { lenientJson.decodeFromString<AttachmentResponse>(attachmentRaw).imagePath }
+            .getOrElse {
+                println("FiberSocial: uploadForumImage unexpected attachment response: ${attachmentRaw.take(200)}")
+                error("Unexpected Ravelry response creating the attachment.")
+            }
     }
 
     /**

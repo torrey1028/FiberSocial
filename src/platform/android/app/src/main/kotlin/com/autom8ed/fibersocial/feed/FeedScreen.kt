@@ -138,6 +138,10 @@ fun FeedScreen(
             eventsGroup = null
             composingTopic = false
             sendingFeedback = false
+            // This path closes both composers without going through their onBack
+            // handlers, so their attachment flows must be reset here too.
+            viewModel.replyImage.reset()
+            viewModel.newTopicImage.reset()
             viewModel.eventDetail.load(deepLinkEventPermalink)
             selectedEventPermalink = deepLinkEventPermalink
             onDeepLinkConsumed()
@@ -461,6 +465,10 @@ fun FeedScreen(
                         loadingMore = s.loadingMore,
                         onLoadMore = { viewModel.feed.loadMore() },
                         onTopicClick = { topic ->
+                            // Reset on open as well as on back, so this topic's reply
+                            // composer starts from a clean attachment flow no matter how
+                            // the previous one was left.
+                            viewModel.replyImage.reset()
                             viewModel.topicDetail.load(topic.id)
                             selectedTopic = topic
                         },
@@ -477,6 +485,10 @@ fun FeedScreen(
                         loadingMore = s.stale.loadingMore,
                         onLoadMore = { viewModel.feed.loadMore() },
                         onTopicClick = { topic ->
+                            // Reset on open as well as on back, so this topic's reply
+                            // composer starts from a clean attachment flow no matter how
+                            // the previous one was left.
+                            viewModel.replyImage.reset()
                             viewModel.topicDetail.load(topic.id)
                             selectedTopic = topic
                         },
