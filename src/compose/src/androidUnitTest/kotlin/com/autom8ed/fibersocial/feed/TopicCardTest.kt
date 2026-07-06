@@ -3,7 +3,6 @@ package com.autom8ed.fibersocial.feed
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
-import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import com.autom8ed.fibersocial.feed.models.FeedItem
 import com.autom8ed.fibersocial.feed.models.RavelryUser
@@ -13,6 +12,10 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
+/**
+ * The forum-style card (issue #185): title, "Started by @starter", the author-written
+ * summary rendered in full (omitted when absent), the post count, and an unread badge.
+ */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [33])
 class TopicCardTest {
@@ -21,153 +24,93 @@ class TopicCardTest {
     val compose = createAndroidComposeRule<ComponentActivity>()
 
     private fun item(
-        bodyPreview: String = "",
+        title: String = "Show us your WIPs",
+        author: String = "yarnie",
         bodySummary: String = "",
         bodySummaryHtml: String = "",
-        latestReplyHtml: String? = null,
-        latestReplyPreview: String? = null,
-        openingPostBody: String = "",
-        openingPostHtml: String = "",
+        postCount: Int = 3,
+        unreadCount: Int = 0,
+        sticky: Boolean = false,
     ) = FeedItem(
         id = 1L,
         groupId = 10L,
         groupName = "KAL Hub",
         lastPostAt = null,
-        author = RavelryUser(username = "yarnie"),
-        title = "Show us your WIPs",
-        bodyPreview = bodyPreview,
+        author = RavelryUser(username = author),
+        title = title,
         bodySummary = bodySummary,
         bodySummaryHtml = bodySummaryHtml,
-        replyCount = 3,
-        latestReplyAuthor = latestReplyHtml?.let { RavelryUser(username = "replier") },
-        latestReplyPreview = latestReplyPreview,
-        latestReplyHtml = latestReplyHtml,
-        openingPostBody = openingPostBody,
-        openingPostHtml = openingPostHtml,
+        postCount = postCount,
+        unreadCount = unreadCount,
+        sticky = sticky,
     )
+
+    @Test
+    fun `shows the title and who started the topic`() {
+        compose.setContent { TopicCard(item = item(author = "yarnie"), onClick = {}) }
+        compose.onNodeWithText("Show us your WIPs").assertIsDisplayed()
+        compose.onNodeWithText("Started by @yarnie").assertIsDisplayed()
+    }
 
     @Test
     fun `renders the summary's formatting instead of leaking markup`() {
         compose.setContent {
-            TopicCard(
-                item = item(bodySummary = "Cast on **all** the *stitches*", bodyPreview = "unused"),
-                onClick = {},
-            )
+            TopicCard(item = item(bodySummary = "Cast on **all** the *stitches*"), onClick = {})
         }
         // Styled, not stripped: the text appears without any markdown markers.
         compose.onNodeWithText("Cast on all the stitches").assertIsDisplayed()
     }
 
     @Test
-    fun `prefers the latest reply's rendered body`() {
+    fun `prefers ravelry's html rendering of the summary`() {
+        // The rendering resolves the dangling ** the raw source drops (issue #104).
         compose.setContent {
             TopicCard(
                 item = item(
-                    bodySummaryHtml = "<p>opening post</p>",
-                    latestReplyHtml = "<p><strong>fresh reply</strong> here</p>",
-                    latestReplyPreview = "fresh reply here",
+                    bodySummary = "**Please use this thread",
+                    bodySummaryHtml = "<p><strong>Please use this thread</strong></p>",
                 ),
                 onClick = {},
             )
         }
-        compose.onNodeWithText("fresh reply here").assertIsDisplayed()
-        compose.onNodeWithText("opening post").assertDoesNotExist()
+        compose.onNodeWithText("Please use this thread").assertIsDisplayed()
     }
 
     @Test
-    fun `an attributed reply with a blank body does not surface the opener's text`() {
-        compose.setContent {
-            TopicCard(
-                item = item(
-                    bodySummaryHtml = "<p>opening summary</p>",
-                    latestReplyHtml = "   ",
-                    latestReplyPreview = "",
-                ),
-                onClick = {},
-            )
-        }
-        // The card attributes to the replier, so it must not print the opener's words.
-        compose.onNodeWithText("opening summary").assertDoesNotExist()
-    }
-
-    @Test
-    fun `falls back to the stripped preview when the document flattens to nothing`() {
-        compose.setContent {
-            TopicCard(
-                item = item(
-                    bodySummaryHtml = """<p><img src="https://img/p.jpg" alt=""/></p>""",
-                    bodyPreview = "legacy preview text",
-                ),
-                onClick = {},
-            )
-        }
-        compose.onNodeWithText("legacy preview text").assertIsDisplayed()
-    }
-
-    @Test
-    fun `shows no preview row for genuinely empty content`() {
-        compose.setContent {
-            TopicCard(item = item(), onClick = {})
-        }
+    fun `shows only the title and meta for a topic with no summary`() {
+        compose.setContent { TopicCard(item = item(bodySummary = "", bodySummaryHtml = ""), onClick = {}) }
         compose.onNodeWithText("Show us your WIPs").assertIsDisplayed()
+        compose.onNodeWithText("posts", substring = true).assertIsDisplayed()
     }
 
     @Test
-    fun `previews the opening post body over a stripped summary`() {
-        compose.setContent {
-            TopicCard(
-                item = item(
-                    bodySummaryHtml = "<p>stripped summary</p>",
-                    openingPostHtml = "<p>Test <em>italic</em> topic</p>",
-                ),
-                onClick = {},
-            )
-        }
-        compose.onNodeWithText("Test italic topic").assertIsDisplayed()
-        compose.onNodeWithText("stripped summary").assertDoesNotExist()
+    fun `shows the post count`() {
+        compose.setContent { TopicCard(item = item(postCount = 5), onClick = {}) }
+        compose.onNodeWithText("5 posts", substring = true).assertIsDisplayed()
     }
 
     @Test
-    fun `renders italics from the markdown source when the rendering leaves them literal`() {
-        compose.setContent {
-            TopicCard(
-                item = item(
-                    openingPostBody = "Test *italic* topic",
-                    openingPostHtml = "<p>Test *italic* topic</p>",
-                ),
-                onClick = {},
-            )
-        }
-        // Styled from the source: no literal asterisks on the card.
-        compose.onNodeWithText("Test italic topic").assertIsDisplayed()
-        compose.onNodeWithText("Test *italic* topic").assertDoesNotExist()
+    fun `shows a singular label for a single-post topic`() {
+        compose.setContent { TopicCard(item = item(postCount = 1), onClick = {}) }
+        compose.onNodeWithText("1 post", substring = true).assertIsDisplayed()
     }
 
     @Test
-    fun `shows a thumbnail for a post with a photo`() {
-        compose.setContent {
-            TopicCard(
-                item = item(
-                    openingPostHtml = """<p>my socks</p><p><img src="https://img.example/socks.jpg" alt=""/></p>""",
-                ),
-                onClick = {},
-            )
-        }
-        compose.onNodeWithText("my socks").assertIsDisplayed()
-        compose.onNodeWithContentDescription("Preview photo").assertIsDisplayed()
+    fun `shows the unread badge when there are unread posts`() {
+        compose.setContent { TopicCard(item = item(postCount = 10, unreadCount = 4), onClick = {}) }
+        compose.onNodeWithText("4 new", substring = true).assertIsDisplayed()
     }
 
     @Test
-    fun `shows the thumbnail alone for an image-only post`() {
-        compose.setContent {
-            TopicCard(
-                item = item(
-                    openingPostHtml = """<p><img src="https://img.example/socks.jpg" alt=""/></p>""",
-                ),
-                onClick = {},
-            )
-        }
-        compose.onNodeWithContentDescription("Preview photo").assertIsDisplayed()
+    fun `hides the unread badge when nothing is unread`() {
+        compose.setContent { TopicCard(item = item(unreadCount = 0), onClick = {}) }
+        compose.onNodeWithText("new", substring = true).assertDoesNotExist()
+    }
+
+    @Test
+    fun `marks a pinned topic`() {
+        compose.setContent { TopicCard(item = item(sticky = true), onClick = {}) }
+        compose.onNodeWithText("Pinned", substring = true).assertIsDisplayed()
     }
 
     @Test

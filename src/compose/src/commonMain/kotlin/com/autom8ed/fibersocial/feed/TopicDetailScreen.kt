@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -32,6 +33,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -44,6 +46,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -55,6 +59,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.launch
 import com.autom8ed.fibersocial.feed.html.parseBodyDocument
 import com.autom8ed.fibersocial.feed.html.parseSummaryDocument
 import com.autom8ed.fibersocial.feed.models.FeedItem
@@ -180,12 +185,25 @@ fun TopicDetailScreen(
             }
         },
     ) { padding ->
+        val listState = rememberLazyListState()
+        val jumpScope = rememberCoroutineScope()
+        // The first unread post's index in the list: the header is index 0 and posts
+        // follow, so post number N sits at index N (clamped to what actually loaded —
+        // only the first page of a long thread is fetched). Issue #185.
+        val jumpTarget = topic.firstUnreadPostNumber?.let { firstUnread ->
+            (displayState as? TopicDetailState.Loaded)?.let { firstUnread.coerceIn(0, it.posts.size) }
+        }
+        // Show the jump button until the user has scrolled down to (or past) that post.
+        val showJump by remember(jumpTarget) {
+            derivedStateOf { jumpTarget != null && listState.firstVisibleItemIndex < jumpTarget }
+        }
+        Box(modifier = Modifier.padding(padding)) {
         PullToRefreshBox(
             refreshing = isRefreshing,
             onRefresh = { isRefreshing = true; onRefresh() },
-            modifier = Modifier.padding(padding),
         ) {
             LazyColumn(
+                state = listState,
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(0.dp),
@@ -203,7 +221,7 @@ fun TopicDetailScreen(
                     HorizontalDivider()
                     Spacer(Modifier.height(16.dp))
                     Text(
-                        text = "💬 ${topic.replyCount} ${if (topic.replyCount == 1) "reply" else "replies"}",
+                        text = "💬 ${topic.postCount} ${if (topic.postCount == 1) "post" else "posts"}",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -258,6 +276,15 @@ fun TopicDetailScreen(
                     }
                 }
             }
+        }
+        if (showJump && jumpTarget != null) {
+            ExtendedFloatingActionButton(
+                onClick = { jumpScope.launch { listState.animateScrollToItem(jumpTarget) } },
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 16.dp),
+            ) { Text("Jump to last read") }
+        }
         }
     }
 }

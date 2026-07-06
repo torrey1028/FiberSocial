@@ -29,6 +29,12 @@ import kotlinx.serialization.Serializable
  * @property summaryHtml Ravelry's server-side HTML rendering of [summary]. Only present
  *   in detail responses. Authoritative: resolves Markdown edge cases in the raw source
  *   the way the website does (e.g. auto-closing dangling emphasis).
+ * @property lastRead Post number of the last post the current user has read in this topic
+ *   (Ravelry's own read marker), or 0 if never read. Present on both list and detail
+ *   responses. Drives the unread count (`postsCount - lastRead`) and the
+ *   scroll-to-first-unread target (issue #185). Note: Ravelry's `latest_reply` field is
+ *   documented as the latest post number but comes back 0 in practice, so [postsCount]
+ *   (the total post count = latest post number) is used as the upper bound instead.
  */
 @Serializable
 data class Topic(
@@ -44,4 +50,5 @@ data class Topic(
     @SerialName("created_by_user") val createdByUser: RavelryUser? = null,
     val summary: String? = null,
     @SerialName("summary_html") val summaryHtml: String? = null,
+    @SerialName("last_read") val lastRead: Int = 0,
 )

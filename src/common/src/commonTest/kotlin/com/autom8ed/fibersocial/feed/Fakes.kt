@@ -141,6 +141,8 @@ fun topicDetailJson(
     summary: String? = "Summary for topic $id",
     postsCount: Int = 2,
     summaryHtml: String? = null,
+    lastRead: Int = 0,
+    starter: String = "yarnie",
 ) = """{
   "topic":{
     "id":$id,"title":"Topic $id",
@@ -148,18 +150,12 @@ fun topicDetailJson(
     "sticky":$sticky,
     "forum_posts_count":$postsCount,
     "replied_at":${if (repliedAt != null) "\"$repliedAt\"" else "null"},
-    "created_by_user":{"username":"yarnie"},
+    "created_by_user":{"username":"$starter"},
     "summary":${if (summary != null) "\"$summary\"" else "null"},
-    "summary_html":${if (summaryHtml != null) "\"$summaryHtml\"" else "null"}
+    "summary_html":${if (summaryHtml != null) "\"$summaryHtml\"" else "null"},
+    "last_read":$lastRead
   }
 }"""
-
-fun latestPostJson(
-    id: Long = 7L,
-    username: String = "replier",
-    bodyHtml: String = "<p>Latest <b>reply</b> text</p>",
-    body: String = "Latest **reply** text",
-) = """{"posts":[{"id":$id,"body":"$body","body_html":"$bodyHtml","created_at":"2024-01-16T10:00:00Z","user":{"username":"$username","small_photo_url":"https://example.com/r.jpg"}}]}"""
 
 fun topicCreateResponseJson(
     id: Long = 7001L,

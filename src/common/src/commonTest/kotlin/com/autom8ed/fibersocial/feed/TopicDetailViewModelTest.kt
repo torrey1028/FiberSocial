@@ -81,6 +81,108 @@ class TopicDetailViewModelTest {
     }
 
     @Test
+    fun `load marks the topic read up to the loaded post count`() = runTest(UnconfinedTestDispatcher()) {
+        // Issue #185: after loading the thread, the ViewModel advances Ravelry's read
+        // marker to the number of posts it loaded, via a form POST to /read.json.
+        var readPath: String? = null
+        var readMethod: String? = null
+        var readLastRead: String? = null
+        val engine = MockEngine { request ->
+            if (request.url.encodedPath.endsWith("/read.json")) {
+                readPath = request.url.encodedPath
+                readMethod = request.method.value
+                readLastRead = (request.body as io.ktor.client.request.forms.FormDataContent)
+                    .formData["last_read"]
+                respond("", HttpStatusCode.OK,
+                    headersOf("Content-Type", ContentType.Application.Json.toString()))
+            } else {
+                respond(postsJson(1L, 2L, 3L), HttpStatusCode.OK,
+                    headersOf("Content-Type", ContentType.Application.Json.toString()))
+            }
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val vm = TopicDetailViewModel(RavelryApiClient(httpClient, FakeFeedTokenStorage()), this)
+        vm.load(42L)
+        awaitChildren(coroutineContext[Job]!!)
+        assertIs<TopicDetailState.Loaded>(vm.state.value)
+        assertEquals("/topics/42/read.json", readPath)
+        assertEquals("POST", readMethod)
+        assertEquals("3", readLastRead)
+    }
+
+    @Test
+    fun `load does not mark read for an empty thread`() = runTest(UnconfinedTestDispatcher()) {
+        // No posts means no marker to advance — the read POST must be skipped entirely.
+        var readCalls = 0
+        val engine = MockEngine { request ->
+            if (request.url.encodedPath.endsWith("/read.json")) {
+                readCalls++
+                respond("", HttpStatusCode.OK, headersOf())
+            } else {
+                respond("""{"posts":[]}""", HttpStatusCode.OK,
+                    headersOf("Content-Type", ContentType.Application.Json.toString()))
+            }
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val vm = TopicDetailViewModel(RavelryApiClient(httpClient, FakeFeedTokenStorage()), this)
+        vm.load(42L)
+        awaitChildren(coroutineContext[Job]!!)
+        assertIs<TopicDetailState.Loaded>(vm.state.value)
+        assertEquals(0, readCalls)
+    }
+
+    @Test
+    fun `load still reaches Loaded when marking read fails`() = runTest(UnconfinedTestDispatcher()) {
+        // Mark-read is best-effort: a failure must never block showing the just-opened thread.
+        val engine = MockEngine { request ->
+            if (request.url.encodedPath.endsWith("/read.json")) {
+                error("Simulated mark-read failure")
+            } else {
+                respond(postsJson(1L, 2L), HttpStatusCode.OK,
+                    headersOf("Content-Type", ContentType.Application.Json.toString()))
+            }
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val vm = TopicDetailViewModel(RavelryApiClient(httpClient, FakeFeedTokenStorage()), this)
+        vm.load(42L)
+        awaitChildren(coroutineContext[Job]!!)
+        val state = assertIs<TopicDetailState.Loaded>(vm.state.value)
+        assertEquals(2, state.posts.size)
+    }
+
+    @Test
+    fun `a session expiry while marking read still shows the thread and signals expiry`() =
+        runTest(UnconfinedTestDispatcher()) {
+            // Mark-read is best-effort, so the thread must still render — but a genuine
+            // expiry during it must route to login, not be swallowed (issue #185). A 401
+            // on read.json with no refresh token surfaces as SessionExpiredException.
+            val engine = MockEngine { request ->
+                if (request.url.encodedPath.endsWith("/read.json")) {
+                    respond("", HttpStatusCode.Unauthorized, headersOf())
+                } else {
+                    respond(postsJson(1L, 2L), HttpStatusCode.OK,
+                        headersOf("Content-Type", ContentType.Application.Json.toString()))
+                }
+            }
+            val httpClient = HttpClient(engine) {
+                install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+            }
+            val vm = TopicDetailViewModel(RavelryApiClient(httpClient, FakeFeedTokenStorage()), this)
+            vm.load(42L)
+            awaitChildren(coroutineContext[Job]!!)
+            // The thread the user opened still renders...
+            assertIs<TopicDetailState.Loaded>(vm.state.value)
+            // ...and the expiry was surfaced rather than silently swallowed.
+            vm.sessionExpired.first()
+        }
+
+    @Test
     fun `load error message falls back to default when exception has null message`() = runTest(UnconfinedTestDispatcher()) {
         val engine = MockEngine { throw RuntimeException() }
         val httpClient = HttpClient(engine) {
@@ -727,8 +829,11 @@ class TopicDetailViewModelTest {
         runTest(UnconfinedTestDispatcher()) {
             val releaseFirst = CompletableDeferred<Unit>()
             var postCount = 0
+            // Gate only the reply POST, not load()'s best-effort mark-read POST to
+            // /read.json (issue #185) — gating that would park load() before it reaches
+            // Loaded and inflate the reply count this test asserts on.
             val engine = MockEngine { request ->
-                if (request.method == HttpMethod.Post) {
+                if (request.method == HttpMethod.Post && request.url.encodedPath.endsWith("/reply.json")) {
                     postCount++
                     releaseFirst.await()
                     respond(replyResponseJson(id = 99L), HttpStatusCode.OK,
@@ -757,8 +862,10 @@ class TopicDetailViewModelTest {
     fun `a send that outlives its topic touches neither the new thread nor the composer`() =
         runTest(UnconfinedTestDispatcher()) {
             val releasePost = CompletableDeferred<Unit>()
+            // Gate only the reply POST — load()'s best-effort mark-read POST to /read.json
+            // (issue #185) must fall through so the thread can reach Loaded.
             val engine = MockEngine { request ->
-                if (request.method == HttpMethod.Post) {
+                if (request.method == HttpMethod.Post && request.url.encodedPath.endsWith("/reply.json")) {
                     releasePost.await()
                     respond(replyResponseJson(id = 99L), HttpStatusCode.OK,
                         headersOf("Content-Type", ContentType.Application.Json.toString()))
