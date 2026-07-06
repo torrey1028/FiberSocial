@@ -152,6 +152,24 @@ class ReplyComposerTest {
         compose.onNodeWithText(ImageAttachmentViewModel.EXTRAS_REQUIRED_MESSAGE).assertIsDisplayed()
         compose.onNodeWithText("my precious draft").assertIsDisplayed()
     }
+
+    @Test
+    fun `attach button opens a source menu when project picking is available`() {
+        var fromProjects = 0
+        compose.setContent {
+            StatefulReplyComposer(
+                replyState = ReplyState.Idle,
+                onSend = {},
+                onSent = {},
+                onPickFromProjects = { fromProjects++ },
+            )
+        }
+        compose.onNodeWithContentDescription("Attach image").performClick()
+        compose.onNodeWithText("Upload from device").assertIsDisplayed()
+        compose.onNodeWithText("From your projects").performClick()
+        compose.runOnIdle { assertEquals(1, fromProjects) }
+        compose.onNodeWithText("From your projects").assertDoesNotExist()
+    }
 }
 
 /** Test wrapper providing the hoisted draft state the screen normally owns. */
@@ -162,6 +180,7 @@ private fun StatefulReplyComposer(
     onSent: () -> Unit,
     attachment: ImageAttachmentState = ImageAttachmentState.Idle,
     onAttachmentInserted: () -> Unit = {},
+    onPickFromProjects: (() -> Unit)? = null,
 ) {
     var text by remember { mutableStateOf("") }
     ReplyComposer(
@@ -172,5 +191,6 @@ private fun StatefulReplyComposer(
         onTextChange = { text = it },
         attachment = attachment,
         onAttachmentInserted = onAttachmentInserted,
+        onPickFromProjects = onPickFromProjects,
     )
 }

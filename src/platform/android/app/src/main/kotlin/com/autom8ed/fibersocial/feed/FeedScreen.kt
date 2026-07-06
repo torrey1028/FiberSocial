@@ -91,6 +91,7 @@ import com.autom8ed.fibersocial.feed.html.MarkdownPostParser
 import com.autom8ed.fibersocial.feed.models.FeedItem
 import com.autom8ed.fibersocial.feed.models.Group
 import com.autom8ed.fibersocial.feed.models.Post
+import com.autom8ed.fibersocial.projects.ProjectPhotoPickerDialog
 import com.autom8ed.fibersocial.feed.models.RavelryUser
 import com.autom8ed.fibersocial.feed.models.VoteType
 import com.autom8ed.fibersocial.notifications.EventSyncWorker
@@ -142,6 +143,7 @@ fun FeedScreen(
             // handlers, so their attachment flows must be reset here too.
             viewModel.replyImage.reset()
             viewModel.newTopicImage.reset()
+            viewModel.projectPicker.dismiss()
             viewModel.eventDetail.load(deepLinkEventPermalink)
             selectedEventPermalink = deepLinkEventPermalink
             onDeepLinkConsumed()
@@ -251,6 +253,7 @@ fun FeedScreen(
                 // An upload result that lands after leaving must not append into the
                 // next topic's draft.
                 viewModel.replyImage.reset()
+                viewModel.projectPicker.dismiss()
                 selectedTopic = null
             },
             // A reply bumps its topic to the top of the website's feed; refresh here so
@@ -269,7 +272,9 @@ fun FeedScreen(
             attachment = replyAttachment,
             onImagePicked = { uri -> viewModel.attachReplyImage(uri) },
             onAttachmentInserted = { viewModel.replyImage.acknowledgeInserted() },
+            onPickFromProjects = currentUsername?.let { u -> { viewModel.projectPicker.open(u) } },
         )
+        ProjectPhotoPickerHost(viewModel, target = viewModel.replyImage)
         return
     }
 
@@ -283,10 +288,12 @@ fun FeedScreen(
             attachment = newTopicAttachment,
             onImagePicked = { uri -> viewModel.attachNewTopicImage(uri) },
             onAttachmentInserted = { viewModel.newTopicImage.acknowledgeInserted() },
+            onPickFromProjects = loaded?.user?.username?.let { u -> { viewModel.projectPicker.open(u) } },
             onBack = {
                 composingTopic = false
                 viewModel.newTopic.reset()
                 viewModel.newTopicImage.reset()
+                viewModel.projectPicker.dismiss()
             },
             onPost = { group, title, body, summary ->
                 viewModel.newTopic.create(group.forumId, title, body, summary)
@@ -295,6 +302,7 @@ fun FeedScreen(
                 composingTopic = false
                 viewModel.newTopic.acknowledgeCreated()
                 viewModel.newTopicImage.reset()
+                viewModel.projectPicker.dismiss()
                 // Land the author inside their new topic, and refresh so the feed
                 // shows it once they navigate back.
                 viewModel.topicDetail.load(topic.id)
@@ -315,6 +323,7 @@ fun FeedScreen(
                 viewModel.feed.refresh()
             },
         )
+        ProjectPhotoPickerHost(viewModel, target = viewModel.newTopicImage)
         return
     }
 
@@ -539,6 +548,7 @@ internal fun TopicDetailRoute(
     attachment: ImageAttachmentState = ImageAttachmentState.Idle,
     onImagePicked: (Uri) -> Unit = {},
     onAttachmentInserted: () -> Unit = {},
+    onPickFromProjects: (() -> Unit)? = null,
 ) {
     // ReplyState is transient — it flips Sent -> Idle again as soon as the composer
     // acknowledges it (see ReplyComposer/acknowledgeReplySent) — so whether a reply went
@@ -571,6 +581,7 @@ internal fun TopicDetailRoute(
         attachment = attachment,
         onImagePicked = onImagePicked,
         onAttachmentInserted = onAttachmentInserted,
+        onPickFromProjects = onPickFromProjects,
     )
 }
 
@@ -579,6 +590,27 @@ internal fun TopicDetailRoute(
  * during a visit, it stays "true" regardless of later [replyState] transitions (e.g. the
  * Sent -> Idle flip that follows acknowledgement) until the composable is torn down.
  */
+/**
+ * Renders the pick-a-project-photo dialog for whichever composer is on screen and
+ * routes the picked photo's markdown into that composer's attachment flow ([target]).
+ * The dialog state lives in [FeedAndroidViewModel.projectPicker]; only one composer
+ * is ever visible at a time, so a single picker instance is safe to share.
+ */
+@Composable
+private fun ProjectPhotoPickerHost(viewModel: FeedAndroidViewModel, target: ImageAttachmentViewModel) {
+    val pickerState by viewModel.projectPicker.state.collectAsState()
+    ProjectPhotoPickerDialog(
+        state = pickerState,
+        onProjectSelected = { viewModel.projectPicker.selectProject(it) },
+        onPhotoPicked = { project, photo ->
+            viewModel.projectPicker.markdownFor(project, photo)?.let { target.insertExisting(it) }
+            viewModel.projectPicker.dismiss()
+        },
+        onBackToProjects = { viewModel.projectPicker.backToProjects() },
+        onDismiss = { viewModel.projectPicker.dismiss() },
+    )
+}
+
 internal fun trackReplySent(repliedThisVisit: Boolean, replyState: ReplyState): Boolean =
     repliedThisVisit || replyState is ReplyState.Sent
 

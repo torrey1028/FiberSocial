@@ -17,6 +17,8 @@ import com.autom8ed.fibersocial.feed.models.Post
 import com.autom8ed.fibersocial.feed.models.RavelryUser
 import com.autom8ed.fibersocial.feed.models.Topic
 import com.autom8ed.fibersocial.feed.models.VoteType
+import com.autom8ed.fibersocial.projects.ProjectPhoto
+import com.autom8ed.fibersocial.projects.ProjectSummary
 import io.ktor.client.HttpClient
 import io.ktor.client.request.forms.FormDataContent
 import io.ktor.client.request.forms.MultiPartFormDataContent
@@ -731,6 +733,41 @@ class RavelryApiClient(
     }
 
     /**
+     * Returns [username]'s projects (the small list representation: name, permalink,
+     * first photo, photo count). The whole list comes back in one page — the endpoint's
+     * `page_size` defaults to the entire result set.
+     *
+     * @param username Ravelry username whose projects to list.
+     */
+    suspend fun getProjects(username: String): List<ProjectSummary> {
+        val raw = authenticatedRequest {
+            httpClient.get("$BASE_URL/projects/$username/list.json") {
+                header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
+                // Newest first: the photo someone wants to share is usually on a
+                // recent project.
+                url.parameters.append("sort", "created")
+            }
+        }
+        return lenientJson.decodeFromString<ProjectsListResponse>(raw).projects
+    }
+
+    /**
+     * Returns all photos on one of [username]'s projects, via the project-detail
+     * endpoint (the list endpoint only carries each project's first photo).
+     *
+     * @param username Ravelry username who owns the project.
+     * @param projectId Ravelry project ID.
+     */
+    suspend fun getProjectPhotos(username: String, projectId: Long): List<ProjectPhoto> {
+        val raw = authenticatedRequest {
+            httpClient.get("$BASE_URL/projects/$username/$projectId.json") {
+                header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
+            }
+        }
+        return lenientJson.decodeFromString<ProjectDetailResponse>(raw).project.photos
+    }
+
+    /**
      * Uploads an image and converts it into an attachment that can be referenced from a
      * forum post body (or any other markdown field).
      *
@@ -855,6 +892,9 @@ class RavelryApiClient(
     )
     @Serializable private data class UploadTokenResponse(@SerialName("upload_token") val uploadToken: String)
     @Serializable private data class AttachmentResponse(@SerialName("image_path") val imagePath: String)
+    @Serializable private data class ProjectsListResponse(val projects: List<ProjectSummary> = emptyList())
+    @Serializable private data class ProjectDetailResponse(val project: ProjectPhotosOnly)
+    @Serializable private data class ProjectPhotosOnly(val photos: List<ProjectPhoto> = emptyList())
 }
 
 /**
