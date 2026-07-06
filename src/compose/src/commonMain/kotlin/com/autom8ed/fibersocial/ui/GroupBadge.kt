@@ -64,5 +64,8 @@ fun GroupBadge(group: Group, size: Dp, modifier: Modifier = Modifier) {
 private fun monogramOf(name: String): String {
     val trimmed = name.trim()
     if (trimmed.isEmpty()) return "#"
-    return String(Character.toChars(trimmed.codePointAt(0))).uppercase()
+    // Multiplatform codepoint math (java.lang.Character isn't available on Native): a
+    // leading surrogate pair travels as a two-char unit, anything else as one char.
+    val length = if (trimmed.length >= 2 && trimmed[0].isHighSurrogate() && trimmed[1].isLowSurrogate()) 2 else 1
+    return trimmed.take(length).uppercase()
 }

@@ -2,7 +2,7 @@ package com.autom8ed.fibersocial.notifications
 
 import com.autom8ed.fibersocial.events.GroupEvent
 import kotlin.time.Duration.Companion.days
-import kotlinx.datetime.Instant
+import kotlin.time.Instant
 import kotlinx.datetime.LocalDateTime
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toInstant

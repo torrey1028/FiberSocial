@@ -170,6 +170,15 @@ jobs:
           java-version: "17"
           distribution: "temurin"
 
+      # Compose Multiplatform 1.11's ui-uikit links against iOS 26 SDK symbols
+      # (UIViewLayoutRegion / the UIUtilities framework); the runner's default
+      # Xcode 16.4 SDK lacks them and the framework link fails.
+      - name: Select Xcode 26
+        run: |
+          ls -d /Applications/Xcode*.app
+          sudo xcode-select -s "$(ls -d /Applications/Xcode_26*.app | sort -V | tail -1)"
+          xcodebuild -version
+
       # The build applies AGP even for Native-only tasks (:common is also an
       # Android library), and macOS arm64 runner images don't ship an Android SDK.
       - name: Set up Android SDK
@@ -188,9 +197,58 @@ jobs:
 
       - name: Run commonTest on the iOS simulator target
         working-directory: src/platform/android
-        run: ./gradlew :common:iosSimulatorArm64Test
+        run: ./gradlew :common:iosSimulatorArm64Test :composeApp:iosSimulatorArm64Test
 
-      # Proves the framework the Xcode project will consume (#117) still links.
+  ios-app-build:
+    name: iOS app build + hosted XCTests
+    # Main only: the Xcode-project build is the expensive half of the macOS
+    # spend (another cold Kotlin/Native link plus a simulator boot), and the
+    # Kotlin/Native job above already guards shared code on PRs. A broken
+    # Xcode project or Swift host therefore surfaces on the post-merge main
+    # run rather than blocking PRs — the accepted trade for shorter PR CI.
+    # The hosted XCTests (the only coverage of the Keychain store against a
+    # real keychain daemon) ride along here since they add ~1min on top of
+    # the build they need anyway.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: "temurin"
+
+      # See the twin comment in common-ios-tests.
+      - name: Select Xcode 26
+        run: |
+          sudo xcode-select -s "$(ls -d /Applications/Xcode_26*.app | sort -V | tail -1)"
+          xcodebuild -version
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: "platforms;android-34 platforms;android-36"
+
+      - name: Write local.properties
+        run: |
+          echo "sdk.dir=$ANDROID_HOME" > src/platform/android/local.properties
+          echo "ravelry.client_id=" >> src/platform/android/local.properties
+          echo "ravelry.client_secret=" >> src/platform/android/local.properties
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      # Proves the standalone XCFramework export (#115) still links.
       - name: Assemble the XCFramework
         working-directory: src/platform/android
         run: ./gradlew :common:assembleFiberSocialCommonReleaseXCFramework
+
+      - name: Build the iOS app and run hosted XCTests
+        working-directory: src/platform/ios
+        run: |
+          xcodebuild -project FiberSocial.xcodeproj -scheme FiberSocial \
+            -destination 'platform=iOS Simulator,name=iPhone 17' \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO test 2>&1 | tail -40

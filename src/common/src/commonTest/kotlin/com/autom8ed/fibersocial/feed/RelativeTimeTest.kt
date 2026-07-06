@@ -1,6 +1,6 @@
 package com.autom8ed.fibersocial.feed
 
-import kotlinx.datetime.Instant
+import kotlin.time.Instant
 import kotlin.test.Test
 import kotlin.test.assertEquals
 

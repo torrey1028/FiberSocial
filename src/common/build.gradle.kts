@@ -39,7 +39,10 @@ kotlin {
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1")
             implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
             // api: EventSummary/EventDetail expose kotlinx.datetime.LocalDateTime to consumers.
-            api("org.jetbrains.kotlinx:kotlinx-datetime:0.6.0")
+            // 0.7.1 to match the version Compose Multiplatform's material3 pulls in —
+            // a lower pin here leaves the iOS framework link with two datetime klibs
+            // whose Instant declarations collide (class in 0.6, typealias in 0.7).
+            api("org.jetbrains.kotlinx:kotlinx-datetime:0.7.1")
         }
         commonTest.dependencies {
             implementation(kotlin("test"))
