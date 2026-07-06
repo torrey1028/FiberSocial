@@ -13,6 +13,32 @@ fun gitVersionName(): String {
     return if (dirty) "1.0.$hash.dirty" else "1.0.$hash"
 }
 
+// When the current commit is exactly tagged vMAJOR.MINOR.PATCH (a pushed
+// release tag - see release.yml), use that as the real version instead of the
+// dev git-hash scheme above, and derive a versionCode that increases
+// release-over-release so in-place upgrade installs work.
+fun releaseTagVersion(): Triple<Int, Int, Int>? {
+    val describe = providers.exec {
+        commandLine("git", "describe", "--tags", "--exact-match", "--match", "v[0-9]*.[0-9]*.[0-9]*")
+        isIgnoreExitValue = true
+    }.standardOutput.asText.get().trim()
+    val match = Regex("""^v(\d+)\.(\d+)\.(\d+)$""").matchEntire(describe) ?: return null
+    val (major, minor, patch) = match.destructured.toList().map {
+        it.toIntOrNull() ?: error("Release tag $describe has a component out of Int range")
+    }
+    // The versionCode packing below gives minor/patch three digits each, so
+    // out-of-range components would silently collide with a neighboring
+    // version's code (v1.2.1000 == v1.3.0), major >= 2147 overflows Int, and
+    // v0.0.0 packs to versionCode 0 which Android rejects. Fail the build
+    // instead of shipping a colliding code.
+    require(major in 0..2146 && minor in 0..999 && patch in 0..999 && major + minor + patch > 0) {
+        "Release tag $describe doesn't fit the versionCode scheme (major <= 2146, minor/patch <= 999, above v0.0.0)"
+    }
+    return Triple(major, minor, patch)
+}
+
+val releaseTag = releaseTagVersion()
+
 val localProps = Properties().also { props ->
     rootProject.file("local.properties").takeIf { it.exists() }
         ?.inputStream()?.use { props.load(it) }
@@ -26,8 +52,8 @@ android {
         applicationId = "com.autom8ed.fibersocial"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = gitVersionName()
+        versionCode = releaseTag?.let { (major, minor, patch) -> major * 1_000_000 + minor * 1_000 + patch } ?: 1
+        versionName = releaseTag?.let { (major, minor, patch) -> "$major.$minor.$patch" } ?: gitVersionName()
         buildConfigField("String", "RAVELRY_CLIENT_ID", "\"${localProps.getProperty("ravelry.client_id", "")}\"")
         buildConfigField("String", "RAVELRY_CLIENT_SECRET", "\"${localProps.getProperty("ravelry.client_secret", "")}\"")
     }
