@@ -75,6 +75,22 @@ class TopicCardTest {
     }
 
     @Test
+    fun `an attributed reply with a blank body does not surface the opener's text`() {
+        compose.setContent {
+            TopicCard(
+                item = item(
+                    bodySummaryHtml = "<p>opening summary</p>",
+                    latestReplyHtml = "   ",
+                    latestReplyPreview = "",
+                ),
+                onClick = {},
+            )
+        }
+        // The card attributes to the replier, so it must not print the opener's words.
+        compose.onNodeWithText("opening summary").assertDoesNotExist()
+    }
+
+    @Test
     fun `falls back to the stripped preview when the document flattens to nothing`() {
         compose.setContent {
             TopicCard(

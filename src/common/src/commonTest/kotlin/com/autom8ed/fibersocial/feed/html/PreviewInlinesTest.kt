@@ -102,6 +102,30 @@ class PreviewInlinesTest {
     }
 
     @Test
+    fun `clips a single oversized text node to the budget`() {
+        // A long plain-prose reply parses to one big Text node; the budget check only
+        // fires at node boundaries, so the node itself must be clipped or the card would
+        // style the whole multi-KB body for two lines.
+        val doc = PostDocument(blocks = listOf(PostBlock.Paragraph(listOf(Inline.Text("x".repeat(10_000))))))
+        assertEquals(200, plain(doc.previewInlines()).length)
+        assertEquals(50, plain(doc.previewInlines(maxLength = 50)).length)
+    }
+
+    @Test
+    fun `an empty code block adds no separator or empty span`() {
+        val doc = PostDocument(
+            blocks = listOf(
+                PostBlock.Paragraph(listOf(Inline.Text("text"))),
+                PostBlock.CodeBlock("   "),
+            ),
+        )
+        val inlines = doc.previewInlines()
+        // No dangling separator space, and no zero-width code chip painted after "text".
+        assertEquals("text", plain(inlines))
+        assertTrue(inlines.none { it is Inline.Code }, "empty code block should not emit a Code span: $inlines")
+    }
+
+    @Test
     fun `previewImageUrl finds the first photo including inside a link`() {
         // Ravelry wraps post photos in project links: [![alt](img)](project).
         val doc = HtmlPostParser.parse(

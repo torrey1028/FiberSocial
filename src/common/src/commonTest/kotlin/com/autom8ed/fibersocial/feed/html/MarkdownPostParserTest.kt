@@ -280,14 +280,33 @@ class MarkdownPostParserTest {
     @Test
     fun `parsePreviewDocument prefers the latest reply's html`() {
         // Mirrors displayPreview's reply-else-opener rule (the card previews the reply).
+        // latestReplyAuthor + the reply content are populated together from the attributed
+        // reply, and the preview gates on the author, so both are set here.
         val item = feedItem(
             bodySummary = "opening post",
             bodySummaryHtml = "<p>opening post</p>",
-        ).copy(latestReplyHtml = "<p><em>latest reply</em></p>")
+        ).copy(
+            latestReplyAuthor = RavelryUser(username = "replier"),
+            latestReplyHtml = "<p><em>latest reply</em></p>",
+        )
         val paragraph = assertIs<PostBlock.Paragraph>(item.parsePreviewDocument().blocks.single())
         val styled = paragraph.content.filterIsInstance<Inline.Styled>().single()
         assertEquals(InlineStyle.ITALIC, styled.style)
         assertEquals(listOf<Inline>(Inline.Text("latest reply")), styled.children)
+    }
+
+    @Test
+    fun `parsePreviewDocument previews nothing for an attributed reply with a blank body`() {
+        // The card attributes to the replier; the preview must not fall through to the
+        // opener (which would print the opener's words under the replier's name).
+        val item = feedItem(bodySummary = "opening post", bodySummaryHtml = "<p>opening post</p>")
+            .copy(
+                latestReplyAuthor = RavelryUser(username = "replier"),
+                latestReplyBody = "   ",
+                latestReplyHtml = "   ",
+                openingPostHtml = "<p>opening post</p>",
+            )
+        assertEquals(emptyList(), item.parsePreviewDocument().blocks)
     }
 
     @Test

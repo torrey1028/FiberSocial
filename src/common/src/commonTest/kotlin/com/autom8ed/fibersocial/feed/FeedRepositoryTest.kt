@@ -286,6 +286,10 @@ class FeedRepositoryTest {
         val item = repo.singlePageItems().single()
         assertEquals(null, item.latestReplyAuthor)
         assertEquals(null, item.latestReplyPreview)
+        // The sticky invariant's require() guards the reply-content fields too, so pin
+        // them: a sticky topic that ever populated one would crash the whole feed parse.
+        assertEquals(null, item.latestReplyBody)
+        assertEquals(null, item.latestReplyHtml)
         assertEquals(item.author, item.displayAuthor)
     }
 

@@ -56,7 +56,6 @@ fun PostDocument.previewImageUrl(): String? {
 private class PreviewCollector(private val maxLength: Int) {
     private val out = mutableListOf<Inline>()
     private var length = 0
-    private var needsSeparator = false
 
     fun addBlocks(blocks: List<PostBlock>) {
         blocks.forEach { block ->
@@ -81,31 +80,41 @@ private class PreviewCollector(private val maxLength: Int) {
     private fun addRun(content: List<Inline>) {
         val transformed = transform(content)
         if (transformed.isEmpty()) return
-        if (needsSeparator) {
+        // A separator is only ever needed before a non-empty run once something is
+        // already collected — which is exactly `out.isNotEmpty()`.
+        if (out.isNotEmpty() && length < maxLength) {
             out.add(Inline.Text(" "))
             length += 1
         }
         out.addAll(transformed)
-        needsSeparator = true
     }
 
     private fun transform(content: List<Inline>): List<Inline> = content.mapNotNull { inline ->
         if (length >= maxLength) return@mapNotNull null
         when (inline) {
-            is Inline.Text -> inline.also { length += it.text.length }
-            is Inline.Code -> inline.also { length += it.text.length }
-            is Inline.HardBreak -> Inline.Text(" ").also { length += 1 }
+            is Inline.Text -> take(inline.text)?.let { if (it == inline.text) inline else Inline.Text(it) }
+            is Inline.Code -> take(inline.text)?.let { if (it == inline.text) inline else Inline.Code(it) }
+            is Inline.HardBreak -> take(" ")?.let { Inline.Text(it) }
             is Inline.Styled -> transform(inline.children)
                 .takeIf { it.isNotEmpty() }?.let { inline.copy(children = it) }
             is Inline.Link -> transform(inline.children)
                 .takeIf { it.isNotEmpty() }?.let { inline.copy(children = it) }
-            is Inline.Image ->
-                if (inline.isInlineEmoji && inline.alt.isNotBlank()) {
-                    Inline.Text(inline.alt).also { length += inline.alt.length }
-                } else {
-                    null
-                }
+            is Inline.Image -> if (inline.isInlineEmoji) take(inline.alt)?.let { Inline.Text(it) } else null
         }
+    }
+
+    /**
+     * Charges [text] against the remaining budget and returns the part that fit, or null
+     * if nothing fits or it was blank. Clipping here (rather than only checking at node
+     * boundaries) caps a single huge Text/Code node — a long plain-prose reply is one
+     * such node, and would otherwise style the whole multi-KB body for a two-line card —
+     * and dropping blanks skips an empty code block's stray span and a blank emoji alt.
+     */
+    private fun take(text: String): String? {
+        if (length >= maxLength) return null
+        val clipped = text.take(maxLength - length)
+        length += clipped.length
+        return clipped.ifEmpty { null }
     }
 
     fun result(): List<Inline> = out.toList()

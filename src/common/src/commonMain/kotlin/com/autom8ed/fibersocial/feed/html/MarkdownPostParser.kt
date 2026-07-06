@@ -194,18 +194,24 @@ fun FeedItem.parseSummaryDocument(): PostDocument =
     else MarkdownPostParser.parse(bodySummary)
 
 /**
- * Parses whatever the feed card should preview: the latest reply when one is attributed
- * (mirroring [FeedItem.displayPreview]'s reply-else-opener rule), else the opening
- * post when it was fetched (no-reply topics — real formatting and images, which the
- * summary lacks), else the topic summary via [parseSummaryDocument]. Post content
- * parses exactly like [Post.parseBodyDocument]: the Markdown source is canonical and
- * the HTML rendering only resolves emoji — Ravelry's rendering has been seen dropping
- * content and leaving syntax unrendered (issues #102/#144), which is how a card can
- * otherwise lose formatting its own topic view displays.
+ * Parses whatever the feed card should preview. The reply-vs-opener choice keys off
+ * [latestReplyAuthor] — the same signal the card attributes to — not off whether the
+ * reply content is blank: an attributed reply previews the reply (or an empty document
+ * if its body is blank), never the opener's text under the replier's name. Without an
+ * attributed reply it previews the opening post when fetched (no-reply topics — real
+ * formatting and images, which the summary lacks), else the topic summary via
+ * [parseSummaryDocument]. Post content parses exactly like [Post.parseBodyDocument]:
+ * the Markdown source is canonical and the HTML rendering only resolves emoji — Ravelry's
+ * rendering has been seen dropping content and leaving syntax unrendered (issues
+ * #102/#144), which is how a card can otherwise lose formatting its own topic view shows.
  */
 fun FeedItem.parsePreviewDocument(): PostDocument = when {
-    !latestReplyBody.isNullOrBlank() || !latestReplyHtml.isNullOrBlank() ->
-        parsePostContent(latestReplyBody.orEmpty(), latestReplyHtml.orEmpty())
+    latestReplyAuthor != null ->
+        if (!latestReplyBody.isNullOrBlank() || !latestReplyHtml.isNullOrBlank()) {
+            parsePostContent(latestReplyBody.orEmpty(), latestReplyHtml.orEmpty())
+        } else {
+            PostDocument(emptyList())
+        }
     openingPostBody.isNotBlank() || openingPostHtml.isNotBlank() ->
         parsePostContent(openingPostBody, openingPostHtml)
     else -> parseSummaryDocument()
