@@ -94,6 +94,8 @@ import com.autom8ed.fibersocial.feed.models.Group
 import com.autom8ed.fibersocial.feed.models.Post
 import com.autom8ed.fibersocial.projects.ProjectPageScreen
 import com.autom8ed.fibersocial.projects.ProjectPageState
+import com.autom8ed.fibersocial.projects.ProjectCommentsState
+import com.autom8ed.fibersocial.projects.CommentPostState
 import com.autom8ed.fibersocial.projects.ProjectPhotoPickerDialog
 import com.autom8ed.fibersocial.feed.models.RavelryUser
 import com.autom8ed.fibersocial.feed.models.VoteType
@@ -190,10 +192,16 @@ fun FeedScreen(
     // whichever of them is open — backing out returns there untouched.
     val projectPageState by viewModel.projectPage.state.collectAsState()
     if (projectPageState !is ProjectPageState.Hidden) {
+        val commentsState by viewModel.projectPage.commentsState.collectAsState()
+        val postState by viewModel.projectPage.postState.collectAsState()
         ProjectPageScreen(
             state = projectPageState,
+            commentsState = commentsState,
+            postState = postState,
             onBack = { viewModel.projectPage.dismiss() },
             onRetry = { viewModel.projectPage.retry() },
+            onPostComment = { viewModel.projectPage.postComment(it) },
+            onPostErrorShown = { viewModel.projectPage.acknowledgePostError() },
         )
         return
     }

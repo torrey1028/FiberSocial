@@ -1699,6 +1699,104 @@ class RavelryApiClientTest {
     }
 
     @Test
+    fun `getProjectDetail parses the full field set`() = runTest {
+        val client = routingApiClient {
+            """{"project":{"id":7,"name":"Autumn Socks","permalink":"autumn-socks",
+                "pattern_name":"Vanilla Socks","pattern_id":42,"status_name":"In progress",
+                "craft_name":"Knitting","progress":60,"started":"2026/06/01","completed":"2026/06/20",
+                "made_for":"Mom","size":"M","notes":"So *cozy*","notes_html":"<p>So <em>cozy</em></p>",
+                "tag_names":["socks","gift"],
+                "photos":[{"id":901,"medium_url":"https://img.example/m1.jpg"}]}}"""
+        }
+        val p = client.getProjectDetail("yarnie", "autumn-socks")
+        assertEquals(42L, p.patternId)
+        assertEquals("In progress", p.statusName)
+        assertEquals(60, p.progress)
+        assertEquals("2026/06/01", p.started)
+        assertEquals("2026/06/20", p.completed)
+        assertEquals("Mom", p.madeFor)
+        assertEquals("M", p.size)
+        assertEquals(listOf("socks", "gift"), p.tagNames)
+        assertEquals("So *cozy*", p.notes)
+        assertEquals(listOf(901L), p.photos.map { it.id })
+    }
+
+    @Test
+    fun `getProjectComments hits the comments endpoint and parses users`() = runTest {
+        var captured: io.ktor.http.Url? = null
+        val client = routingApiClientCapturing(onRequest = { captured = it }) {
+            """{"comments":[
+                {"id":1,"comment_html":"<p>lovely</p>","created_at":"2026-01-01T00:00:00Z",
+                 "user":{"username":"fan","small_photo_url":"https://img/f.jpg"}},
+                {"id":2,"comment_html":"<p>thanks</p>"}
+            ]}"""
+        }
+        val comments = client.getProjectComments("yarnie", 7L)
+        assertEquals("/projects/yarnie/7/comments.json", captured?.encodedPath)
+        assertEquals(listOf(1L, 2L), comments.map { it.id })
+        assertEquals("fan", comments[0].user?.username)
+        assertEquals("https://img/f.jpg", comments[0].user?.avatarUrl)
+        assertEquals(null, comments[1].user)
+    }
+
+    @Test
+    fun `getProjectComments defaults to empty when the field is absent`() = runTest {
+        assertEquals(emptyList(), routingApiClient { "{}" }.getProjectComments("yarnie", 7L))
+    }
+
+    @Test
+    fun `postProjectComment posts the project type and id and parses the created comment`() = runTest {
+        var body: String? = null
+        val engine = MockEngine { request ->
+            body = (request.body as io.ktor.client.request.forms.FormDataContent).formData.formUrlEncode()
+            respond(
+                """{"comment":{"id":99,"comment_html":"<p>mine</p>","user":{"username":"me"}}}""",
+                HttpStatusCode.OK,
+                headersOf("Content-Type", ContentType.Application.Json.toString()),
+            )
+        }
+        val client = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }.let { RavelryApiClient(it, FakeFeedTokenStorage()) }
+        val comment = client.postProjectComment(7L, "mine")
+        assertEquals(99L, comment.id)
+        assertTrue(body!!.contains("type=project"), body)
+        assertTrue(body!!.contains("commented_id=7"), body)
+        assertTrue(body!!.contains("body=mine"), body)
+    }
+
+    @Test
+    fun `postProjectComment surfaces a garbage response as a readable error`() = runTest {
+        val client = routingApiClient { "<html>nope</html>" }
+        val e = assertFailsWith<IllegalStateException> { client.postProjectComment(7L, "hi") }
+        assertTrue("Ravelry" in e.message.orEmpty(), e.message ?: "")
+    }
+
+    @Test
+    fun `getPatternInfo parses permalink and author, and accepts the patterns key too`() = runTest {
+        var captured: io.ktor.http.Url? = null
+        val client = routingApiClientCapturing(onRequest = { captured = it }) {
+            """{"pattern":{"id":42,"name":"Vanilla Socks","permalink":"vanilla-socks",
+                "pattern_author":{"id":3,"name":"Jane","permalink":"jane"}}}"""
+        }
+        val info = client.getPatternInfo(42L)
+        assertEquals("/patterns/42.json", captured?.encodedPath)
+        assertEquals("Vanilla Socks", info.name)
+        assertEquals("vanilla-socks", info.permalink)
+        assertEquals("Jane", info.author?.name)
+        assertEquals("https://www.ravelry.com/patterns/library/vanilla-socks", info.webUrl)
+
+        // Some doc revisions nest under "patterns" — accepted as a fallback.
+        val alt = routingApiClient { """{"patterns":{"id":42,"name":"Alt","permalink":"alt"}}""" }
+        assertEquals("Alt", alt.getPatternInfo(42L).name)
+    }
+
+    @Test
+    fun `getPatternInfo fails loudly when neither key is present`() = runTest {
+        assertFailsWith<Exception> { routingApiClient { "{}" }.getPatternInfo(42L) }
+    }
+
+    @Test
     fun `getProjectPhotos defaults to empty when the project has no photos field`() = runTest {
         val client = routingApiClient { """{"project":{"id":7,"name":"Autumn Socks"}}""" }
         assertEquals(emptyList(), client.getProjectPhotos("yarnie", 7L))

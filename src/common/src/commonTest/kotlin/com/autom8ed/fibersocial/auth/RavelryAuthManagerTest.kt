@@ -22,12 +22,13 @@ class RavelryAuthManagerTest {
     }
 
     @Test
-    fun `auth url requests forum-write and offline scope`() {
+    fun `auth url requests forum-write message-write and offline scope`() {
         val url = RavelryAuthManager().buildAuthUrl("my-client-id")
 
-        // forum-write authorizes reply/edit/delete; offline yields a refresh token so the
-        // user isn't forced to re-login constantly.
-        assertEquals("forum-write offline", Url(url).parameters["scope"])
+        // forum-write authorizes reply/edit/delete; message-write authorizes posting
+        // project comments (issue #103); offline yields a refresh token so the user
+        // isn't forced to re-login constantly.
+        assertEquals("forum-write message-write offline", Url(url).parameters["scope"])
     }
 
     @Test
