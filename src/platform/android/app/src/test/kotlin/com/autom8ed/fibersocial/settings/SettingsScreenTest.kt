@@ -110,4 +110,52 @@ class SettingsScreenTest {
         compose.onNodeWithText("Cancel").performClick()
         compose.runOnIdle { assertEquals(null, selected) }
     }
+
+    @Test
+    fun `theme row is hidden while loading`() {
+        compose.setContent {
+            SettingsScreen(user = user, onBack = {}, onSignOut = {}, themeMode = null)
+        }
+        compose.onNodeWithText("App theme").assertDoesNotExist()
+    }
+
+    @Test
+    fun `theme row shows the current mode`() {
+        compose.setContent {
+            SettingsScreen(user = user, onBack = {}, onSignOut = {}, themeMode = ThemeMode.SYSTEM)
+        }
+        compose.onNodeWithText("App theme").assertIsDisplayed()
+        compose.onNodeWithText("Follow system").assertIsDisplayed()
+    }
+
+    @Test
+    fun `choosing a theme from the dialog invokes the callback and closes it`() {
+        var selected: ThemeMode? = null
+        compose.setContent {
+            SettingsScreen(
+                user = user, onBack = {}, onSignOut = {},
+                themeMode = ThemeMode.SYSTEM,
+                onThemeModeSelected = { selected = it },
+            )
+        }
+        compose.onNodeWithText("App theme").performClick()
+        compose.onNodeWithText("Dark").performClick()
+        compose.runOnIdle { assertEquals(ThemeMode.DARK, selected) }
+        compose.onNodeWithText("Cancel").assertDoesNotExist()
+    }
+
+    @Test
+    fun `cancel dismisses the theme dialog without selecting`() {
+        var selected: ThemeMode? = null
+        compose.setContent {
+            SettingsScreen(
+                user = user, onBack = {}, onSignOut = {},
+                themeMode = ThemeMode.LIGHT,
+                onThemeModeSelected = { selected = it },
+            )
+        }
+        compose.onNodeWithText("App theme").performClick()
+        compose.onNodeWithText("Cancel").performClick()
+        compose.runOnIdle { assertEquals(null, selected) }
+    }
 }

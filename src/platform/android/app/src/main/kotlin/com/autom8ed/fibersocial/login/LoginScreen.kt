@@ -18,6 +18,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.autom8ed.fibersocial.R
+import com.autom8ed.fibersocial.ui.appLogoResource
 
 @Composable
 fun LoginScreen(onLoginClick: () -> Unit, errorMessage: String? = null) {
@@ -29,7 +30,7 @@ fun LoginScreen(onLoginClick: () -> Unit, errorMessage: String? = null) {
         verticalArrangement = Arrangement.Center,
     ) {
         Image(
-            painter = painterResource(R.drawable.fibersocial_logo),
+            painter = painterResource(appLogoResource()),
             contentDescription = stringResource(R.string.app_logo_content_description),
             modifier = Modifier.size(120.dp),
         )
