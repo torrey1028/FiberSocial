@@ -106,6 +106,7 @@ import com.autom8ed.fibersocial.settings.SettingsScreen
 import com.autom8ed.fibersocial.settings.ThemeMode
 import com.autom8ed.fibersocial.storage.NOTIFICATION_SETTINGS_PREFS_NAME
 import com.autom8ed.fibersocial.storage.plainKeyValueStore
+import com.autom8ed.fibersocial.ui.GroupBadge
 import com.autom8ed.fibersocial.ui.PullToRefreshBox
 import com.autom8ed.fibersocial.ui.appLogoResource
 import com.autom8ed.fibersocial.ui.UserAvatar
@@ -806,7 +807,12 @@ internal fun GroupDrawer(
                         selected = selectedGroup?.id == group.id,
                         // While reordering, taps must not navigate away mid-arrangement.
                         onClick = { if (!reorderMode) onGroupSelected(group) },
-                        icon = if (!reorderMode) null else {
+                        // The badge image yields to the drag handle in reorder mode —
+                        // both compete for the leading slot, and mid-reorder the handle
+                        // is the one doing work.
+                        icon = if (!reorderMode) {
+                            { GroupBadge(group = group, size = 28.dp) }
+                        } else {
                             {
                                 DragHandle(
                                     contentDescription = "Reorder ${group.name}",
