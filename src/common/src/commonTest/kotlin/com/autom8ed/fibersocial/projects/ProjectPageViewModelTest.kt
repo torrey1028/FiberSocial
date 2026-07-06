@@ -584,7 +584,6 @@ class ProjectPageViewModelTest {
     @Test
     fun `re-opening supersedes the first open's pattern and comment results`() = runTest(UnconfinedTestDispatcher()) {
         val firstGate = CompletableDeferred<Unit>()
-        var openCount = 0
         val client = suspendableRoutingApiClient { url ->
             when {
                 // First project resolves immediately; its secondary loads block on the gate.
@@ -597,8 +596,12 @@ class ProjectPageViewModelTest {
                     """{"pattern":{"id":5,"name":"Stale","permalink":"stale"}}"""
                 }
                 else -> {
-                    openCount++
-                    """{"project":{"id":${openCount * 10},"name":"P$openCount","pattern_id":5}}"""
+                    // Name the project after its own permalink — deterministic regardless of
+                    // which open's project resolves first (a mutable resolution-order counter
+                    // would race, since the generation guard, not resolution order, decides
+                    // the winner).
+                    val permalink = url.encodedPath.substringAfterLast('/').removeSuffix(".json")
+                    """{"project":{"id":${permalink.length},"name":"$permalink","pattern_id":5}}"""
                 }
             }
         }
@@ -608,9 +611,9 @@ class ProjectPageViewModelTest {
         firstGate.complete(Unit)            // gen-1 secondaries now land, stale
         awaitChildren(coroutineContext[Job]!!)
         val loaded = assertIs<ProjectPageState.Loaded>(vm.state.value)
-        // The second open won; the first open's gated secondaries land against a stale
-        // generation and are dropped (exercising the gen-mismatch guards).
-        assertEquals("P2", loaded.project.name)
+        // The second open won (the gen-2 link "hat"); the first open's gated secondaries
+        // land against a stale generation and are dropped (exercising the gen guards).
+        assertEquals("hat", loaded.project.name)
     }
 
     @Test
