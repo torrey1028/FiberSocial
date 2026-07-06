@@ -1,6 +1,9 @@
+@file:OptIn(ExperimentalComposeUiApi::class)
+
 package com.autom8ed.fibersocial.profile
 
-import androidx.activity.compose.BackHandler
+import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.backhandler.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -226,9 +229,14 @@ private fun ProfileContent(
  */
 @Composable
 private fun ProjectThumb(project: ProjectSummary, modifier: Modifier = Modifier) {
-    val url = project.firstPhoto?.mediumUrl
-        ?: project.firstPhoto?.smallUrl
-        ?: project.firstPhoto?.squareUrl
+    // Skips blanks, not just nulls: Ravelry occasionally serves an empty string for a size
+    // it hasn't generated, and a plain elvis chain would stop at "" and show a blank tile
+    // instead of falling through to a real size (or the name placeholder).
+    val url = listOf(
+        project.firstPhoto?.mediumUrl,
+        project.firstPhoto?.smallUrl,
+        project.firstPhoto?.squareUrl,
+    ).firstOrNull { !it.isNullOrBlank() }
     Box(
         modifier = modifier.background(MaterialTheme.colorScheme.surfaceVariant),
         contentAlignment = Alignment.Center,

@@ -33,8 +33,13 @@ data class UserProfile(
     @SerialName("photo_url") val photoUrl: String? = null,
     @SerialName("small_photo_url") val smallPhotoUrl: String? = null,
 ) {
-    /** Best available avatar for the profile header. */
-    val avatarUrl: String? get() = largePhotoUrl ?: photoUrl ?: smallPhotoUrl
+    /**
+     * Best available avatar for the profile header. Skips blanks, not just nulls:
+     * Ravelry occasionally serves an empty string for a photo size it hasn't generated,
+     * and a plain elvis chain would stop at "" and yield a broken empty-URL reference.
+     */
+    val avatarUrl: String? get() =
+        listOf(largePhotoUrl, photoUrl, smallPhotoUrl).firstOrNull { !it.isNullOrBlank() }
 }
 
 /** State of the in-app user-profile page. [Hidden] until a username is tapped. */
@@ -106,8 +111,24 @@ class UserProfileViewModel(
                 // failure surfaces here in the try rather than propagating to the parent
                 // job out of reach of this catch. All three still overlap: the asyncs
                 // start before the profile request.
-                val projectsDeferred = async { runCatching { apiClient.getProjects(username) }.getOrDefault(emptyList()) }
-                val groupsDeferred = async { runCatching { apiClient.getUserGroups(username) }.getOrDefault(emptyList()) }
+                val projectsDeferred = async {
+                    try {
+                        apiClient.getProjects(username)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        emptyList()
+                    }
+                }
+                val groupsDeferred = async {
+                    try {
+                        apiClient.getUserGroups(username)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        emptyList()
+                    }
+                }
                 val profile = apiClient.getUserProfile(username)
                 val projects = projectsDeferred.await()
                 val groups = groupsDeferred.await()
@@ -118,8 +139,13 @@ class UserProfileViewModel(
                 throw e
             } catch (e: SessionExpiredException) {
                 println("FiberSocial: UserProfileViewModel.open session expired")
-                if (gen == generation) _state.value = UserProfileState.Hidden
-                _sessionExpired.trySend(Unit)
+                // Guard the login-routing signal by generation: a load from a dismissed or
+                // superseded page must not yank the user to the login screen; the active
+                // page's own load will surface the expiry if the session is really gone.
+                if (gen == generation) {
+                    _state.value = UserProfileState.Hidden
+                    _sessionExpired.trySend(Unit)
+                }
             } catch (e: Exception) {
                 println("FiberSocial: UserProfileViewModel.open($username) error: ${e.message}")
                 if (gen == generation) {

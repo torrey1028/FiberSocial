@@ -48,7 +48,7 @@ class UserProfileViewModelTest {
     }
 
     @Test
-    fun `open loads the profile, projects, and groups`() = runTest(UnconfinedTestDispatcher()) {
+    fun `open loads the profile projects and groups`() = runTest(UnconfinedTestDispatcher()) {
         val vm = UserProfileViewModel(fullApiClient(), this)
         vm.open("yarnie")
         awaitChildren(coroutineContext[Job]!!)

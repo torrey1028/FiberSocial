@@ -175,16 +175,6 @@ class RavelryApiClient(
     }
 
     /**
-     * Returns the list of groups [username] is a member of.
-     *
-     * Scrapes `www.ravelry.com/people/{username}/groups/memberships` using the session cookie,
-     * extracts group permalinks, then resolves each via a search call to get the [Group]
-     * (including `forum_id`). The search calls are made in parallel.
-     *
-     * @param username Ravelry username whose memberships to fetch.
-     * @return Groups the user belongs to. Groups not found via search are silently omitted.
-     */
-    /**
      * Returns [username]'s public profile (issue #194).
      *
      * @param username Ravelry username; the profile endpoint accepts it as the `{id}`.
@@ -198,6 +188,16 @@ class RavelryApiClient(
         return lenientJson.decodeFromString<UserProfileResponse>(raw).user
     }
 
+    /**
+     * Returns the list of groups [username] is a member of.
+     *
+     * Scrapes `www.ravelry.com/people/{username}/groups/memberships` using the session cookie,
+     * extracts group permalinks, then resolves each via a search call to get the [Group]
+     * (including `forum_id`). The search calls are made in parallel.
+     *
+     * @param username Ravelry username whose memberships to fetch.
+     * @return Groups the user belongs to. Groups not found via search are silently omitted.
+     */
     suspend fun getUserGroups(username: String): List<Group> = coroutineScope {
         val html = httpClient.get("https://www.ravelry.com/people/$username/groups/memberships") {
             header(HttpHeaders.Cookie, sessionCookie())
