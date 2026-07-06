@@ -37,9 +37,6 @@ if [ "$DEVICES" -eq 0 ]; then
 fi
 
 PACKAGE="com.autom8ed.fibersocial"
-# Explicitly initialized: an inherited environment variable must never decide
-# whether user data gets wiped below.
-CLEAR_AFTER_INSTALL=0
 
 # A debug APK can't update an installed release build (and vice versa): the
 # signatures differ, and on this setup the incompatible install doesn't fail
@@ -65,7 +62,6 @@ if [ -n "$INSTALLED_FLAGS" ]; then
         # record-kept packages, where adb uninstall reports Failure but a plain
         # install succeeds. Dead-ending here would help nobody.
         adb uninstall "$PACKAGE" || echo "    (uninstall reported failure; continuing — the install may still succeed)"
-        CLEAR_AFTER_INSTALL=1
     fi
 fi
 
@@ -76,17 +72,12 @@ echo "Found $DEVICES device(s). Installing..."
 # Only works debug-over-debug; replacing an installed *release* build with a
 # debug one needs an uninstall (different signing key), which the mismatch
 # check above performs automatically.
+#
+# No post-install `pm clear` needed for the reinstall's stale-keyset crash any
+# more: the app self-heals a corrupted EncryptedSharedPreferences keyset on
+# launch (see AndroidKeyValueStore.encryptedKeyValueStore), so a restored stale
+# keyset is wiped and recreated rather than crashing.
 adb install -r -d "$APK_PATH"
-
-# Auto-backup restores the old build's app data right after an uninstall/reinstall
-# cycle — including the EncryptedSharedPreferences keyset, whose Keystore master key
-# no longer exists. The app then crashes on launch with AndroidKeysetManager/Tink
-# errors (see CLAUDE.md). Clearing data after the install guarantees a clean start;
-# the login was already lost to the uninstall anyway.
-if [ "$CLEAR_AFTER_INSTALL" -eq 1 ]; then
-    echo "==> Clearing restored app data (stale encrypted-prefs keyset would crash on launch)..."
-    adb shell pm clear "$PACKAGE"
-fi
 
 echo ""
 echo "Done! FiberSocial installed on device."
