@@ -38,8 +38,22 @@ The "Build ComposeApp framework" phase runs
 `./gradlew :composeApp:embedAndSignAppleFrameworkForXcode` in `src/platform/android`,
 so the Kotlin side rebuilds automatically on every Xcode build.
 
-## Not yet ported (later phases)
+## TestFlight & signing
 
-- Notifications, background refresh, and notification deep links — #118
-- Device photo uploads (attach-from-projects works) — #119
-- App icon / launch screen polish and TestFlight — #119
+Simulator builds need no signing. For a device or TestFlight build you need an
+Apple Developer Program membership ($99/yr):
+
+1. In Xcode: project → FiberSocial target → Signing & Capabilities → check
+   "Automatically manage signing" and pick your Team. (The Background Modes
+   capability is already configured via Info.plist.)
+2. Bump `MARKETING_VERSION`/`CURRENT_PROJECT_VERSION` if this is a new release.
+3. Product → Archive, then Distribute App → TestFlight & App Store Connect.
+   First time: create the app record in App Store Connect with bundle id
+   `com.autom8ed.fibersocial`.
+4. Add yourself (and any testers) to the TestFlight internal group — internal
+   testing needs no App Review.
+
+Before shipping a build to testers, run through
+`docs/ios-device-checklist.md` on a physical device — several notification
+behaviors (real reminder fires, Background App Refresh grants) only exist
+off-simulator.
