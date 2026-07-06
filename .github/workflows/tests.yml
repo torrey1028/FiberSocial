@@ -1,8 +1,11 @@
 name: Tests
 
 on:
+  # `push` only on main (post-merge verification). Branch CI comes from the
+  # pull_request trigger below. Listing feat/** here too would fire both events
+  # for the same commit on every feat PR, running the whole suite twice.
   push:
-    branches: ["main", "feat/**"]
+    branches: ["main"]
   pull_request:
     branches: ["main"]
 
@@ -151,3 +154,44 @@ jobs:
           name: android-coverage-baseline
           path: src/common/build/reports/coverage/test/debug/report.xml
           retention-days: 90
+
+  common-ios-tests:
+    name: Common module iOS (Kotlin/Native) tests
+    # macOS runners are ~10x the billing rate and this job is ~6min vs ~1min for
+    # the ubuntu jobs, so run it only on main (post-merge) rather than on every
+    # PR. An iOS/Native regression surfaces on the merge commit instead of the PR.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: "temurin"
+
+      # The build applies AGP even for Native-only tasks (:common is also an
+      # Android library), and macOS arm64 runner images don't ship an Android SDK.
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: "platforms;android-34"
+
+      - name: Write local.properties
+        run: |
+          echo "sdk.dir=$ANDROID_HOME" > src/platform/android/local.properties
+          echo "ravelry.client_id=" >> src/platform/android/local.properties
+          echo "ravelry.client_secret=" >> src/platform/android/local.properties
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Run commonTest on the iOS simulator target
+        working-directory: src/platform/android
+        run: ./gradlew :common:iosSimulatorArm64Test
+
+      # Proves the framework the Xcode project will consume (#117) still links.
+      - name: Assemble the XCFramework
+        working-directory: src/platform/android
+        run: ./gradlew :common:assembleFiberSocialCommonReleaseXCFramework

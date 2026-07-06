@@ -19,7 +19,7 @@ class EventNotificationContentTest {
     }
 
     @Test
-    fun `reminderNotificationId depends only on permalink, so both reminder kinds share an id`() {
+    fun `reminderNotificationId depends only on permalink so both reminder kinds share an id`() {
         // reminderNotificationId takes no ReminderKind — DAY_BEFORE and SOON reminders for
         // the same event necessarily land on the same id by construction, not by an
         // explicit kind check. This pins that determinism.
@@ -45,7 +45,7 @@ class EventNotificationContentTest {
     }
 
     @Test
-    fun `new-event text joins title and when-text, dropping blanks`() {
+    fun `new-event text joins title and when-text dropping blanks`() {
         assertEquals(
             "Cozy Meetup — July 10, 2026 @ 5:30 PM",
             EventNotificationContent.newEventText("Cozy Meetup", "July 10, 2026 @ 5:30 PM"),

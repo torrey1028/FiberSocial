@@ -29,6 +29,19 @@ package com.autom8ed.fibersocial.feed.models
  *   topic has no replies (or the latest reply couldn't be fetched).
  * @property latestReplyPreview Truncated plain-text excerpt of the most recent reply
  *   (max 200 chars), or `null` under the same conditions as [latestReplyAuthor].
+ * @property latestReplyBody The most recent reply's raw Markdown source — the canonical
+ *   content field for the card's rich preview (issue #154; see [Post.parseBodyDocument]
+ *   for why the source outranks the rendering) — or `null` under the same conditions as
+ *   [latestReplyAuthor].
+ * @property latestReplyHtml Ravelry's HTML rendering of the most recent reply's body.
+ *   Used for emoji resolution and as the parse fallback when the source is absent.
+ * @property openingPostBody The opening post's raw Markdown source, fetched for topics
+ *   with no replies so their preview shows real formatting and images — the topic
+ *   summary is unreliable about both. Empty when the topic has replies (the preview
+ *   uses the reply fields then) or the fetch failed. Allowed for sticky topics: an
+ *   announcement's opening post is exactly what its card should preview.
+ * @property openingPostHtml Ravelry's HTML rendering of the opening post's body; same
+ *   emoji/fallback role as [latestReplyHtml].
  */
 data class FeedItem(
     val id: Long,
@@ -44,9 +57,19 @@ data class FeedItem(
     val sticky: Boolean = false,
     val latestReplyAuthor: RavelryUser? = null,
     val latestReplyPreview: String? = null,
+    val latestReplyBody: String? = null,
+    val latestReplyHtml: String? = null,
+    val openingPostBody: String = "",
+    val openingPostHtml: String = "",
 ) {
     init {
-        require(!sticky || (latestReplyAuthor == null && latestReplyPreview == null)) {
+        require(
+            !sticky ||
+                (
+                    latestReplyAuthor == null && latestReplyPreview == null &&
+                        latestReplyBody == null && latestReplyHtml == null
+                    ),
+        ) {
             "Sticky topics attribute to the opening post; latest-reply fields must stay null"
         }
     }

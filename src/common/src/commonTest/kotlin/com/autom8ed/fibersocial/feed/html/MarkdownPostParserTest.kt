@@ -105,7 +105,7 @@ class MarkdownPostParserTest {
     }
 
     @Test
-    fun `emoji substitute across headings, lists, quotes, and tables but not code blocks`() {
+    fun `emoji substitute across headings lists quotes and tables but not code blocks`() {
         val markdown = "# hey :purple_heart:\n\n- item :purple_heart:\n\n1. one :purple_heart:\n\n" +
             "> quote :purple_heart:\n\n---\n\n| a |\n| --- |\n| cell :purple_heart: |\n\n" +
             "```\ncode :purple_heart:\n```"
@@ -193,7 +193,7 @@ class MarkdownPostParserTest {
     }
 
     @Test
-    fun `plainText keeps a literal asterisk used as punctuation, not emphasis`() {
+    fun `plainText keeps a literal asterisk used as punctuation rather than emphasis`() {
         assertEquals("Rated C* and 3*4=12", MarkdownPostParser.plainText("Rated C* and 3*4=12"))
     }
 
@@ -214,7 +214,7 @@ class MarkdownPostParserTest {
     }
 
     @Test
-    fun `plainText flattens headings, code blocks, tables, and dividers`() {
+    fun `plainText flattens headings and code blocks and tables and dividers`() {
         val markdown = "# Heading\n\n```\ncode()\n```\n\n---\n\n| a | b |\n| --- | --- |\n| c | d |"
         assertEquals("Heading code() a b c d", MarkdownPostParser.plainText(markdown))
     }
@@ -275,5 +275,77 @@ class MarkdownPostParserTest {
         val item = feedItem(bodySummary = "plain **bold** summary", bodySummaryHtml = "")
         val paragraph = assertIs<PostBlock.Paragraph>(item.parseSummaryDocument().blocks.single())
         assertEquals(1, paragraph.content.filterIsInstance<Inline.Styled>().size)
+    }
+
+    @Test
+    fun `parsePreviewDocument prefers the latest reply's html`() {
+        // Mirrors displayPreview's reply-else-opener rule (the card previews the reply).
+        // latestReplyAuthor + the reply content are populated together from the attributed
+        // reply, and the preview gates on the author, so both are set here.
+        val item = feedItem(
+            bodySummary = "opening post",
+            bodySummaryHtml = "<p>opening post</p>",
+        ).copy(
+            latestReplyAuthor = RavelryUser(username = "replier"),
+            latestReplyHtml = "<p><em>latest reply</em></p>",
+        )
+        val paragraph = assertIs<PostBlock.Paragraph>(item.parsePreviewDocument().blocks.single())
+        val styled = paragraph.content.filterIsInstance<Inline.Styled>().single()
+        assertEquals(InlineStyle.ITALIC, styled.style)
+        assertEquals(listOf<Inline>(Inline.Text("latest reply")), styled.children)
+    }
+
+    @Test
+    fun `parsePreviewDocument previews nothing for an attributed reply with a blank body`() {
+        // The card attributes to the replier; the preview must not fall through to the
+        // opener (which would print the opener's words under the replier's name).
+        val item = feedItem(bodySummary = "opening post", bodySummaryHtml = "<p>opening post</p>")
+            .copy(
+                latestReplyAuthor = RavelryUser(username = "replier"),
+                latestReplyBody = "   ",
+                latestReplyHtml = "   ",
+                openingPostHtml = "<p>opening post</p>",
+            )
+        assertEquals(emptyList(), item.parsePreviewDocument().blocks)
+    }
+
+    @Test
+    fun `parsePreviewDocument prefers the opening post body over the summary`() {
+        val item = feedItem(
+            bodySummary = "stripped summary",
+            bodySummaryHtml = "<p>stripped summary</p>",
+        ).copy(openingPostHtml = "<p>Opening <em>italic</em> body</p>")
+        val paragraph = assertIs<PostBlock.Paragraph>(item.parsePreviewDocument().blocks.single())
+        val styled = paragraph.content.filterIsInstance<Inline.Styled>().single()
+        assertEquals(InlineStyle.ITALIC, styled.style)
+    }
+
+    @Test
+    fun `parsePreviewDocument parses the markdown source over the html rendering`() {
+        // The on-device regression behind issue #154's follow-up: Ravelry's rendering
+        // left the emphasis syntax literal, while the source parses to real italics —
+        // exactly the parseBodyDocument contract, now applied to the card.
+        val item = feedItem(bodySummary = "unused", bodySummaryHtml = "<p>unused</p>").copy(
+            openingPostBody = "Test *italic* topic",
+            openingPostHtml = "<p>Test *italic* topic</p>",
+        )
+        val paragraph = assertIs<PostBlock.Paragraph>(item.parsePreviewDocument().blocks.single())
+        val styled = paragraph.content.filterIsInstance<Inline.Styled>().single()
+        assertEquals(InlineStyle.ITALIC, styled.style)
+    }
+
+    @Test
+    fun `parsePreviewDocument treats blank reply and opening html as absent`() {
+        val item = feedItem(bodySummary = "the summary", bodySummaryHtml = "<p>the summary</p>")
+            .copy(latestReplyHtml = "", openingPostHtml = "   ".trim())
+        val paragraph = assertIs<PostBlock.Paragraph>(item.parsePreviewDocument().blocks.single())
+        assertEquals(listOf<Inline>(Inline.Text("the summary")), paragraph.content)
+    }
+
+    @Test
+    fun `parsePreviewDocument falls back to the summary without a reply or opening post`() {
+        val item = feedItem(bodySummary = "opening post", bodySummaryHtml = "<p>opening post</p>")
+        val paragraph = assertIs<PostBlock.Paragraph>(item.parsePreviewDocument().blocks.single())
+        assertEquals(listOf<Inline>(Inline.Text("opening post")), paragraph.content)
     }
 }

@@ -247,19 +247,23 @@ class FeedRepositoryTest {
     }
 
     @Test
-    fun `getFeedItemsPage skips latest-post fetch for single-post topics`() = runTest {
+    fun `getFeedItemsPage fetches the opening post for single-post topics`() = runTest {
+        // Reversed from the original skip (issues #154/#185): the summary can't be
+        // trusted for formatting or images, so the opening post body is fetched.
         val requestedPaths = mutableListOf<String>()
         val repo = repoWithRoute { path ->
             requestedPaths += path
             when {
                 path.contains("/forums/") -> topicsJson(100L)
+                path.contains("/posts.json") -> latestPostJson(username = "yarnie")
                 path.contains("/topics/") -> topicDetailJson(100L, postsCount = 1)
                 else -> error("Unexpected: $path")
             }
         }
         val item = repo.singlePageItems().single()
+        assertEquals(1, requestedPaths.count { it.contains("/posts.json") })
+        // ...but never as a "reply": attribution stays with the opener.
         assertEquals(null, item.latestReplyAuthor)
-        assertEquals(emptyList(), requestedPaths.filter { it.contains("/posts.json") })
     }
 
     @Test
@@ -282,6 +286,10 @@ class FeedRepositoryTest {
         val item = repo.singlePageItems().single()
         assertEquals(null, item.latestReplyAuthor)
         assertEquals(null, item.latestReplyPreview)
+        // The sticky invariant's require() guards the reply-content fields too, so pin
+        // them: a sticky topic that ever populated one would crash the whole feed parse.
+        assertEquals(null, item.latestReplyBody)
+        assertEquals(null, item.latestReplyHtml)
         assertEquals(item.author, item.displayAuthor)
     }
 
@@ -348,7 +356,72 @@ class FeedRepositoryTest {
         val item = repo.singlePageItems().single()
         assertEquals(200, item.latestReplyPreview?.length)
         assertEquals("y".repeat(200), item.latestReplyPreview)
+        // The raw HTML is carried untruncated for the card's rich preview (issue #154).
+        assertEquals(longBody, item.latestReplyHtml)
     }
+
+    @Test
+    fun `getFeedItemsPage previews a no-reply topic from its opening post body`() = runTest {
+        // The topic summary is unreliable about formatting and never carries images, so
+        // a topic without replies fetches its opening post for the card (issues #154/#185).
+        val repo = repoWithRoute { path ->
+            when {
+                path.contains("/forums/") -> topicsJson(100L)
+                path.contains("/posts.json") -> latestPostJson(
+                    username = "yarnie",
+                    body = "Opening *italic* body",
+                    bodyHtml = "<p>Opening <em>italic</em> body</p>",
+                )
+                path.contains("/topics/") -> topicDetailJson(100L, postsCount = 1)
+                else -> error("Unexpected: $path")
+            }
+        }
+        val item = repo.singlePageItems().single()
+        // Both fields carried: the Markdown source is canonical, the rendering
+        // resolves emoji (same contract as Post.parseBodyDocument).
+        assertEquals("Opening *italic* body", item.openingPostBody)
+        assertEquals("<p>Opening <em>italic</em> body</p>", item.openingPostHtml)
+        // The opening post is not a "reply": attribution stays with the opener.
+        assertEquals(null, item.latestReplyAuthor)
+        assertEquals(null, item.latestReplyHtml)
+    }
+
+    @Test
+    fun `getFeedItemsPage previews a sticky single-post topic from its opening post`() = runTest {
+        // A pinned announcement with no replies still gets the rich opening-post
+        // preview; the newest post IS the opening post, so the sticky invariant
+        // (no reply attribution) holds.
+        val repo = repoWithRoute { path ->
+            when {
+                path.contains("/forums/") -> topicsJson(100L)
+                path.contains("/posts.json") -> latestPostJson(bodyHtml = "<p>Pinned rules</p>")
+                path.contains("/topics/") -> topicDetailJson(100L, sticky = true, postsCount = 1)
+                else -> error("Unexpected: $path")
+            }
+        }
+        val item = repo.singlePageItems().single()
+        assertTrue(item.sticky)
+        assertEquals("<p>Pinned rules</p>", item.openingPostHtml)
+        assertEquals(null, item.latestReplyAuthor)
+    }
+
+    @Test
+    fun `getFeedItemsPage keeps openingPostHtml empty for replied topics`() = runTest {
+        val repo = repoWithRoute { path ->
+            when {
+                path.contains("/forums/") -> topicsJson(100L)
+                path.contains("/posts.json") -> latestPostJson()
+                path.contains("/topics/") -> topicDetailJson(100L, postsCount = 5)
+                else -> error("Unexpected: $path")
+            }
+        }
+        val item = repo.singlePageItems().single()
+        assertEquals("", item.openingPostHtml)
+        assertEquals("", item.openingPostBody)
+        assertEquals("replier", item.latestReplyAuthor?.username)
+        assertEquals("Latest **reply** text", item.latestReplyBody)
+    }
+
 
     @Test
     fun `getFeedItemsPage reports hasMore true when more pages remain`() = runTest {
