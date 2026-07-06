@@ -23,7 +23,7 @@
 - The Xcode project is `src/platform/ios/FiberSocial.xcodeproj`; its "Build ComposeApp framework" phase runs `./gradlew :composeApp:embedAndSignAppleFrameworkForXcode` in `src/platform/android`, so Kotlin changes rebuild automatically. The script validates JDK candidates by major version (an inherited `JAVA_HOME` may point at an old JDK; it probes `java_home -v 17` and homebrew's `openjdk@17` as fallbacks).
 - Secrets mirror Android's `local.properties`: put `RAVELRY_CLIENT_ID`/`RAVELRY_CLIENT_SECRET` in the gitignored `src/platform/ios/Config.local.xcconfig` (`Config.xcconfig` holds empty committed defaults and optionally includes it). Without them the app runs but login fails with `invalid_client`, with a launch-time warning.
 - Simulator build/test from the CLI: `xcodebuild -project FiberSocial.xcodeproj -scheme FiberSocial -destination 'platform=iOS Simulator,name=iPhone 17' build` (or `test` — the hosted XCTests cover the Keychain/NSUserDefaults stores; the bare Kotlin/Native test runner has no keychain daemon, so `:composeApp:iosSimulatorArm64Test` keychain write tests skip themselves there by design).
-- Not ported yet: notifications/background refresh/deep links (#118); device photo uploads and app icon (#119).
+- Not ported yet: device photo uploads and app icon (#119). Notifications (#118) work: reminders are OS-scheduled local notifications; new-event polling is a sync on every foreground activation plus opportunistic `BGAppRefreshTask` (needs a real device to observe — the simulator rejects background-task submission, logged and harmless).
 
 ## Release builds
 
