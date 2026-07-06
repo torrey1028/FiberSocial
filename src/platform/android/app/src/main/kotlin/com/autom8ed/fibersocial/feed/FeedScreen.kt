@@ -101,6 +101,7 @@ import com.autom8ed.fibersocial.feedback.FeedbackScreen
 import com.autom8ed.fibersocial.feedback.SupportGroup
 import com.autom8ed.fibersocial.feedback.deviceContext
 import com.autom8ed.fibersocial.settings.SettingsScreen
+import com.autom8ed.fibersocial.settings.ThemeMode
 import com.autom8ed.fibersocial.storage.NOTIFICATION_SETTINGS_PREFS_NAME
 import com.autom8ed.fibersocial.storage.plainKeyValueStore
 import com.autom8ed.fibersocial.ui.PullToRefreshBox
@@ -114,6 +115,8 @@ fun FeedScreen(
     onLogout: () -> Unit,
     deepLinkEventPermalink: String? = null,
     onDeepLinkConsumed: () -> Unit = {},
+    themeMode: ThemeMode? = null,
+    onThemeModeSelected: (ThemeMode) -> Unit = {},
 ) {
     val state by viewModel.feed.state.collectAsState()
     val topicDetailState by viewModel.topicDetail.state.collectAsState()
@@ -214,6 +217,8 @@ fun FeedScreen(
             user = user,
             onBack = { showSettings = false },
             onSignOut = onLogout,
+            themeMode = themeMode,
+            onThemeModeSelected = onThemeModeSelected,
             pollCadence = pollCadence,
             onPollCadenceSelected = { cadence ->
                 pollCadence = cadence
