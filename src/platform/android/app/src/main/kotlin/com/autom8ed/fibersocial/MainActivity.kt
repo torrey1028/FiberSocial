@@ -23,7 +23,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import com.autom8ed.fibersocial.auth.AuthState
 import com.autom8ed.fibersocial.feed.FeedAndroidViewModel
+import androidx.compose.runtime.CompositionLocalProvider
 import com.autom8ed.fibersocial.feed.FeedScreen
+import com.autom8ed.fibersocial.feed.LocalProjectLinkOpener
 import com.autom8ed.fibersocial.login.AuthAndroidViewModel
 import com.autom8ed.fibersocial.login.LoginScreen
 import com.autom8ed.fibersocial.login.WebViewLoginScreen
@@ -132,6 +134,11 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                             val deepLink by deepLinkEvent.collectAsState()
+                            // Project links tapped anywhere in post content open the
+                            // in-app project page instead of the browser (issue #103).
+                            CompositionLocalProvider(
+                                LocalProjectLinkOpener provides { link -> feedVm.projectPage.open(link) },
+                            ) {
                             FeedScreen(
                                 viewModel = feedVm,
                                 // Reset first: the ViewModel outlives the session, and a
@@ -148,6 +155,7 @@ class MainActivity : ComponentActivity() {
                                     themeScope.launch { themeStore.save(ThemeSettings(mode = mode)) }
                                 },
                             )
+                            }
                         }
                     }
                 }

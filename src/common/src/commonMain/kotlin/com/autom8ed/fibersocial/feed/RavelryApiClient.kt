@@ -17,6 +17,7 @@ import com.autom8ed.fibersocial.feed.models.Post
 import com.autom8ed.fibersocial.feed.models.RavelryUser
 import com.autom8ed.fibersocial.feed.models.Topic
 import com.autom8ed.fibersocial.feed.models.VoteType
+import com.autom8ed.fibersocial.projects.ProjectDetail
 import com.autom8ed.fibersocial.projects.ProjectPhoto
 import com.autom8ed.fibersocial.projects.ProjectSummary
 import io.ktor.client.HttpClient
@@ -759,13 +760,24 @@ class RavelryApiClient(
      * @param username Ravelry username who owns the project.
      * @param projectId Ravelry project ID.
      */
-    suspend fun getProjectPhotos(username: String, projectId: Long): List<ProjectPhoto> {
+    suspend fun getProjectPhotos(username: String, projectId: Long): List<ProjectPhoto> =
+        getProjectDetail(username, projectId.toString()).photos
+
+    /**
+     * Returns a project's full detail for the in-app project page (issue #103).
+     *
+     * @param username Ravelry username who owns the project.
+     * @param idOrPermalink Ravelry project ID or its URL permalink — the endpoint
+     *   accepts either, which lets a tapped `/projects/{user}/{permalink}` link be
+     *   resolved without a search round-trip.
+     */
+    suspend fun getProjectDetail(username: String, idOrPermalink: String): ProjectDetail {
         val raw = authenticatedRequest {
-            httpClient.get("$BASE_URL/projects/$username/$projectId.json") {
+            httpClient.get("$BASE_URL/projects/$username/$idOrPermalink.json") {
                 header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
             }
         }
-        return lenientJson.decodeFromString<ProjectDetailResponse>(raw).project.photos
+        return lenientJson.decodeFromString<ProjectDetailResponse>(raw).project
     }
 
     /**
@@ -894,8 +906,7 @@ class RavelryApiClient(
     @Serializable private data class UploadTokenResponse(@SerialName("upload_token") val uploadToken: String)
     @Serializable private data class AttachmentResponse(@SerialName("image_path") val imagePath: String)
     @Serializable private data class ProjectsListResponse(val projects: List<ProjectSummary> = emptyList())
-    @Serializable private data class ProjectDetailResponse(val project: ProjectPhotosOnly)
-    @Serializable private data class ProjectPhotosOnly(val photos: List<ProjectPhoto> = emptyList())
+    @Serializable private data class ProjectDetailResponse(val project: ProjectDetail)
 }
 
 /**

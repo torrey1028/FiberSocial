@@ -1670,6 +1670,35 @@ class RavelryApiClientTest {
     }
 
     @Test
+    fun `getProjectDetail hits the detail endpoint by permalink and parses the fields`() = runTest {
+        var captured: io.ktor.http.Url? = null
+        val client = routingApiClientCapturing(onRequest = { captured = it }) {
+            """{"project":{"id":7,"name":"Autumn Socks","permalink":"autumn-socks",
+                "pattern_name":"Vanilla Socks","status_name":"In progress","progress":60,
+                "craft_name":"Knitting","started":"2026/06/01","made_for":"Mom","size":"M",
+                "notes":"So *cozy*","notes_html":"<p>So <em>cozy</em></p>","tag_names":["socks","gift"],
+                "photos":[{"id":901,"medium_url":"https://img.example/m1.jpg"}]}}"""
+        }
+        val project = client.getProjectDetail("yarnie", "autumn-socks")
+        assertEquals("/projects/yarnie/autumn-socks.json", captured?.encodedPath)
+        assertEquals("Autumn Socks", project.name)
+        assertEquals("Vanilla Socks", project.patternName)
+        assertEquals("In progress", project.statusName)
+        assertEquals(60, project.progress)
+        assertEquals("Knitting", project.craftName)
+        assertEquals("Mom", project.madeFor)
+        assertEquals("So *cozy*", project.notes)
+        assertEquals(listOf("socks", "gift"), project.tagNames)
+        assertEquals(listOf(901L), project.photos.map { it.id })
+    }
+
+    @Test
+    fun `getProjectDetail fails loudly when the response is missing the project`() = runTest {
+        val client = routingApiClient { "{}" }
+        assertFailsWith<Exception> { client.getProjectDetail("yarnie", "autumn-socks") }
+    }
+
+    @Test
     fun `getProjectPhotos defaults to empty when the project has no photos field`() = runTest {
         val client = routingApiClient { """{"project":{"id":7,"name":"Autumn Socks"}}""" }
         assertEquals(emptyList(), client.getProjectPhotos("yarnie", 7L))

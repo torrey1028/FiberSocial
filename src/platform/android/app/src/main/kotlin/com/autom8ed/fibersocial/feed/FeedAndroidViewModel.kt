@@ -13,6 +13,7 @@ import com.autom8ed.fibersocial.net.ravelryApiClient
 import com.autom8ed.fibersocial.net.ravelryAuthRepository
 import com.autom8ed.fibersocial.net.ravelryHttpClient
 import com.autom8ed.fibersocial.notifications.EventSyncWorker
+import com.autom8ed.fibersocial.projects.ProjectPageViewModel
 import com.autom8ed.fibersocial.projects.ProjectPhotoPickerViewModel
 import com.autom8ed.fibersocial.storage.AUTH_PREFS_NAME
 import com.autom8ed.fibersocial.storage.encryptedKeyValueStore
@@ -44,6 +45,9 @@ class FeedAndroidViewModel(app: Application) : AndroidViewModel(app) {
     // Shared by both composers: only one is visible at a time, and the picked photo
     // is routed to the visible composer's ImageAttachmentViewModel at the call site.
     val projectPicker = ProjectPhotoPickerViewModel(apiClient, viewModelScope)
+
+    // In-app project page for tapped ravelry.com/projects links (issue #103).
+    val projectPage = ProjectPageViewModel(apiClient, viewModelScope)
     val feedback = FeedbackViewModel(apiClient, viewModelScope)
     val events = EventsViewModel(apiClient, viewModelScope)
     val eventDetail = EventDetailViewModel(
@@ -63,6 +67,7 @@ class FeedAndroidViewModel(app: Application) : AndroidViewModel(app) {
         newTopicImage.sessionExpired,
         replyImage.sessionExpired,
         projectPicker.sessionExpired,
+        projectPage.sessionExpired,
         feedback.sessionExpired,
         events.sessionExpired,
         eventDetail.sessionExpired,
