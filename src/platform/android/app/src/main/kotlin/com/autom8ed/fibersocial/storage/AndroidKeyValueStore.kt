@@ -33,14 +33,45 @@ const val NOTIFICATION_SETTINGS_PREFS_NAME = "notification_settings"
 fun plainKeyValueStore(context: Context, name: String): KeyValueStore =
     SharedPreferencesKeyValueStore(context.applicationContext.getSharedPreferences(name, Context.MODE_PRIVATE))
 
-/** `EncryptedSharedPreferences`-backed store — for secrets like OAuth tokens. */
-fun encryptedKeyValueStore(context: Context, name: String): KeyValueStore =
-    SharedPreferencesKeyValueStore(
-        EncryptedSharedPreferences.create(
-            name,
-            MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC),
-            context.applicationContext,
-            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
+/**
+ * `EncryptedSharedPreferences`-backed store — for secrets like OAuth tokens.
+ *
+ * Self-healing: an uninstall/reinstall cycle can leave the Tink keyset in the prefs
+ * file undecryptable (its Keystore master key is gone, or auto-backup restored a stale
+ * keyset), which used to crash the app on launch with AndroidKeysetManager errors
+ * until a manual `adb shell pm clear`. Opening the store now recovers by wiping the
+ * corrupted prefs file and recreating it — the stored token is unreadable either way,
+ * so the only cost is the sign-in the user would have needed anyway.
+ */
+fun encryptedKeyValueStore(context: Context, name: String): KeyValueStore {
+    val appContext = context.applicationContext
+    return SharedPreferencesKeyValueStore(
+        createSelfHealing(
+            create = { encryptedPrefs(appContext, name) },
+            wipeCorrupted = { appContext.deleteSharedPreferences(name) },
         ),
     )
+}
+
+private fun encryptedPrefs(appContext: Context, name: String): SharedPreferences =
+    EncryptedSharedPreferences.create(
+        name,
+        MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC),
+        appContext,
+        EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+        EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
+    )
+
+/**
+ * Runs [create], and on failure wipes the corrupted state via [wipeCorrupted] and tries
+ * once more. A second failure propagates — that's a genuine bug, not stale state, and
+ * must stay loud.
+ */
+internal fun <T> createSelfHealing(create: () -> T, wipeCorrupted: () -> Unit): T =
+    try {
+        create()
+    } catch (e: Exception) {
+        println("FiberSocial: encrypted prefs unreadable (${e.message}); wiping and recreating")
+        wipeCorrupted()
+        create()
+    }
