@@ -20,11 +20,11 @@ class RavelryOAuthClientTest {
 
     @Test
     fun `exchangeAuthCode sets expiresAt in the future`() = runTest {
-        val before = kotlinx.datetime.Clock.System.now().toEpochMilliseconds()
+        val before = kotlin.time.Clock.System.now().toEpochMilliseconds()
         val client = mockOAuthClient(TOKEN_JSON)
         val token = client.exchangeAuthCode("code", "verifier", "https://redirect")
         // expires_in=3600 → expiresAt should be ~1 hour from now
-        val after = kotlinx.datetime.Clock.System.now().toEpochMilliseconds()
+        val after = kotlin.time.Clock.System.now().toEpochMilliseconds()
         assertTrue(token.expiresAt > before)
         assertTrue(token.expiresAt <= after + 3600 * 1000L)
     }

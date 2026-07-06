@@ -22,7 +22,7 @@ import com.autom8ed.fibersocial.storage.NOTIFICATION_STATE_PREFS_NAME
 import com.autom8ed.fibersocial.storage.encryptedKeyValueStore
 import com.autom8ed.fibersocial.storage.plainKeyValueStore
 import java.util.concurrent.TimeUnit
-import kotlinx.datetime.Clock
+import kotlin.time.Clock
 import kotlinx.datetime.TimeZone
 
 /**

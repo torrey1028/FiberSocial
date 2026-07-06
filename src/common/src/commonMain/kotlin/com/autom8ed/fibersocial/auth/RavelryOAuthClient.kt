@@ -5,7 +5,7 @@ import io.ktor.client.call.body
 import io.ktor.client.request.basicAuth
 import io.ktor.client.request.forms.submitForm
 import io.ktor.http.parameters
-import kotlinx.datetime.Clock
+import kotlin.time.Clock
 
 /**
  * Handles the Ravelry OAuth 2.0 token exchange and refresh flows.

@@ -1,0 +1,6 @@
+// Committed defaults. Real Ravelry OAuth credentials go in the gitignored
+// Config.local.xcconfig (see README.md) — the iOS analog of local.properties.
+RAVELRY_CLIENT_ID =
+RAVELRY_CLIENT_SECRET =
+
+#include? "Config.local.xcconfig"
