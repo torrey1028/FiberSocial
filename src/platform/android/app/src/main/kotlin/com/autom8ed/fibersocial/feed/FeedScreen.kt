@@ -970,8 +970,10 @@ private fun ProfileFooter(user: RavelryUser?, onClick: () -> Unit) {
 
 /**
  * The feed's floating action buttons: a small calendar button for the selected group's
- * events (issue #179) stacked above the new-topic button. The calendar button is only
- * shown while a group filter is active — it needs a group to open events for.
+ * events (issue #179) stacked above the new-topic button. The calendar button needs a
+ * group to open events for, so it renders only when [selectedGroup] is non-null; at the
+ * FeedScreen call site that is the currently-viewed group, which (since the all-groups
+ * view was removed, #97) is present whenever the user belongs to any group.
  */
 @Composable
 internal fun FeedFabs(
