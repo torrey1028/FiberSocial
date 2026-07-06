@@ -170,6 +170,15 @@ jobs:
           java-version: "17"
           distribution: "temurin"
 
+      # Compose Multiplatform 1.11's ui-uikit links against iOS 26 SDK symbols
+      # (UIViewLayoutRegion / the UIUtilities framework); the runner's default
+      # Xcode 16.4 SDK lacks them and the framework link fails.
+      - name: Select Xcode 26
+        run: |
+          ls -d /Applications/Xcode*.app
+          sudo xcode-select -s "$(ls -d /Applications/Xcode_26*.app | sort -V | tail -1)"
+          xcodebuild -version
+
       # The build applies AGP even for Native-only tasks (:common is also an
       # Android library), and macOS arm64 runner images don't ship an Android SDK.
       - name: Set up Android SDK
