@@ -314,8 +314,12 @@ class ProjectPageViewModel(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: ForbiddenException) {
+                // Unlike posting (which 403s only for a missing message-write scope),
+                // delete also 403s when the comment isn't the user's to remove — the
+                // server disagreeing with the client-side ownership gate. Re-login won't
+                // fix that case, so a neutral permission message is safer here (issue #197).
                 println("FiberSocial: ProjectPageViewModel.deleteComment forbidden: ${e.message}")
-                failure = COMMENT_PERMISSION_MESSAGE
+                failure = COMMENT_DELETE_FORBIDDEN_MESSAGE
             } catch (e: SessionExpiredException) {
                 println("FiberSocial: ProjectPageViewModel.deleteComment session expired")
                 if (gen == generation) _sessionExpired.trySend(Unit)
@@ -355,5 +359,13 @@ class ProjectPageViewModel(
         /** Shown when a comment POST 403s — the token lacks the message-write scope. */
         const val COMMENT_PERMISSION_MESSAGE =
             "Log out and back in to enable commenting (your session predates comment permission)."
+
+        /**
+         * Shown when a comment DELETE 403s. Deliberately cause-neutral: a delete 403 can
+         * mean either a missing scope or that the comment isn't the user's to remove, and
+         * only the former is fixable by re-login (issue #197).
+         */
+        const val COMMENT_DELETE_FORBIDDEN_MESSAGE =
+            "You don't have permission to delete this comment."
     }
 }

@@ -293,7 +293,9 @@ class ProjectPageViewModelTest {
     }
 
     @Test
-    fun `a 403 on deleteComment surfaces the re-login prompt`() = runTest(UnconfinedTestDispatcher()) {
+    fun `a 403 on deleteComment surfaces a cause-neutral permission message`() = runTest(UnconfinedTestDispatcher()) {
+        // Unlike posting, a delete 403 can mean "not your comment" — not just a missing
+        // scope — so the message must not tell the user to re-login (issue #197).
         val vm = ProjectPageViewModel(
             routingApiClient(route = { path ->
                 when {
@@ -310,7 +312,7 @@ class ProjectPageViewModelTest {
         vm.deleteComment(ProjectComment(id = 1, commentHtml = "<p>a</p>"))
         awaitChildren(coroutineContext[Job]!!)
         assertEquals(
-            ProjectPageViewModel.COMMENT_PERMISSION_MESSAGE,
+            ProjectPageViewModel.COMMENT_DELETE_FORBIDDEN_MESSAGE,
             assertIs<CommentPostState.Error>(vm.postState.value).message,
         )
         // The comment stays: deletion is pessimistic.
