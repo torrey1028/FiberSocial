@@ -37,6 +37,7 @@ import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -430,8 +431,10 @@ fun FeedScreen(
             },
             floatingActionButton = {
                 if (loaded != null && groups.isNotEmpty()) {
-                    FloatingActionButton(
-                        onClick = {
+                    FeedFabs(
+                        selectedGroup = loaded.selectedGroup,
+                        onGroupEventsClick = { group -> eventsGroup = group },
+                        onNewTopicClick = {
                             viewModel.newTopic.reset()
                             viewModel.newTopicImage.reset()
                             // Also dismiss the shared project picker: it survives config
@@ -440,9 +443,7 @@ fun FeedScreen(
                             viewModel.projectPicker.dismiss()
                             composingTopic = true
                         },
-                    ) {
-                        Icon(Icons.Default.Edit, contentDescription = "New topic")
-                    }
+                    )
                 }
             },
         ) { padding ->
@@ -957,6 +958,30 @@ private fun ProfileFooter(user: RavelryUser?, onClick: () -> Unit) {
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+        }
+    }
+}
+
+/**
+ * The feed's floating action buttons: a small calendar button for the selected group's
+ * events (issue #179) stacked above the new-topic button. The calendar button is only
+ * shown while a group filter is active — it needs a group to open events for.
+ */
+@Composable
+internal fun FeedFabs(
+    selectedGroup: Group?,
+    onGroupEventsClick: (Group) -> Unit,
+    onNewTopicClick: () -> Unit,
+) {
+    Column(horizontalAlignment = Alignment.End) {
+        selectedGroup?.let { group ->
+            SmallFloatingActionButton(onClick = { onGroupEventsClick(group) }) {
+                Icon(Icons.Default.DateRange, contentDescription = "Group events")
+            }
+            Spacer(Modifier.height(16.dp))
+        }
+        FloatingActionButton(onClick = onNewTopicClick) {
+            Icon(Icons.Default.Edit, contentDescription = "New topic")
         }
     }
 }
