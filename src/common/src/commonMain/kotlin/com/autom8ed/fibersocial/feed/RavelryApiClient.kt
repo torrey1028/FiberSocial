@@ -533,28 +533,6 @@ class RavelryApiClient(
     }
 
     /**
-     * Returns the most recent post in a topic, or `null` if the topic has no posts.
-     *
-     * Uses `sort_reverse=1` with `page_size=1` so only the newest post is transferred —
-     * cheap enough to call once per feed topic. Vote data is not requested; feed cards
-     * don't display it.
-     *
-     * @param topicId Ravelry topic ID.
-     */
-    suspend fun getLatestPost(topicId: Long): Post? {
-        val raw = authenticatedRequest {
-            httpClient.get("$BASE_URL/topics/$topicId/posts.json") {
-                header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
-                url.parameters.apply {
-                    append("sort_reverse", "1")
-                    append("page_size", "1")
-                }
-            }
-        }
-        return lenientJson.decodeFromString<PostsResponse>(raw).posts.firstOrNull()
-    }
-
-    /**
      * Casts or clears the current user's vote of [type] on a forum post.
      *
      * @param postId Ravelry forum post ID.
@@ -749,6 +727,24 @@ class RavelryApiClient(
             }
         }
         return lenientJson.decodeFromString<TopicDetailResponse>(raw).topic
+    }
+
+    /**
+     * Advances the current user's read marker for a topic to [lastRead] (issue #185).
+     * Ravelry only moves the marker forward unless `force` is set, so this is safe to
+     * call with the newest post number on every view; the change syncs to the website
+     * (and the website's reads sync back via [Topic.lastRead]).
+     *
+     * @param topicId Ravelry topic ID.
+     * @param lastRead Post number to mark read up to (typically the topic's latest post).
+     */
+    suspend fun markTopicRead(topicId: Long, lastRead: Int) {
+        authenticatedRequest {
+            httpClient.post("$BASE_URL/topics/$topicId/read.json") {
+                header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
+                setBody(FormDataContent(Parameters.build { append("last_read", lastRead.toString()) }))
+            }
+        }
     }
 
     /**

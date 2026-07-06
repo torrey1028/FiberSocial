@@ -923,35 +923,43 @@ class RavelryApiClientTest {
     }
 
     @Test
-    fun `getLatestPost requests single newest post`() = runTest {
-        var capturedSort: String? = null
-        var capturedPageSize: String? = null
+    fun `getTopicDetail parses the read marker from last_read`() = runTest {
+        // Issue #185: the detail's last_read drives the feed's unread count.
+        val client = routingApiClient { topicDetailJson(100L, postsCount = 8, lastRead = 3) }
+        val topic = client.getTopicDetail(100L)
+        assertEquals(8, topic.postsCount)
+        assertEquals(3, topic.lastRead)
+    }
+
+    @Test
+    fun `getTopicDetail defaults last_read to zero when the field is absent`() = runTest {
+        val client = routingApiClient { """{"topic":{"id":100,"title":"T"}}""" }
+        assertEquals(0, client.getTopicDetail(100L).lastRead)
+    }
+
+    @Test
+    fun `markTopicRead posts last_read as a form field to the topic read endpoint`() = runTest {
+        // Issue #185: viewing a topic advances Ravelry's own read marker so the website
+        // and the feed's unread count agree. The marker rides in a form body, mirroring
+        // postReply/voteOnPost, and the (empty) response is ignored.
         var capturedPath: String? = null
+        var capturedMethod: String? = null
+        var capturedBody: String? = null
         val engine = MockEngine { request ->
             capturedPath = request.url.encodedPath
-            capturedSort = request.url.parameters["sort_reverse"]
-            capturedPageSize = request.url.parameters["page_size"]
-            respond(
-                content = latestPostJson(username = "replier"),
-                status = HttpStatusCode.OK,
-                headers = headersOf("Content-Type", ContentType.Application.Json.toString()),
-            )
+            capturedMethod = request.method.value
+            capturedBody = (request.body as io.ktor.client.request.forms.FormDataContent)
+                .formData["last_read"]
+            respond("", HttpStatusCode.OK,
+                headersOf("Content-Type", ContentType.Application.Json.toString()))
         }
         val httpClient = HttpClient(engine) {
             install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
         }
-        val post = RavelryApiClient(httpClient, FakeFeedTokenStorage()).getLatestPost(100L)
-        assertEquals("/topics/100/posts.json", capturedPath)
-        assertEquals("1", capturedSort)
-        assertEquals("1", capturedPageSize)
-        assertEquals("replier", post?.user?.username)
-        assertEquals("<p>Latest <b>reply</b> text</p>", post?.bodyHtml)
-    }
-
-    @Test
-    fun `getLatestPost returns null when topic has no posts`() = runTest {
-        val client = routingApiClient { """{"posts":[]}""" }
-        assertEquals(null, client.getLatestPost(100L))
+        RavelryApiClient(httpClient, FakeFeedTokenStorage()).markTopicRead(100L, 7)
+        assertEquals("/topics/100/read.json", capturedPath)
+        assertEquals("POST", capturedMethod)
+        assertEquals("7", capturedBody)
     }
 
     @Test

@@ -4,6 +4,7 @@ import com.autom8ed.fibersocial.auth.SessionExpiredException
 import com.autom8ed.fibersocial.feed.models.Post
 import com.autom8ed.fibersocial.feed.models.VoteType
 import com.autom8ed.fibersocial.feed.models.hasVoted
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
@@ -149,6 +150,11 @@ class TopicDetailViewModel(
             _state.value = try {
                 val posts = apiClient.getTopicPosts(topicId)
                 println("FiberSocial: TopicDetailViewModel loaded ${posts.size} posts")
+                // Mark the topic read up to its newest post (issue #185). Best-effort and
+                // fire-and-forget: it advances Ravelry's own marker (so the website and
+                // the feed's unread count agree next refresh), but a failure must not
+                // block showing the thread the user just opened.
+                if (posts.isNotEmpty()) markReadBestEffort(topicId, posts.size)
                 TopicDetailState.Loaded(posts)
             } catch (e: SessionExpiredException) {
                 println("FiberSocial: TopicDetailViewModel session expired")
@@ -158,6 +164,17 @@ class TopicDetailViewModel(
                 println("FiberSocial: TopicDetailViewModel.load error: ${e.message}")
                 TopicDetailState.Error(e.message ?: "Failed to load replies")
             }
+        }
+    }
+
+    /** Advances Ravelry's read marker for [topicId] to [lastRead]; swallows failures. */
+    private suspend fun markReadBestEffort(topicId: Long, lastRead: Int) {
+        try {
+            apiClient.markTopicRead(topicId, lastRead)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            println("FiberSocial: markTopicRead($topicId) failed: ${e.message}")
         }
     }
 

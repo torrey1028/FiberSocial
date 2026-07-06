@@ -3,45 +3,30 @@ package com.autom8ed.fibersocial.feed.models
 /**
  * A single card in the group feed, derived from a Ravelry forum [Topic].
  *
- * Every topic renders as the same card; there is deliberately no per-kind type hierarchy.
- * Whether posts in the thread carry images does not affect how the topic is listed
- * (issue #77 — a photo in a thread doesn't make it any less of a discussion; the images
- * themselves render in the topic detail view). The one distinction the feed makes is
- * [sticky], which pins the card to the top with a pinned label.
+ * The card follows the forum style Ravelry's API is built for (issue #185): it's
+ * attributed to the topic's starter (not the latest replier), shows the author-written
+ * summary rendered in full (or nothing when there is none), the reply count, and how
+ * many posts are unread relative to Ravelry's own read marker. Whether posts carry
+ * images doesn't affect listing (issue #77). [sticky] pins the card to the top.
  *
  * @property id Ravelry topic ID.
  * @property groupId ID of the [Group] this item belongs to.
  * @property groupName Display name of the group, shown on the card.
  * @property lastPostAt ISO-8601 timestamp of the most recent reply, used for feed sorting.
- * @property author User who created the opening post.
+ * @property author The topic's starter (opening-post author) — who the card attributes to.
  * @property title Topic title.
- * @property bodyPreview Truncated plain-text excerpt of the author-written topic summary
- *   (max 200 chars).
- * @property bodySummary The author-written topic summary as raw Markdown source.
+ * @property bodySummary The author-written topic summary as raw Markdown source. Empty
+ *   when the topic has no summary (the card then shows title + meta only).
  * @property bodySummaryHtml Ravelry's HTML rendering of the topic summary; preferred over
  *   [bodySummary] when present (see [Topic.summaryHtml]). Empty when unavailable.
- * @property replyCount Total number of posts in the thread.
- * @property sticky Whether a moderator pinned this topic to the top of the forum. Sticky
- *   cards always attribute to the opening post ([latestReplyAuthor]/[latestReplyPreview]
- *   stay null — an announcement is its opening post, not its latest comment). The old
- *   sealed hierarchy made the combination unrepresentable; `init` enforces it now.
- * @property latestReplyAuthor User who wrote the most recent reply, or `null` when the
- *   topic has no replies (or the latest reply couldn't be fetched).
- * @property latestReplyPreview Truncated plain-text excerpt of the most recent reply
- *   (max 200 chars), or `null` under the same conditions as [latestReplyAuthor].
- * @property latestReplyBody The most recent reply's raw Markdown source — the canonical
- *   content field for the card's rich preview (issue #154; see [Post.parseBodyDocument]
- *   for why the source outranks the rendering) — or `null` under the same conditions as
- *   [latestReplyAuthor].
- * @property latestReplyHtml Ravelry's HTML rendering of the most recent reply's body.
- *   Used for emoji resolution and as the parse fallback when the source is absent.
- * @property openingPostBody The opening post's raw Markdown source, fetched for topics
- *   with no replies so their preview shows real formatting and images — the topic
- *   summary is unreliable about both. Empty when the topic has replies (the preview
- *   uses the reply fields then) or the fetch failed. Allowed for sticky topics: an
- *   announcement's opening post is exactly what its card should preview.
- * @property openingPostHtml Ravelry's HTML rendering of the opening post's body; same
- *   emoji/fallback role as [latestReplyHtml].
+ * @property postCount Total posts in the topic, including the opening post — so it lines
+ *   up with [unreadCount], which also counts from post 1.
+ * @property unreadCount Posts unread relative to Ravelry's read marker (`postsCount`
+ *   minus `last_read`, floored at 0) — web-consistent, since the app also POSTs the
+ *   marker back when a topic is viewed.
+ * @property firstUnreadPostNumber The 1-based post number to scroll to when opening the
+ *   topic (the first unread post = `last_read + 1`), or `null` when nothing is unread.
+ * @property sticky Whether a moderator pinned this topic to the top of the forum.
  */
 data class FeedItem(
     val id: Long,
@@ -50,33 +35,13 @@ data class FeedItem(
     val lastPostAt: String?,
     val author: RavelryUser,
     val title: String,
-    val bodyPreview: String,
     val bodySummary: String,
     val bodySummaryHtml: String = "",
-    val replyCount: Int,
+    val postCount: Int,
+    val unreadCount: Int = 0,
+    val firstUnreadPostNumber: Int? = null,
     val sticky: Boolean = false,
-    val latestReplyAuthor: RavelryUser? = null,
-    val latestReplyPreview: String? = null,
-    val latestReplyBody: String? = null,
-    val latestReplyHtml: String? = null,
-    val openingPostBody: String = "",
-    val openingPostHtml: String = "",
 ) {
-    init {
-        require(
-            !sticky ||
-                (
-                    latestReplyAuthor == null && latestReplyPreview == null &&
-                        latestReplyBody == null && latestReplyHtml == null
-                    ),
-        ) {
-            "Sticky topics attribute to the opening post; latest-reply fields must stay null"
-        }
-    }
-
-    /** Author the feed card should attribute the topic to: latest replier, else opener. */
-    val displayAuthor: RavelryUser get() = latestReplyAuthor ?: author
-
-    /** Preview text the feed card should show: latest reply, else the opening post. */
-    val displayPreview: String get() = latestReplyPreview ?: bodyPreview
+    /** Whether the topic has a summary to render on the card. */
+    val hasSummary: Boolean get() = bodySummary.isNotBlank() || bodySummaryHtml.isNotBlank()
 }

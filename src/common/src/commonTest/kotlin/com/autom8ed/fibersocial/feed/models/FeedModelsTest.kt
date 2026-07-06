@@ -2,7 +2,6 @@ package com.autom8ed.fibersocial.feed.models
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertNotEquals
@@ -98,7 +97,8 @@ class TopicTest {
                "replied_at":"2024-01-15T10:00:00Z","created_at":"2024-01-10T08:00:00Z",
                "sticky":false,"archived":false,
                "created_by_user":{"username":"yarnie"},
-               "summary":"Working on a new colorwork sweater!"
+               "summary":"Working on a new colorwork sweater!",
+               "last_read":4
             }"""
         )
         assertEquals(100L, t.id)
@@ -111,6 +111,7 @@ class TopicTest {
         assertEquals(false, t.archived)
         assertEquals("yarnie", t.createdByUser?.username)
         assertEquals("Working on a new colorwork sweater!", t.summary)
+        assertEquals(4, t.lastRead)
     }
 
     @Test
@@ -127,6 +128,7 @@ class TopicTest {
         assertEquals(false, t.archived)
         assertNull(t.createdByUser)
         assertNull(t.summary)
+        assertEquals(0, t.lastRead)
     }
 
     @Test
@@ -169,64 +171,61 @@ class FeedItemTest {
 
     private fun item(
         sticky: Boolean = false,
-        replyCount: Int = 7,
-        latestReplyAuthor: RavelryUser? = null,
-        latestReplyPreview: String? = null,
+        postCount: Int = 7,
+        unreadCount: Int = 0,
+        firstUnreadPostNumber: Int? = null,
+        bodySummary: String = "Can I sub DK for worsted? I have this beautiful skein...",
+        bodySummaryHtml: String = "",
     ) = FeedItem(
         id = 3L, groupId = 10L, groupName = "KAL Hub", lastPostAt = "2024-01-13",
         author = author, title = "Yarn substitution help?",
-        bodyPreview = "Can I sub DK for worsted?",
-        bodySummary = "Can I sub DK for worsted? I have this beautiful skein...",
-        replyCount = replyCount,
+        bodySummary = bodySummary,
+        bodySummaryHtml = bodySummaryHtml,
+        postCount = postCount,
+        unreadCount = unreadCount,
+        firstUnreadPostNumber = firstUnreadPostNumber,
         sticky = sticky,
-        latestReplyAuthor = latestReplyAuthor,
-        latestReplyPreview = latestReplyPreview,
     )
 
     @Test
-    fun `exposes body preview and full summary`() {
+    fun `exposes title starter post count and summary`() {
         val item = item()
         assertEquals("Yarn substitution help?", item.title)
-        assertEquals(7, item.replyCount)
-        assertEquals("Can I sub DK for worsted?", item.bodyPreview)
+        assertEquals("yarnie", item.author.username)
+        assertEquals(7, item.postCount)
         assertEquals("Can I sub DK for worsted? I have this beautiful skein...", item.bodySummary)
     }
 
     @Test
-    fun `sticky defaults to false`() {
-        assertFalse(item().sticky)
+    fun `sticky unread and firstUnread default to their zero values`() {
+        val item = item()
+        assertFalse(item.sticky)
+        assertEquals(0, item.unreadCount)
+        assertNull(item.firstUnreadPostNumber)
+    }
+
+    @Test
+    fun `sticky reflects the constructor flag`() {
         assertTrue(item(sticky = true).sticky)
     }
 
     @Test
-    fun `sticky item with latest-reply attribution is rejected`() {
-        // A pinned topic always attributes to the opening post — the two fields
-        // are mutually exclusive by construction, not just by convention.
-        assertFailsWith<IllegalArgumentException> {
-            item(sticky = true, latestReplyAuthor = author)
-        }
-        assertFailsWith<IllegalArgumentException> {
-            item(sticky = true, latestReplyPreview = "Newest reply")
-        }
+    fun `carries the unread count and first unread post number`() {
+        val item = item(postCount = 10, unreadCount = 3, firstUnreadPostNumber = 8)
+        assertEquals(3, item.unreadCount)
+        assertEquals(8, item.firstUnreadPostNumber)
     }
 
     @Test
-    fun `display fields fall back to opening post without latest reply`() {
-        val item = item(replyCount = 0)
-        assertEquals(author, item.displayAuthor)
-        assertEquals("Can I sub DK for worsted?", item.displayPreview)
+    fun `hasSummary is true when either the source or the html is non-blank`() {
+        assertTrue(item(bodySummary = "words", bodySummaryHtml = "").hasSummary)
+        assertTrue(item(bodySummary = "", bodySummaryHtml = "<p>rendered</p>").hasSummary)
     }
 
     @Test
-    fun `display fields prefer the latest reply`() {
-        val replier = RavelryUser(username = "replier")
-        val item = item(
-            replyCount = 3,
-            latestReplyAuthor = replier,
-            latestReplyPreview = "Newest reply",
-        )
-        assertEquals(replier, item.displayAuthor)
-        assertEquals("Newest reply", item.displayPreview)
+    fun `hasSummary is false when both summary fields are blank`() {
+        assertFalse(item(bodySummary = "", bodySummaryHtml = "").hasSummary)
+        assertFalse(item(bodySummary = "   ", bodySummaryHtml = "  ").hasSummary)
     }
 }
 

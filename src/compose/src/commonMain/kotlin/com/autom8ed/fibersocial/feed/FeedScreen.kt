@@ -85,7 +85,6 @@ import com.autom8ed.fibersocial.debug.DebugPanel
 import com.autom8ed.fibersocial.events.EventDetailScreen
 import com.autom8ed.fibersocial.events.EventsScreen
 import com.autom8ed.fibersocial.events.EventsState
-import com.autom8ed.fibersocial.feed.html.MarkdownPostParser
 import com.autom8ed.fibersocial.feed.models.FeedItem
 import com.autom8ed.fibersocial.feed.models.Group
 import com.autom8ed.fibersocial.feed.models.Post
@@ -301,6 +300,14 @@ fun FeedScreen(
             is FeedState.Refreshing -> s.stale.user.username
             else -> null
         }
+        // Viewing a topic loads its first page of posts and advances Ravelry's read
+        // marker to that; mirror it in the feed so the card's unread badge drops to the
+        // remaining count (not zero) as soon as the user backs out (#185).
+        LaunchedEffect(topic.id, topicDetailState) {
+            (topicDetailState as? TopicDetailState.Loaded)?.let {
+                if (it.posts.isNotEmpty()) viewModel.feed.markTopicReadUpTo(topic.id, it.posts.size)
+            }
+        }
         TopicDetailRoute(
             topic = topic,
             postsState = topicDetailState,
@@ -374,10 +381,11 @@ fun FeedScreen(
                     // is the same person if it ever doesn't.
                     author = topic.createdByUser ?: loaded?.user ?: RavelryUser(username = "unknown"),
                     title = topic.title,
-                    bodyPreview = MarkdownPostParser.plainText(topic.summary.orEmpty()).take(200),
                     bodySummary = topic.summary.orEmpty(),
                     bodySummaryHtml = topic.summaryHtml.orEmpty(),
-                    replyCount = topic.postsCount,
+                    // A just-created topic has only the opening post and the author has,
+                    // by definition, read it — nothing unread to scroll to.
+                    postCount = topic.postsCount,
                 )
                 viewModel.feed.refresh()
             },

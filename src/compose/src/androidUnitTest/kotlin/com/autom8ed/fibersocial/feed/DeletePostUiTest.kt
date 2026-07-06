@@ -36,7 +36,7 @@ class DeletePostUiTest {
     private val topic = FeedItem(
         id = 10L, groupId = 1L, groupName = "G", lastPostAt = null,
         author = RavelryUser(username = "someone"), title = "T",
-        bodyPreview = "", bodySummary = "", replyCount = 2,
+        bodySummary = "", postCount = 2,
     )
 
     private fun editIconCount(): Int =

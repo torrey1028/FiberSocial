@@ -6,6 +6,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.first
@@ -713,5 +714,89 @@ class FeedViewModelTest {
             val after = assertIs<FeedState.Loaded>(vm.state.value)
             assertEquals(group2, after.selectedGroup)
             assertEquals(switched, after)
+        }
+
+    /**
+     * Single-group repo whose one topic (id 100) reports [postsCount] total posts and a
+     * read marker at [lastRead] — so the loaded card starts with a known unread badge.
+     */
+    private fun unreadRepo(postsCount: Int = 10, lastRead: Int = 0): FeedRepository =
+        FeedRepository(routingApiClient { path ->
+            when {
+                path.contains("/current_user") -> CURRENT_USER_JSON
+                path.contains("memberships") -> MEMBERSHIPS_HTML
+                path.contains("/groups/search") -> GROUPS_JSON
+                path.contains("/forums/") -> topicsJson(100L)
+                path.contains("/topics/") ->
+                    topicDetailJson(100L, postsCount = postsCount, lastRead = lastRead)
+                else -> error("Unexpected: $path")
+            }
+        })
+
+    @Test
+    fun `markTopicReadUpTo lowers the unread badge and moves the first-unread marker`() =
+        runTest(UnconfinedTestDispatcher()) {
+            // 10 posts, never read → the card starts fully unread (issue #185).
+            val vm = FeedViewModel(unreadRepo(postsCount = 10), this, FakeGroupOrderStore())
+            vm.load()
+            awaitChildren(coroutineContext[Job]!!)
+            val before = assertIs<FeedState.Loaded>(vm.state.value).items.single()
+            assertEquals(10, before.unreadCount)
+
+            // Reading up to post 6 leaves posts 7..10 unread, first unread post 7.
+            vm.markTopicReadUpTo(100L, readUpTo = 6)
+            val item = assertIs<FeedState.Loaded>(vm.state.value).items.single()
+            assertEquals(4, item.unreadCount)
+            assertEquals(7, item.firstUnreadPostNumber)
+        }
+
+    @Test
+    fun `markTopicReadUpTo clears the badge and marker once the whole topic is read`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val vm = FeedViewModel(unreadRepo(postsCount = 10), this, FakeGroupOrderStore())
+            vm.load()
+            awaitChildren(coroutineContext[Job]!!)
+
+            vm.markTopicReadUpTo(100L, readUpTo = 10)
+            val item = assertIs<FeedState.Loaded>(vm.state.value).items.single()
+            assertEquals(0, item.unreadCount)
+            assertNull(item.firstUnreadPostNumber)
+        }
+
+    @Test
+    fun `markTopicReadUpTo never raises the unread count`() =
+        runTest(UnconfinedTestDispatcher()) {
+            // Ravelry's marker only advances; a lower readUpTo than an earlier one must
+            // not bump the badge back up.
+            val vm = FeedViewModel(unreadRepo(postsCount = 10), this, FakeGroupOrderStore())
+            vm.load()
+            awaitChildren(coroutineContext[Job]!!)
+
+            vm.markTopicReadUpTo(100L, readUpTo = 6) // unread -> 4
+            vm.markTopicReadUpTo(100L, readUpTo = 3) // would be 7 (>4): ignored
+            val item = assertIs<FeedState.Loaded>(vm.state.value).items.single()
+            assertEquals(4, item.unreadCount)
+            assertEquals(7, item.firstUnreadPostNumber)
+        }
+
+    @Test
+    fun `markTopicReadUpTo is a no-op when the feed is not loaded`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val vm = FeedViewModel(unreadRepo(), this, FakeGroupOrderStore())
+            // No load(): state is still Loading, so there is nothing to update.
+            vm.markTopicReadUpTo(100L, readUpTo = 5)
+            assertIs<FeedState.Loading>(vm.state.value)
+        }
+
+    @Test
+    fun `markTopicReadUpTo is a no-op when the topic is not in the feed`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val vm = FeedViewModel(unreadRepo(postsCount = 10), this, FakeGroupOrderStore())
+            vm.load()
+            awaitChildren(coroutineContext[Job]!!)
+            val before = vm.state.value
+
+            vm.markTopicReadUpTo(999L, readUpTo = 5)
+            assertEquals(before, vm.state.value)
         }
 }

@@ -24,9 +24,8 @@ class TopicDetailScreenBackTest {
         lastPostAt = null,
         author = RavelryUser(username = "tester"),
         title = "A topic",
-        bodyPreview = "",
         bodySummary = "",
-        replyCount = 0,
+        postCount = 0,
     )
 
     @Test

@@ -183,6 +183,34 @@ class FeedViewModel(
     }
 
     /**
+     * Updates [topicId]'s unread badge in the loaded feed to reflect that the user has
+     * read up to post number [readUpTo] (issue #185). Viewing a topic only loads its
+     * first page of posts, and Ravelry's marker is advanced to exactly that — so the
+     * card should show the *remaining* unread (postCount − readUpTo), not zero, the
+     * moment the user backs out, without waiting for a refetch. Only ever lowers the
+     * count (Ravelry's marker also only advances), and no-ops if the feed isn't loaded
+     * or nothing would change.
+     */
+    fun markTopicReadUpTo(topicId: Long, readUpTo: Int) {
+        val current = _state.value as? FeedState.Loaded ?: return
+        val target = current.items.firstOrNull { it.id == topicId } ?: return
+        val newUnread = (target.postCount - readUpTo).coerceAtLeast(0)
+        if (newUnread >= target.unreadCount) return
+        _state.value = current.copy(
+            items = current.items.map { item ->
+                if (item.id == topicId) {
+                    item.copy(
+                        unreadCount = newUnread,
+                        firstUnreadPostNumber = if (newUnread > 0) readUpTo + 1 else null,
+                    )
+                } else {
+                    item
+                }
+            },
+        )
+    }
+
+    /**
      * Shows [group]'s topics. No-ops if the feed is not in [FeedState.Loaded].
      */
     fun selectGroup(group: Group) {

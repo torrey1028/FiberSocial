@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.HorizontalDivider
@@ -17,20 +16,18 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import coil3.compose.AsyncImage
-import com.autom8ed.fibersocial.ui.Avatar
-import com.autom8ed.fibersocial.feed.html.parsePreviewDocument
-import com.autom8ed.fibersocial.feed.html.previewImageUrl
-import com.autom8ed.fibersocial.feed.html.previewInlines
+import com.autom8ed.fibersocial.feed.html.parseSummaryDocument
 import com.autom8ed.fibersocial.feed.models.FeedItem
-import com.autom8ed.fibersocial.profile.UsernameLink
+import com.autom8ed.fibersocial.ui.Avatar
 
+/**
+ * A forum-style feed card (issue #185): the topic title, who started it, the
+ * author-written summary rendered in full (omitted when there is none), the reply count,
+ * how many posts are unread (from Ravelry's own read marker), and when it was last active.
+ */
 @Composable
 fun TopicCard(
     item: FeedItem,
@@ -51,7 +48,7 @@ fun TopicCard(
                 Spacer(modifier = Modifier.height(6.dp))
             }
             Row(verticalAlignment = Alignment.Top) {
-                Avatar(url = item.displayAuthor.avatarUrl, size = 40.dp)
+                Avatar(url = item.author.avatarUrl, size = 40.dp)
                 Spacer(modifier = Modifier.width(10.dp))
                 Column {
                     Text(
@@ -60,49 +57,22 @@ fun TopicCard(
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                     )
-                    // Rich preview (issue #154): render the post's actual formatting
-                    // instead of stripping it (imperfectly) to plain text, plus a
-                    // thumbnail of its first photo. The old stripped string stays as a
-                    // fallback for content that flattens to nothing renderable.
-                    val document = remember(item) { item.parsePreviewDocument() }
-                    val previewInlines = remember(item) { document.previewInlines() }
-                    val previewImage = remember(item) { document.previewImageUrl() }
-                    val preview = buildInlineText(
-                        content = previewInlines,
-                        linkColor = MaterialTheme.colorScheme.primary,
-                        codeBackground = MaterialTheme.colorScheme.surfaceVariant,
-                    ).takeIf { it.text.isNotBlank() }
-                        ?: AnnotatedString(item.displayPreview)
-                    if (preview.text.isNotBlank() || previewImage != null) {
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Row(verticalAlignment = Alignment.Top) {
-                            if (preview.text.isNotBlank()) {
-                                Text(
-                                    text = preview,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.weight(1f),
-                                )
-                            } else {
-                                Spacer(modifier = Modifier.weight(1f))
-                            }
-                            if (previewImage != null) {
-                                Spacer(modifier = Modifier.width(8.dp))
-                                AsyncImage(
-                                    model = previewImage,
-                                    contentDescription = "Preview photo",
-                                    contentScale = ContentScale.Crop,
-                                    modifier = Modifier
-                                        .size(44.dp)
-                                        .clip(RoundedCornerShape(6.dp)),
-                                )
-                            }
-                        }
-                    }
+                    Text(
+                        text = "Started by @${item.author.username}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
+
+            // The summary rendered in full — no clipping (issue #185). Topics without a
+            // summary show just the title + meta.
+            if (item.hasSummary) {
+                Spacer(modifier = Modifier.height(8.dp))
+                val document = remember(item) { item.parseSummaryDocument() }
+                PostBody(document = document)
+            }
+
             Spacer(modifier = Modifier.height(8.dp))
             HorizontalDivider()
             Spacer(modifier = Modifier.height(8.dp))
@@ -111,14 +81,24 @@ fun TopicCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                UsernameLink(
-                    username = item.displayAuthor.username,
-                    style = MaterialTheme.typography.labelSmall.copy(
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = if (item.postCount == 1) "💬 1 post" else "💬 ${item.postCount} posts",
+                        style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    ),
-                )
+                    )
+                    if (item.unreadCount > 0) {
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "${item.unreadCount} new",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                }
                 Text(
-                    text = "💬 ${item.replyCount} · ${relativeTime(item.lastPostAt)}",
+                    text = relativeTime(item.lastPostAt),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
