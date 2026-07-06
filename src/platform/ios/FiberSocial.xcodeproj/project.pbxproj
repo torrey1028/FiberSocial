@@ -1,0 +1,399 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		AA00000000000000000000B1 /* FiberSocialApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000F1 /* FiberSocialApp.swift */; };
+		AA00000000000000000000B2 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000F2 /* ContentView.swift */; };
+		AA00000000000000000000B3 /* IosKeyValueStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000F6 /* IosKeyValueStoreTests.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		AA00000000000000000000F1 /* FiberSocialApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FiberSocialApp.swift; sourceTree = "<group>"; };
+		AA00000000000000000000F2 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		AA00000000000000000000F3 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		AA00000000000000000000F4 /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.xcconfig; sourceTree = "<group>"; };
+		AA00000000000000000000F5 /* FiberSocial.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = FiberSocial.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		AA00000000000000000000F6 /* IosKeyValueStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IosKeyValueStoreTests.swift; sourceTree = "<group>"; };
+		AA00000000000000000000F7 /* FiberSocialTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FiberSocialTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXContainerItemProxy section */
+		AA00000000000000000000C9 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = AA00000000000000000000A0 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = AA00000000000000000000D1;
+			remoteInfo = FiberSocial;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXTargetDependency section */
+		AA00000000000000000000DD /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = AA00000000000000000000D1 /* FiberSocial */;
+			targetProxy = AA00000000000000000000C9 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		AA00000000000000000000C3 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AA00000000000000000000C5 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		AA00000000000000000000A1 = {
+			isa = PBXGroup;
+			children = (
+				AA00000000000000000000F4 /* Config.xcconfig */,
+				AA00000000000000000000A2 /* FiberSocial */,
+				AA00000000000000000000A4 /* FiberSocialTests */,
+				AA00000000000000000000A3 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		AA00000000000000000000A2 /* FiberSocial */ = {
+			isa = PBXGroup;
+			children = (
+				AA00000000000000000000F1 /* FiberSocialApp.swift */,
+				AA00000000000000000000F2 /* ContentView.swift */,
+				AA00000000000000000000F3 /* Info.plist */,
+			);
+			path = FiberSocial;
+			sourceTree = "<group>";
+		};
+		AA00000000000000000000A3 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				AA00000000000000000000F5 /* FiberSocial.app */,
+				AA00000000000000000000F7 /* FiberSocialTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		AA00000000000000000000A4 /* FiberSocialTests */ = {
+			isa = PBXGroup;
+			children = (
+				AA00000000000000000000F6 /* IosKeyValueStoreTests.swift */,
+			);
+			path = FiberSocialTests;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		AA00000000000000000000D1 /* FiberSocial */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AA00000000000000000000E3 /* Build configuration list for PBXNativeTarget "FiberSocial" */;
+			buildPhases = (
+				AA00000000000000000000C1 /* Build ComposeApp framework */,
+				AA00000000000000000000C2 /* Sources */,
+				AA00000000000000000000C3 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = FiberSocial;
+			productName = FiberSocial;
+			productReference = AA00000000000000000000F5 /* FiberSocial.app */;
+			productType = "com.apple.product-type.application";
+		};
+		AA00000000000000000000D2 /* FiberSocialTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AA00000000000000000000E6 /* Build configuration list for PBXNativeTarget "FiberSocialTests" */;
+			buildPhases = (
+				AA00000000000000000000C4 /* Sources */,
+				AA00000000000000000000C5 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				AA00000000000000000000DD /* PBXTargetDependency */,
+			);
+			name = FiberSocialTests;
+			productName = FiberSocialTests;
+			productReference = AA00000000000000000000F7 /* FiberSocialTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		AA00000000000000000000A0 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1500;
+				LastUpgradeCheck = 1500;
+				TargetAttributes = {
+					AA00000000000000000000D1 = {
+						CreatedOnToolsVersion = 15.0;
+					};
+					AA00000000000000000000D2 = {
+						CreatedOnToolsVersion = 15.0;
+						TestTargetID = AA00000000000000000000D1;
+					};
+				};
+			};
+			buildConfigurationList = AA00000000000000000000E0 /* Build configuration list for PBXProject "FiberSocial" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = AA00000000000000000000A1;
+			productRefGroup = AA00000000000000000000A3 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				AA00000000000000000000D1 /* FiberSocial */,
+				AA00000000000000000000D2 /* FiberSocialTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		AA00000000000000000000C1 /* Build ComposeApp framework */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Build ComposeApp framework";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "# Builds the shared Compose framework and copies it where Xcode links it.\n# Gradle needs a JDK 17+. An inherited JAVA_HOME may point at an older JDK\n# (Xcode inherits the login session's env), so validate every candidate's\n# major version instead of trusting the first one that exists.\nfor candidate in \"$JAVA_HOME\" \"$(/usr/libexec/java_home -v 17 2>/dev/null)\" /opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home; do\n  if [ -n \"$candidate\" ] && \"$candidate/bin/java\" -version 2>&1 | head -1 | grep -qE 'version \\\"(1[7-9]|[2-9][0-9])\\.' ; then\n    export JAVA_HOME=\"$candidate\"\n    break\n  fi\ndone\ncd \"$SRCROOT/../android\"\n./gradlew :composeApp:embedAndSignAppleFrameworkForXcode\n";
+
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		AA00000000000000000000C2 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AA00000000000000000000B1 /* FiberSocialApp.swift in Sources */,
+				AA00000000000000000000B2 /* ContentView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AA00000000000000000000C4 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AA00000000000000000000B3 /* IosKeyValueStoreTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		AA00000000000000000000E1 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_TESTABILITY = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		AA00000000000000000000E2 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		AA00000000000000000000E4 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = AA00000000000000000000F4 /* Config.xcconfig */;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/../../compose/build/xcode-frameworks/$(CONFIGURATION)/$(SDK_NAME)",
+				);
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = FiberSocial/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-framework",
+					ComposeApp,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.autom8ed.fibersocial;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		AA00000000000000000000E5 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = AA00000000000000000000F4 /* Config.xcconfig */;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/../../compose/build/xcode-frameworks/$(CONFIGURATION)/$(SDK_NAME)",
+				);
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = FiberSocial/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-framework",
+					ComposeApp,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.autom8ed.fibersocial;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		AA00000000000000000000E7 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/../../compose/build/xcode-frameworks/$(CONFIGURATION)/$(SDK_NAME)",
+				);
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 0.1.0;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-framework",
+					ComposeApp,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.autom8ed.fibersocial.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/FiberSocial.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)FiberSocial";
+			};
+			name = Debug;
+		};
+		AA00000000000000000000E8 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/../../compose/build/xcode-frameworks/$(CONFIGURATION)/$(SDK_NAME)",
+				);
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 0.1.0;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-framework",
+					ComposeApp,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.autom8ed.fibersocial.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/FiberSocial.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)FiberSocial";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		AA00000000000000000000E0 /* Build configuration list for PBXProject "FiberSocial" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AA00000000000000000000E1 /* Debug */,
+				AA00000000000000000000E2 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		AA00000000000000000000E3 /* Build configuration list for PBXNativeTarget "FiberSocial" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AA00000000000000000000E4 /* Debug */,
+				AA00000000000000000000E5 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		AA00000000000000000000E6 /* Build configuration list for PBXNativeTarget "FiberSocialTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AA00000000000000000000E7 /* Debug */,
+				AA00000000000000000000E8 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = AA00000000000000000000A0 /* Project object */;
+}

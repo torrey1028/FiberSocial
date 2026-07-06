@@ -188,9 +188,19 @@ jobs:
 
       - name: Run commonTest on the iOS simulator target
         working-directory: src/platform/android
-        run: ./gradlew :common:iosSimulatorArm64Test
+        run: ./gradlew :common:iosSimulatorArm64Test :composeApp:iosSimulatorArm64Test
 
       # Proves the framework the Xcode project will consume (#117) still links.
       - name: Assemble the XCFramework
         working-directory: src/platform/android
         run: ./gradlew :common:assembleFiberSocialCommonReleaseXCFramework
+
+      # The real thing: the iOS app + its hosted XCTests (Keychain/NSUserDefaults
+      # stores run against a real keychain inside the app host).
+      - name: Build the iOS app and run hosted XCTests
+        working-directory: src/platform/ios
+        run: |
+          xcodebuild -project FiberSocial.xcodeproj -scheme FiberSocial \
+            -destination 'platform=iOS Simulator,name=iPhone 17' \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO test 2>&1 | tail -40

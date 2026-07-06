@@ -1,0 +1,173 @@
+package com.autom8ed.fibersocial.app
+
+import com.autom8ed.fibersocial.auth.AuthViewModel
+import com.autom8ed.fibersocial.auth.KeyValueTokenStorage
+import com.autom8ed.fibersocial.auth.RavelryAuthManager
+import com.autom8ed.fibersocial.events.EventDetailViewModel
+import com.autom8ed.fibersocial.events.EventsViewModel
+import com.autom8ed.fibersocial.feed.FeedRepository
+import com.autom8ed.fibersocial.feed.FeedScreenModel
+import com.autom8ed.fibersocial.feed.FeedViewModel
+import com.autom8ed.fibersocial.feed.ImageAttachmentViewModel
+import com.autom8ed.fibersocial.feed.KeyValueGroupOrderStore
+import com.autom8ed.fibersocial.feed.NewTopicViewModel
+import com.autom8ed.fibersocial.feed.TopicDetailViewModel
+import com.autom8ed.fibersocial.feedback.FeedbackViewModel
+import com.autom8ed.fibersocial.net.ravelryApiClient
+import com.autom8ed.fibersocial.net.ravelryAuthRepository
+import com.autom8ed.fibersocial.net.ravelryHttpClient
+import com.autom8ed.fibersocial.projects.ProjectPageViewModel
+import com.autom8ed.fibersocial.projects.ProjectPhotoPickerViewModel
+import com.autom8ed.fibersocial.storage.AUTH_STORE_NAME
+import com.autom8ed.fibersocial.storage.GROUP_ORDER_STORE_NAME
+import com.autom8ed.fibersocial.storage.KeychainKeyValueStore
+import com.autom8ed.fibersocial.storage.NsUserDefaultsKeyValueStore
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.merge
+import kotlinx.coroutines.launch
+
+/**
+ * iOS counterpart of `AuthAndroidViewModel`: owns the auth flow and its client graph.
+ * Lives for the app's lifetime on [scope] (a single-window iOS app has no
+ * Activity-recreation lifecycle to scope to).
+ */
+class IosAuthModel(scope: CoroutineScope) {
+
+    private val httpClient = ravelryHttpClient()
+    private val authManager = RavelryAuthManager()
+    private val tokenStorage = KeyValueTokenStorage(KeychainKeyValueStore(AUTH_STORE_NAME))
+    private val repository = ravelryAuthRepository(
+        httpClient = httpClient,
+        tokenStorage = tokenStorage,
+        clientId = ravelryClientId(),
+        clientSecret = ravelryClientSecret(),
+    )
+
+    val auth = AuthViewModel(repository, scope)
+
+    init {
+        // Builds without injected credentials fail token exchange with an opaque
+        // invalid_client; say why up front (same warning as Android).
+        val missing = listOfNotNull(
+            "RAVELRY_CLIENT_ID".takeIf { ravelryClientId().isBlank() },
+            "RAVELRY_CLIENT_SECRET".takeIf { ravelryClientSecret().isBlank() },
+        )
+        if (missing.isNotEmpty()) {
+            println(
+                "FiberSocial: WARNING — ${missing.joinToString(" and ")} " +
+                    "${if (missing.size == 1) "is" else "are"} blank. OAuth login will " +
+                    "fail with invalid_client. Set them in Config.local.xcconfig " +
+                    "(see src/platform/ios/README.md) and rebuild."
+            )
+        }
+        auth.checkStoredAuth()
+    }
+
+    fun buildAuthUrl(): String = authManager.buildAuthUrl(ravelryClientId())
+
+    fun handleAuthCode(code: String, state: String?, sessionCookie: String) {
+        // Reject a redirect whose state doesn't match the one we issued before exchanging
+        // the code — login-CSRF defense (issue #149), same as Android.
+        if (!authManager.validateState(state)) {
+            println("FiberSocial: OAuth state mismatch — rejecting login (possible CSRF)")
+            auth.failLogin("Login could not be verified. Please try again.")
+            return
+        }
+        auth.onAuthCodeReceived(
+            authCode = code,
+            codeVerifier = authManager.consumeCodeVerifier(),
+            redirectUri = RavelryAuthManager.REDIRECT_URI,
+            sessionCookie = sessionCookie,
+        )
+    }
+}
+
+/**
+ * iOS counterpart of `FeedAndroidViewModel`: the [FeedScreenModel] bundle over the
+ * common ViewModels, with iOS stores behind them.
+ */
+class IosFeedModel(scope: CoroutineScope) : FeedScreenModel {
+
+    private val httpClient = ravelryHttpClient()
+    internal val tokenStorage = KeyValueTokenStorage(KeychainKeyValueStore(AUTH_STORE_NAME))
+    private val authRepository = ravelryAuthRepository(
+        httpClient = httpClient,
+        tokenStorage = tokenStorage,
+        clientId = ravelryClientId(),
+        clientSecret = ravelryClientSecret(),
+    )
+    private val apiClient = ravelryApiClient(httpClient, tokenStorage, authRepository)
+    private val repository = FeedRepository(apiClient)
+
+    override val feed = FeedViewModel(
+        repository,
+        scope,
+        KeyValueGroupOrderStore(NsUserDefaultsKeyValueStore(GROUP_ORDER_STORE_NAME)),
+    )
+    override val topicDetail = TopicDetailViewModel(apiClient, scope)
+    override val newTopic = NewTopicViewModel(apiClient, scope)
+
+    // One attach-image flow per composer, so an upload finishing for one composer
+    // can never deliver its markdown into the other's draft.
+    override val newTopicImage = ImageAttachmentViewModel(apiClient, scope)
+    override val replyImage = ImageAttachmentViewModel(apiClient, scope)
+
+    // Shared by both composers: only one is visible at a time, and the picked photo
+    // is routed to the visible composer's ImageAttachmentViewModel at the call site.
+    override val projectPicker = ProjectPhotoPickerViewModel(apiClient, scope)
+
+    // In-app project page for tapped ravelry.com/projects links (issue #103).
+    override val projectPage = ProjectPageViewModel(apiClient, scope)
+    override val feedback = FeedbackViewModel(apiClient, scope)
+    override val events = EventsViewModel(apiClient, scope)
+    override val eventDetail = EventDetailViewModel(
+        apiClient,
+        scope,
+        // Notifications land with #118; until then an RSVP change has no reminders
+        // to resync on iOS.
+        onAttendanceChanged = {},
+    )
+
+    /** Emits when any screen's data source encounters a session expiry. */
+    val sessionExpired: Flow<Unit> = merge(
+        feed.sessionExpired,
+        topicDetail.sessionExpired,
+        newTopic.sessionExpired,
+        newTopicImage.sessionExpired,
+        replyImage.sessionExpired,
+        projectPicker.sessionExpired,
+        projectPage.sessionExpired,
+        feedback.sessionExpired,
+        events.sessionExpired,
+        eventDetail.sessionExpired,
+    )
+
+    init {
+        // Keep the events list's "N going" counts in step with RSVP changes made on
+        // the detail screen — the counts come from a one-time scrape (issue #74).
+        scope.launch {
+            eventDetail.attendanceChanged.collect { change ->
+                events.applyAttendanceChange(change.permalink, change.attending)
+            }
+        }
+    }
+
+    // Device photo uploads need the PHPicker bridge (#119); unreachable until
+    // rememberImagePicker's iOS actual launches a real picker.
+    override fun attachNewTopicImage(uri: String) {
+        println("FiberSocial: attachNewTopicImage($uri) — device uploads not wired up on iOS yet (#119)")
+    }
+
+    override fun attachReplyImage(uri: String) {
+        println("FiberSocial: attachReplyImage($uri) — device uploads not wired up on iOS yet (#119)")
+    }
+
+    fun load() = feed.load()
+
+    fun reset() = feed.reset()
+
+    override fun debugForceSessionExpiry() = feed.forceSessionExpiry()
+
+    override fun debugForceFeedError() = feed.forceError()
+}
