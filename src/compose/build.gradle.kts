@@ -8,11 +8,19 @@ plugins {
 }
 
 kotlin {
-    // Android-only for now (#116): the module is on the multiplatform Compose
-    // artifacts so the iOS app (#117) can add its targets without another UI move.
     androidTarget {
         compilerOptions {
             jvmTarget.set(JvmTarget.JVM_17)
+        }
+    }
+
+    // The framework the Xcode project (src/platform/ios) embeds via the
+    // embedAndSignAppleFrameworkForXcode build phase. Static: single consumer, no
+    // dynamic-framework embedding needed. :common links in transitively.
+    listOf(iosArm64(), iosSimulatorArm64()).forEach { target ->
+        target.binaries.framework {
+            baseName = "ComposeApp"
+            isStatic = true
         }
     }
 
@@ -38,6 +46,11 @@ kotlin {
         androidMain.dependencies {
             // Image picker actual (rememberLauncherForActivityResult).
             implementation("androidx.activity:activity-compose:1.9.0")
+        }
+        iosMain.dependencies {
+            // Coil has no built-in network fetcher; on iOS it rides the Ktor 2 Darwin
+            // engine :common already uses (Android keeps its OkHttp fetcher in :app).
+            implementation("io.coil-kt.coil3:coil-network-ktor2:3.5.0")
         }
         commonTest.dependencies {
             implementation(kotlin("test"))

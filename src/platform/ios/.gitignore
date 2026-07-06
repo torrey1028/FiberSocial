@@ -1,0 +1,4 @@
+Config.local.xcconfig
+xcuserdata/
+build/
+DerivedData/
