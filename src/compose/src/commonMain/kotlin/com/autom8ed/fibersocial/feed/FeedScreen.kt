@@ -89,6 +89,10 @@ import com.autom8ed.fibersocial.feed.html.MarkdownPostParser
 import com.autom8ed.fibersocial.feed.models.FeedItem
 import com.autom8ed.fibersocial.feed.models.Group
 import com.autom8ed.fibersocial.feed.models.Post
+import com.autom8ed.fibersocial.projects.ProjectPageScreen
+import com.autom8ed.fibersocial.projects.ProjectPageState
+import com.autom8ed.fibersocial.projects.ProjectCommentsState
+import com.autom8ed.fibersocial.projects.CommentPostState
 import com.autom8ed.fibersocial.projects.ProjectPhotoPickerDialog
 import com.autom8ed.fibersocial.feed.models.RavelryUser
 import com.autom8ed.fibersocial.feed.models.VoteType
@@ -155,6 +159,7 @@ fun FeedScreen(
             viewModel.replyImage.reset()
             viewModel.newTopicImage.reset()
             viewModel.projectPicker.dismiss()
+            viewModel.projectPage.dismiss()
             viewModel.eventDetail.load(deepLinkEventPermalink)
             selectedEventPermalink = deepLinkEventPermalink
             onDeepLinkConsumed()
@@ -186,6 +191,30 @@ fun FeedScreen(
     val eventCounts: Map<Long, Int> = when (val s = eventsState) {
         is EventsState.Loaded -> s.events.groupingBy { it.group.id }.eachCount()
         else -> emptyMap()
+    }
+
+    // Rendered before every other screen: a project link can be tapped from a topic,
+    // an event description, or the feedback preview, and the page must show over
+    // whichever of them is open — backing out returns there untouched.
+    val projectPageState by viewModel.projectPage.state.collectAsState()
+    if (projectPageState !is ProjectPageState.Hidden) {
+        val commentsState by viewModel.projectPage.commentsState.collectAsState()
+        val postState by viewModel.projectPage.postState.collectAsState()
+        val pattern by viewModel.projectPage.pattern.collectAsState()
+        ProjectPageScreen(
+            state = projectPageState,
+            commentsState = commentsState,
+            postState = postState,
+            pattern = pattern,
+            currentUsername = loaded?.user?.username,
+            onBack = { viewModel.projectPage.dismiss() },
+            onRetry = { viewModel.projectPage.retry() },
+            onPostComment = { viewModel.projectPage.postComment(it) },
+            onPostErrorShown = { viewModel.projectPage.acknowledgePostError() },
+            onDeleteComment = { viewModel.projectPage.deleteComment(it) },
+            onPostAcknowledged = { viewModel.projectPage.acknowledgePosted() },
+        )
+        return
     }
 
     // Rendered before settings so "Send feedback" (opened from Settings) shows over it;

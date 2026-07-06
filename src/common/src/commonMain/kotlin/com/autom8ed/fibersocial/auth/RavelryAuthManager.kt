@@ -14,10 +14,13 @@ class RavelryAuthManager {
         private const val AUTH_URL = "https://www.ravelry.com/oauth2/auth"
 
         // Ravelry grants a read-only token when no scope is requested, which 403s every
-        // write (reply/edit/delete). `forum-write` grants forum posting; `offline` is
-        // required to receive a refresh token (without it Ravelry often omits one, forcing
-        // frequent re-login). Space-separated per the OAuth spec.
-        const val SCOPE = "forum-write offline"
+        // write (reply/edit/delete). `forum-write` grants forum posting; `message-write`
+        // grants posting project comments (issue #103 — its Ravelry description mentions
+        // private messages, but comments/create requires it too); `offline` is required
+        // to receive a refresh token (without it Ravelry often omits one, forcing frequent
+        // re-login). Space-separated per the OAuth spec. Tokens issued before a scope was
+        // added lack it until the user next logs in, so new-scope writes 403 for them.
+        const val SCOPE = "forum-write message-write offline"
     }
 
     private var codeVerifier: String? = null

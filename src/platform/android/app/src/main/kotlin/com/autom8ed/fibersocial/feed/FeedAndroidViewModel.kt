@@ -13,6 +13,7 @@ import com.autom8ed.fibersocial.net.ravelryApiClient
 import com.autom8ed.fibersocial.net.ravelryAuthRepository
 import com.autom8ed.fibersocial.net.ravelryHttpClient
 import com.autom8ed.fibersocial.notifications.EventSyncWorker
+import com.autom8ed.fibersocial.projects.ProjectPageViewModel
 import com.autom8ed.fibersocial.projects.ProjectPhotoPickerViewModel
 import com.autom8ed.fibersocial.storage.AUTH_PREFS_NAME
 import com.autom8ed.fibersocial.storage.encryptedKeyValueStore
@@ -44,6 +45,9 @@ class FeedAndroidViewModel(app: Application) : AndroidViewModel(app), FeedScreen
     // Shared by both composers: only one is visible at a time, and the picked photo
     // is routed to the visible composer's ImageAttachmentViewModel at the call site.
     override val projectPicker = ProjectPhotoPickerViewModel(apiClient, viewModelScope)
+
+    // In-app project page for tapped ravelry.com/projects links (issue #103).
+    override val projectPage = ProjectPageViewModel(apiClient, viewModelScope)
     override val feedback = FeedbackViewModel(apiClient, viewModelScope)
     override val events = EventsViewModel(apiClient, viewModelScope)
     override val eventDetail = EventDetailViewModel(
@@ -63,6 +67,7 @@ class FeedAndroidViewModel(app: Application) : AndroidViewModel(app), FeedScreen
         newTopicImage.sessionExpired,
         replyImage.sessionExpired,
         projectPicker.sessionExpired,
+        projectPage.sessionExpired,
         feedback.sessionExpired,
         events.sessionExpired,
         eventDetail.sessionExpired,
@@ -88,7 +93,13 @@ class FeedAndroidViewModel(app: Application) : AndroidViewModel(app), FeedScreen
 
     fun load() = feed.load()
 
-    fun reset() = feed.reset()
+    fun reset() {
+        feed.reset()
+        // Dismiss the ViewModel-held project page too: it survives across logout/re-login
+        // on the reused ViewModel, so without this a re-logged-in (possibly different)
+        // user would see the previous session's project page over their feed.
+        projectPage.dismiss()
+    }
 
     override fun debugForceSessionExpiry() = feed.forceSessionExpiry()
 
