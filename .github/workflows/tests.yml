@@ -1,8 +1,11 @@
 name: Tests
 
 on:
+  # `push` only on main (post-merge verification). Branch CI comes from the
+  # pull_request trigger below. Listing feat/** here too would fire both events
+  # for the same commit on every feat PR, running the whole suite twice.
   push:
-    branches: ["main", "feat/**"]
+    branches: ["main"]
   pull_request:
     branches: ["main"]
 
@@ -154,6 +157,9 @@ jobs:
 
   common-ios-tests:
     name: Common module iOS (Kotlin/Native) tests
+    # Runs on PRs (and main), despite macOS runners costing ~10x and taking
+    # ~6min: it catches Kotlin/Native regressions the ubuntu jobs can't, and
+    # in practice has caught real failures before merge — worth the runner time.
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
