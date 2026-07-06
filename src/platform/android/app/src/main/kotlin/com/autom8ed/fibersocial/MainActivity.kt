@@ -23,7 +23,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import com.autom8ed.fibersocial.auth.AuthState
 import com.autom8ed.fibersocial.feed.FeedAndroidViewModel
+import androidx.compose.runtime.CompositionLocalProvider
 import com.autom8ed.fibersocial.feed.FeedScreen
+import com.autom8ed.fibersocial.feed.LocalProjectLinkOpener
+import com.autom8ed.fibersocial.feedback.deviceContext
 import com.autom8ed.fibersocial.login.AuthAndroidViewModel
 import com.autom8ed.fibersocial.login.LoginScreen
 import com.autom8ed.fibersocial.login.WebViewLoginScreen
@@ -114,24 +117,35 @@ class MainActivity : ComponentActivity() {
                                 CircularProgressIndicator()
                             }
                         is AuthState.Authenticated -> {
+                            val notificationSettingsStore = remember {
+                                KeyValueNotificationSettingsStore(
+                                    plainKeyValueStore(this@MainActivity, NOTIFICATION_SETTINGS_PREFS_NAME),
+                                )
+                            }
                             LaunchedEffect(Unit) {
                                 feedVm.load()
                                 EventSyncWorker.schedulePeriodic(
                                     this@MainActivity,
-                                    KeyValueNotificationSettingsStore(
-                                        plainKeyValueStore(this@MainActivity, NOTIFICATION_SETTINGS_PREFS_NAME),
-                                    ).load().effectivePollCadence,
+                                    notificationSettingsStore.load().effectivePollCadence,
                                 )
                             }
                             // On session expiry: show WebView login before clearing auth so there's no
                             // LoginScreen flash between the state change and the WebView appearing.
                             LaunchedEffect(feedVm) {
                                 feedVm.sessionExpired.collect {
+                                    // Dismiss the ViewModel-held project page so it can't
+                                    // survive re-login into a different account's session.
+                                    feedVm.projectPage.dismiss()
                                     showWebView = true
                                     authVm.auth.logout()
                                 }
                             }
                             val deepLink by deepLinkEvent.collectAsState()
+                            // Project links tapped anywhere in post content open the
+                            // in-app project page instead of the browser (issue #103).
+                            CompositionLocalProvider(
+                                LocalProjectLinkOpener provides { link -> feedVm.projectPage.open(link) },
+                            ) {
                             FeedScreen(
                                 viewModel = feedVm,
                                 // Reset first: the ViewModel outlives the session, and a
@@ -147,7 +161,16 @@ class MainActivity : ComponentActivity() {
                                     themeMode = mode
                                     themeScope.launch { themeStore.save(ThemeSettings(mode = mode)) }
                                 },
+                                notificationSettingsStore = notificationSettingsStore,
+                                // UPDATE policy re-registers the periodic sync at the new cadence.
+                                onPollCadenceChanged = { cadence ->
+                                    EventSyncWorker.schedulePeriodic(this@MainActivity, cadence)
+                                },
+                                debugPanelEnabled = BuildConfig.DEBUG,
+                                onRunEventSync = { EventSyncWorker.runOnce(this@MainActivity) },
+                                deviceInfo = deviceContext(),
                             )
+                            }
                         }
                     }
                 }

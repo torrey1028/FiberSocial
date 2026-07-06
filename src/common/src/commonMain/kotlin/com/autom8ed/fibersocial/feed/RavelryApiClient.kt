@@ -17,6 +17,9 @@ import com.autom8ed.fibersocial.feed.models.Post
 import com.autom8ed.fibersocial.feed.models.RavelryUser
 import com.autom8ed.fibersocial.feed.models.Topic
 import com.autom8ed.fibersocial.feed.models.VoteType
+import com.autom8ed.fibersocial.projects.PatternInfo
+import com.autom8ed.fibersocial.projects.ProjectComment
+import com.autom8ed.fibersocial.projects.ProjectDetail
 import com.autom8ed.fibersocial.projects.ProjectPhoto
 import com.autom8ed.fibersocial.projects.ProjectSummary
 import io.ktor.client.HttpClient
@@ -24,6 +27,7 @@ import io.ktor.client.request.forms.FormDataContent
 import io.ktor.client.request.forms.MultiPartFormDataContent
 import io.ktor.client.request.forms.formData
 import io.ktor.client.request.forms.submitForm
+import io.ktor.client.request.delete
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
@@ -759,13 +763,112 @@ class RavelryApiClient(
      * @param username Ravelry username who owns the project.
      * @param projectId Ravelry project ID.
      */
-    suspend fun getProjectPhotos(username: String, projectId: Long): List<ProjectPhoto> {
+    suspend fun getProjectPhotos(username: String, projectId: Long): List<ProjectPhoto> =
+        getProjectDetail(username, projectId.toString()).photos
+
+    /**
+     * Returns a project's full detail for the in-app project page (issue #103).
+     *
+     * @param username Ravelry username who owns the project.
+     * @param idOrPermalink Ravelry project ID or its URL permalink — the endpoint
+     *   accepts either, which lets a tapped `/projects/{user}/{permalink}` link be
+     *   resolved without a search round-trip.
+     */
+    suspend fun getProjectDetail(username: String, idOrPermalink: String): ProjectDetail {
         val raw = authenticatedRequest {
-            httpClient.get("$BASE_URL/projects/$username/$projectId.json") {
+            httpClient.get("$BASE_URL/projects/$username/$idOrPermalink.json") {
                 header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
             }
         }
-        return lenientJson.decodeFromString<ProjectDetailResponse>(raw).project.photos
+        return lenientJson.decodeFromString<ProjectDetailResponse>(raw).project
+    }
+
+    /**
+     * Returns the comments on one of [username]'s projects, oldest first (issue #103).
+     *
+     * @param username Ravelry username who owns the project.
+     * @param projectId Ravelry project ID.
+     */
+    suspend fun getProjectComments(username: String, projectId: Long): List<ProjectComment> {
+        val raw = authenticatedRequest {
+            httpClient.get("$BASE_URL/projects/$username/$projectId/comments.json") {
+                header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
+                url.parameters.append("sort", "time")
+                // Ravelry paginates comments at page_size=25 (max 100). Only the first
+                // page is fetched, so ask for the max — a project with >100 comments
+                // would still truncate; full pagination is a follow-up.
+                url.parameters.append("page_size", "100")
+            }
+        }
+        return lenientJson.decodeFromString<ProjectCommentsResponse>(raw).comments
+    }
+
+    /**
+     * Posts a comment on a project (issue #103).
+     *
+     * @param projectId Ravelry project ID being commented on.
+     * @param body Comment content (Markdown accepted).
+     * @return The newly created comment as returned by Ravelry (its body may be
+     *   reprocessed — Markdown rendered, unsafe HTML stripped).
+     * @throws ForbiddenException when the token lacks `message-write` — older tokens
+     *   predate the scope, so the caller surfaces a re-login prompt.
+     */
+    suspend fun postProjectComment(projectId: Long, body: String): ProjectComment {
+        val raw = authenticatedRequest {
+            httpClient.post("$BASE_URL/comments/create.json") {
+                header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
+                setBody(
+                    FormDataContent(
+                        Parameters.build {
+                            append("type", "project")
+                            append("commented_id", projectId.toString())
+                            append("body", body)
+                        },
+                    ),
+                )
+            }
+        }
+        return try {
+            lenientJson.decodeFromString<ProjectCommentResponse>(raw).comment
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            println("FiberSocial: postProjectComment($projectId) unexpected response: ${raw.take(200)}")
+            error("Unexpected Ravelry response — check the project before retrying, the comment may have posted.")
+        }
+    }
+
+    /**
+     * Deletes a comment the signed-in user authored (issue #103). Ravelry enforces
+     * ownership server-side; a delete of someone else's comment 403s.
+     *
+     * @param commentId Ravelry comment ID.
+     * @throws ForbiddenException when the token lacks `message-write`, or the comment
+     *   isn't the user's to delete.
+     */
+    suspend fun deleteComment(commentId: Long) {
+        authenticatedRequest {
+            httpClient.delete("$BASE_URL/comments/$commentId.json") {
+                header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
+            }
+        }
+    }
+
+    /**
+     * Returns display info for a Ravelry database pattern, used to link a project's
+     * pattern to its library page and show the designer (issue #103). Best-effort:
+     * a project may reference a pattern the caller can't see, so failures are the
+     * caller's to swallow.
+     *
+     * @param patternId Ravelry pattern ID (from [ProjectDetail.patternId]).
+     */
+    suspend fun getPatternInfo(patternId: Long): PatternInfo {
+        val raw = authenticatedRequest {
+            httpClient.get("$BASE_URL/patterns/$patternId.json") {
+                header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
+            }
+        }
+        return lenientJson.decodeFromString<PatternResponse>(raw).patternOrThrow
     }
 
     /**
@@ -894,8 +997,17 @@ class RavelryApiClient(
     @Serializable private data class UploadTokenResponse(@SerialName("upload_token") val uploadToken: String)
     @Serializable private data class AttachmentResponse(@SerialName("image_path") val imagePath: String)
     @Serializable private data class ProjectsListResponse(val projects: List<ProjectSummary> = emptyList())
-    @Serializable private data class ProjectDetailResponse(val project: ProjectPhotosOnly)
-    @Serializable private data class ProjectPhotosOnly(val photos: List<ProjectPhoto> = emptyList())
+    @Serializable private data class ProjectDetailResponse(val project: ProjectDetail)
+    @Serializable private data class ProjectCommentsResponse(val comments: List<ProjectComment> = emptyList())
+    @Serializable private data class ProjectCommentResponse(val comment: ProjectComment)
+    // Ravelry's patterns/show nests the pattern under "pattern"; some doc revisions say
+    // "patterns" — accept either so a wording drift can't blank the pattern link.
+    @Serializable private data class PatternResponse(
+        val pattern: PatternInfo? = null,
+        val patterns: PatternInfo? = null,
+    ) {
+        val patternOrThrow: PatternInfo get() = pattern ?: patterns ?: error("No pattern in response")
+    }
 }
 
 /**
