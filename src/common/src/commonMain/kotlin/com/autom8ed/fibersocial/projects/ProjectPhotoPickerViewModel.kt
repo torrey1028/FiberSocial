@@ -34,11 +34,17 @@ data class ProjectPhoto(
     @SerialName("medium2_url") val medium2Url: String? = null,
 ) {
     /** Best URL to embed in a post body: the largest medium size available. */
-    val embedUrl: String? get() = medium2Url ?: mediumUrl ?: smallUrl ?: thumbnailUrl ?: squareUrl
+    val embedUrl: String? get() = firstNonBlank(medium2Url, mediumUrl, smallUrl, thumbnailUrl, squareUrl)
 
     /** Best URL for a picker grid thumbnail. */
-    val gridUrl: String? get() = smallUrl ?: thumbnailUrl ?: squareUrl ?: mediumUrl ?: medium2Url
+    val gridUrl: String? get() = firstNonBlank(smallUrl, thumbnailUrl, squareUrl, mediumUrl, medium2Url)
 }
+
+// Skips blanks, not just nulls: Ravelry occasionally serves an empty string for
+// a size it hasn't generated, and a plain elvis chain would stop at "" and yield
+// a broken empty-URL image reference instead of falling through to a real size.
+private fun firstNonBlank(vararg candidates: String?): String? =
+    candidates.firstOrNull { !it.isNullOrBlank() }
 
 /**
  * A project as returned by `projects/{username}/list.json` — just enough to
@@ -142,8 +148,12 @@ class ProjectPhotoPickerViewModel(
                 throw e
             } catch (e: SessionExpiredException) {
                 println("FiberSocial: ProjectPhotoPicker.open session expired")
-                if (gen == generation) _state.value = ProjectPickerState.Hidden
-                _sessionExpired.trySend(Unit)
+                // Guarded like the state write: a load from a dismissed/superseded
+                // dialog must not yank the user to the login screen.
+                if (gen == generation) {
+                    _state.value = ProjectPickerState.Hidden
+                    _sessionExpired.trySend(Unit)
+                }
             } catch (e: Exception) {
                 println("FiberSocial: ProjectPhotoPicker.open error: ${e.message}")
                 if (gen == generation) {
@@ -160,7 +170,10 @@ class ProjectPhotoPickerViewModel(
         val gen = ++generation
         scope.launch {
             try {
-                val photos = apiClient.getProjectPhotos(owner, project.id)
+                // Drop photos with no usable URL so every tile in the grid is
+                // insertable — a tap can't then silently dismiss with nothing added.
+                val photos = apiClient.getProjectPhotos(owner, project.id).filter { it.embedUrl != null }
+                println("FiberSocial: ProjectPhotoPicker loaded ${photos.size} photos for project ${project.id}")
                 if (gen == generation) {
                     _state.value = ProjectPickerState.PhotoGrid(project, photos)
                 }
@@ -168,8 +181,10 @@ class ProjectPhotoPickerViewModel(
                 throw e
             } catch (e: SessionExpiredException) {
                 println("FiberSocial: ProjectPhotoPicker.selectProject session expired")
-                if (gen == generation) _state.value = ProjectPickerState.Hidden
-                _sessionExpired.trySend(Unit)
+                if (gen == generation) {
+                    _state.value = ProjectPickerState.Hidden
+                    _sessionExpired.trySend(Unit)
+                }
             } catch (e: Exception) {
                 println("FiberSocial: ProjectPhotoPicker.selectProject error: ${e.message}")
                 if (gen == generation) {
@@ -198,7 +213,11 @@ class ProjectPhotoPickerViewModel(
      */
     fun markdownFor(project: ProjectSummary, photo: ProjectPhoto): String? {
         val imageUrl = photo.embedUrl ?: return null
-        val image = "![${project.name}]($imageUrl)"
+        // Project names are user-controlled; a `[`, `]`, or `)` in the name would
+        // close the ![alt](url) / [image](link) syntax early and break rendering.
+        // The alt text is cosmetic, so drop those structural characters from it.
+        val alt = project.name.replace(Regex("""[\[\]()]"""), "")
+        val image = "![$alt]($imageUrl)"
         val owner = username
         if (owner.isNullOrBlank() || project.permalink.isBlank()) return image
         return "[$image](https://www.ravelry.com/projects/$owner/${project.permalink})"

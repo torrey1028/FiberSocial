@@ -1,5 +1,6 @@
 package com.autom8ed.fibersocial.projects
 
+import com.autom8ed.fibersocial.auth.SessionExpiredException
 import com.autom8ed.fibersocial.feed.FakeFeedTokenStorage
 import com.autom8ed.fibersocial.feed.RavelryApiClient
 import com.autom8ed.fibersocial.feed.errorApiClient
@@ -15,6 +16,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeoutOrNull
 
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class ProjectPhotoPickerViewModelTest {
@@ -46,7 +48,7 @@ class ProjectPhotoPickerViewModelTest {
     }
 
     @Test
-    fun `selectProject loads the photo grid`() = runTest(UnconfinedTestDispatcher()) {
+    fun `selectProject loads the photo grid and drops photos with no usable URL`() = runTest(UnconfinedTestDispatcher()) {
         val vm = ProjectPhotoPickerViewModel(projectsApiClient(), this)
         vm.open("yarnie")
         awaitChildren(coroutineContext[Job]!!)
@@ -54,7 +56,24 @@ class ProjectPhotoPickerViewModelTest {
         vm.selectProject(projects.first())
         awaitChildren(coroutineContext[Job]!!)
         val grid = assertIs<ProjectPickerState.PhotoGrid>(vm.state.value)
-        assertEquals(listOf(901L, 902L, 0L), grid.photos.map { it.id })
+        // The fixture's third photo is a bare `{}` (no URLs, id defaults to 0); it is
+        // filtered out so every remaining tile is insertable and no two share key 0.
+        assertEquals(listOf(901L, 902L), grid.photos.map { it.id })
+    }
+
+    @Test
+    fun `selectProject yields an empty grid when no photo has a usable URL`() = runTest(UnconfinedTestDispatcher()) {
+        val client = routingApiClient { path ->
+            if (path.endsWith("/list.json")) PROJECTS_JSON
+            else """{"project":{"id":1,"name":"Autumn Socks","photos":[{},{"id":902}]}}"""
+        }
+        val vm = ProjectPhotoPickerViewModel(client, this)
+        vm.open("yarnie")
+        awaitChildren(coroutineContext[Job]!!)
+        val projects = assertIs<ProjectPickerState.ProjectList>(vm.state.value).projects
+        vm.selectProject(projects.first())
+        awaitChildren(coroutineContext[Job]!!)
+        assertEquals(emptyList(), assertIs<ProjectPickerState.PhotoGrid>(vm.state.value).photos)
     }
 
     @Test
@@ -119,6 +138,24 @@ class ProjectPhotoPickerViewModelTest {
         awaitChildren(coroutineContext[Job]!!)
         // The load finished after dismissal; the dialog must not pop back open.
         assertIs<ProjectPickerState.Hidden>(vm.state.value)
+    }
+
+    @Test
+    fun `a session expiry from a dismissed load does not signal sessionExpired`() = runTest(UnconfinedTestDispatcher()) {
+        val gate = CompletableDeferred<Unit>()
+        val client = suspendableRoutingApiClient { _ ->
+            gate.await()
+            throw SessionExpiredException("Token expired")
+        }
+        val vm = ProjectPhotoPickerViewModel(client, this)
+        vm.open("yarnie")
+        assertIs<ProjectPickerState.LoadingProjects>(vm.state.value)
+        vm.dismiss()          // supersedes the load
+        gate.complete(Unit)   // the now-stale load throws SessionExpiredException
+        awaitChildren(coroutineContext[Job]!!)
+        assertIs<ProjectPickerState.Hidden>(vm.state.value)
+        // A load the user already dismissed must not yank them to the login screen.
+        assertEquals(null, withTimeoutOrNull(1_000) { vm.sessionExpired.first() })
     }
 
     @Test
@@ -237,6 +274,10 @@ class ProjectPhotoPickerViewModelTest {
         assertEquals("sq", ProjectPhoto(id = 8L, squareUrl = "sq", medium2Url = "m2").gridUrl)
         assertEquals("m2", ProjectPhoto(id = 9L, medium2Url = "m2").gridUrl)
         assertEquals(null, ProjectPhoto(id = 10L).gridUrl)
+        // A blank URL is skipped, not treated as present: Ravelry sometimes serves ""
+        // for a size it hasn't generated, and stopping there would yield a broken image.
+        assertEquals("m", ProjectPhoto(id = 11L, medium2Url = "", mediumUrl = "m").embedUrl)
+        assertEquals(null, ProjectPhoto(id = 12L, medium2Url = "", mediumUrl = "").embedUrl)
     }
 
     @Test
@@ -278,6 +319,20 @@ class ProjectPhotoPickerViewModelTest {
         awaitChildren(coroutineContext[Job]!!)
         val project = assertIs<ProjectPickerState.ProjectList>(vm.state.value).projects.first()
         assertEquals(null, vm.markdownFor(project, ProjectPhoto(id = 901L)))
+    }
+
+    @Test
+    fun `markdownFor strips markdown-breaking characters from the project name`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = ProjectPhotoPickerViewModel(projectsApiClient(), this)
+        vm.open("yarnie")
+        awaitChildren(coroutineContext[Job]!!)
+        // Brackets/parens in the name would close the ![alt](url) syntax early.
+        val project = ProjectSummary(id = 1L, name = "Cowl [WIP] (v2)", permalink = "cowl")
+        val photo = ProjectPhoto(id = 901L, mediumUrl = "https://img.example/m.jpg")
+        assertEquals(
+            "[![Cowl WIP v2](https://img.example/m.jpg)](https://www.ravelry.com/projects/yarnie/cowl)",
+            vm.markdownFor(project, photo),
+        )
     }
 }
 

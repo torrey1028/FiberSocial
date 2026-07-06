@@ -13,7 +13,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -86,24 +86,36 @@ fun ProjectPhotoPickerDialog(
                         }
                     }
 
-                is ProjectPickerState.PhotoGrid -> LazyVerticalGrid(
-                    columns = GridCells.Fixed(3),
-                    modifier = Modifier.heightIn(max = 420.dp),
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    items(state.photos, key = { it.id }) { photo ->
-                        AsyncImage(
-                            model = photo.gridUrl,
-                            contentDescription = "Photo from ${state.project.name}",
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier
-                                .aspectRatio(1f)
-                                .clip(RoundedCornerShape(4.dp))
-                                .clickable { onPhotoPicked(state.project, photo) },
-                        )
+                is ProjectPickerState.PhotoGrid ->
+                    // The project list is filtered by photos_count from the list
+                    // endpoint, but the detail fetch (after dropping URL-less photos)
+                    // can still come back empty — show a message rather than a blank panel.
+                    if (state.photos.isEmpty()) {
+                        Text("This project has no photos to pick.")
+                    } else {
+                        LazyVerticalGrid(
+                            columns = GridCells.Fixed(3),
+                            modifier = Modifier.heightIn(max = 420.dp),
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            // Keyed by index, not photo.id: id defaults to 0 when the
+                            // API omits it, and two id-less photos would collide and crash
+                            // LazyVerticalGrid. The list is static once loaded, so positional
+                            // keys are safe.
+                            itemsIndexed(state.photos) { _, photo ->
+                                AsyncImage(
+                                    model = photo.gridUrl,
+                                    contentDescription = "Photo from ${state.project.name}",
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier
+                                        .aspectRatio(1f)
+                                        .clip(RoundedCornerShape(4.dp))
+                                        .clickable { onPhotoPicked(state.project, photo) },
+                                )
+                            }
+                        }
                     }
-                }
             }
         },
     )

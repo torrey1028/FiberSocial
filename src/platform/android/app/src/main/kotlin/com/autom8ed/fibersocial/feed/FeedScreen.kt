@@ -434,6 +434,10 @@ fun FeedScreen(
                         onClick = {
                             viewModel.newTopic.reset()
                             viewModel.newTopicImage.reset()
+                            // Also dismiss the shared project picker: it survives config
+                            // changes in the ViewModel, so a picker left open in a prior
+                            // composer would otherwise reappear over this fresh one.
+                            viewModel.projectPicker.dismiss()
                             composingTopic = true
                         },
                     ) {
@@ -476,8 +480,11 @@ fun FeedScreen(
                         onTopicClick = { topic ->
                             // Reset on open as well as on back, so this topic's reply
                             // composer starts from a clean attachment flow no matter how
-                            // the previous one was left.
+                            // the previous one was left. Dismiss the shared project picker
+                            // too — it outlives a config change in the ViewModel and would
+                            // otherwise reappear over this topic's composer.
                             viewModel.replyImage.reset()
+                            viewModel.projectPicker.dismiss()
                             viewModel.topicDetail.load(topic.id)
                             selectedTopic = topic
                         },
@@ -496,8 +503,11 @@ fun FeedScreen(
                         onTopicClick = { topic ->
                             // Reset on open as well as on back, so this topic's reply
                             // composer starts from a clean attachment flow no matter how
-                            // the previous one was left.
+                            // the previous one was left. Dismiss the shared project picker
+                            // too — it outlives a config change in the ViewModel and would
+                            // otherwise reappear over this topic's composer.
                             viewModel.replyImage.reset()
+                            viewModel.projectPicker.dismiss()
                             viewModel.topicDetail.load(topic.id)
                             selectedTopic = topic
                         },
@@ -586,11 +596,6 @@ internal fun TopicDetailRoute(
 }
 
 /**
- * Pure decision function backing [TopicDetailRoute]'s latch: once a reply has been sent
- * during a visit, it stays "true" regardless of later [replyState] transitions (e.g. the
- * Sent -> Idle flip that follows acknowledgement) until the composable is torn down.
- */
-/**
  * Renders the pick-a-project-photo dialog for whichever composer is on screen and
  * routes the picked photo's markdown into that composer's attachment flow ([target]).
  * The dialog state lives in [FeedAndroidViewModel.projectPicker]; only one composer
@@ -611,6 +616,11 @@ private fun ProjectPhotoPickerHost(viewModel: FeedAndroidViewModel, target: Imag
     )
 }
 
+/**
+ * Pure decision function backing [TopicDetailRoute]'s latch: once a reply has been sent
+ * during a visit, it stays "true" regardless of later [replyState] transitions (e.g. the
+ * Sent -> Idle flip that follows acknowledgement) until the composable is torn down.
+ */
 internal fun trackReplySent(repliedThisVisit: Boolean, replyState: ReplyState): Boolean =
     repliedThisVisit || replyState is ReplyState.Sent
 

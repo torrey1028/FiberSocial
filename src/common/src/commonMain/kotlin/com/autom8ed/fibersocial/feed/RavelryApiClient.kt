@@ -744,8 +744,9 @@ class RavelryApiClient(
             httpClient.get("$BASE_URL/projects/$username/list.json") {
                 header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
                 // Newest first: the photo someone wants to share is usually on a
-                // recent project.
-                url.parameters.append("sort", "created")
+                // recent project. Ravelry reverses a sort with a trailing "_", so
+                // "created_" is descending (newest first); plain "created" is oldest first.
+                url.parameters.append("sort", "created_")
             }
         }
         return lenientJson.decodeFromString<ProjectsListResponse>(raw).projects

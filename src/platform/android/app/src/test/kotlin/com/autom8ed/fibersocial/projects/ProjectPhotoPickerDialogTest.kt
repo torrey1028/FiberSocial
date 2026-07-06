@@ -88,6 +88,12 @@ class ProjectPhotoPickerDialogTest {
     }
 
     @Test
+    fun `empty photo grid explains itself instead of showing a blank panel`() {
+        setDialog(ProjectPickerState.PhotoGrid(socks, emptyList()))
+        compose.onNodeWithText("This project has no photos to pick.").assertIsDisplayed()
+    }
+
+    @Test
     fun `photo grid title navigates back to the project list`() {
         var backs = 0
         setDialog(

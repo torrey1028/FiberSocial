@@ -1630,7 +1630,7 @@ class RavelryApiClientTest {
     }
 
     @Test
-    fun `getProjects hits the list endpoint sorted by created and parses summaries`() = runTest {
+    fun `getProjects hits the list endpoint sorted newest-first and parses summaries`() = runTest {
         var captured: io.ktor.http.Url? = null
         val client = routingApiClientCapturing(onRequest = { captured = it }) {
             """{"projects":[
@@ -1640,7 +1640,9 @@ class RavelryApiClientTest {
         }
         val projects = client.getProjects("yarnie")
         assertEquals("/projects/yarnie/list.json", captured?.encodedPath)
-        assertEquals("created", captured?.parameters?.get("sort"))
+        // "created_" (trailing underscore) is Ravelry's descending sort — newest first.
+        // Plain "created" would return oldest first, burying recent projects.
+        assertEquals("created_", captured?.parameters?.get("sort"))
         assertEquals(1, projects.size)
         assertEquals("Autumn Socks", projects[0].name)
         assertEquals("https://img.example/sq.jpg", projects[0].firstPhoto?.squareUrl)
