@@ -479,7 +479,7 @@ class EventDetailViewModelToggleAttendanceTest {
     }
 
     @Test
-    fun `session expiry emits the signal once, not once per parallel fetch`() = runTest(UnconfinedTestDispatcher()) {
+    fun `session expiry emits the signal once rather than once per parallel fetch`() = runTest(UnconfinedTestDispatcher()) {
         // load() fires two parallel scrapes (event page + people page); if both
         // emitted, the second buffered Unit would instantly log out the next session.
         val vm = EventDetailViewModel(sessionExpiredApiClient(), this)

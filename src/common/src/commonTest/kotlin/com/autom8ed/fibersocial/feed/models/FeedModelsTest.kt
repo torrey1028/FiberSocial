@@ -73,7 +73,7 @@ class RavelryUserTest {
 
 class TopicTest {
     @Test
-    fun `value semantics hold across copy, equals, and toString`() {
+    fun `value semantics hold across copy and equals and toString`() {
         val t = Topic(
             id = 100L, title = "My New Sweater", forumId = 42L, postsCount = 5,
             imagesCount = 3, repliedAt = "2024-01-15T10:00:00Z",

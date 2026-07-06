@@ -110,7 +110,7 @@ class FeedViewModelTest {
         }
 
     @Test
-    fun `load opens the stored order's first group, not the fetched order's`() =
+    fun `load opens the stored order's first group rather than the fetched order's`() =
         runTest(UnconfinedTestDispatcher()) {
             // Fetched order is [10, 11]; the user put Sock Society (11) first.
             val store = FakeGroupOrderStore(listOf(11L, 10L))
@@ -362,7 +362,7 @@ class FeedViewModelTest {
         })
 
     @Test
-    fun `joinSupportGroup joins then reloads, ending Idle and Loaded`() =
+    fun `joinSupportGroup joins then reloads ending Idle and Loaded`() =
         runTest(UnconfinedTestDispatcher()) {
             val vm = FeedViewModel(joinRepo(), this, FakeGroupOrderStore())
             vm.load()

@@ -120,7 +120,7 @@ class ImageAttachmentViewModelTest {
     }
 
     @Test
-    fun `an unreadable image (null from the loader) surfaces a read error`() = runTest(UnconfinedTestDispatcher()) {
+    fun `an unreadable image - null from the loader - surfaces a read error`() = runTest(UnconfinedTestDispatcher()) {
         val vm = ImageAttachmentViewModel(errorApiClient(), this)
         vm.attach { null }
         awaitChildren(coroutineContext[Job]!!)
