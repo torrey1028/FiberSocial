@@ -157,10 +157,9 @@ jobs:
 
   common-ios-tests:
     name: Common module iOS (Kotlin/Native) tests
-    # macOS runners are ~10x the billing rate and this job is ~6min vs ~1min for
-    # the ubuntu jobs, so run it only on main (post-merge) rather than on every
-    # PR. An iOS/Native regression surfaces on the merge commit instead of the PR.
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # Runs on PRs (and main), despite macOS runners costing ~10x and taking
+    # ~6min: it catches Kotlin/Native regressions the ubuntu jobs can't, and
+    # in practice has caught real failures before merge — worth the runner time.
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
