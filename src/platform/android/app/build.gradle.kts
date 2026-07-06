@@ -13,6 +13,22 @@ fun gitVersionName(): String {
     return if (dirty) "1.0.$hash.dirty" else "1.0.$hash"
 }
 
+// When the current commit is exactly tagged vMAJOR.MINOR.PATCH (a pushed
+// release tag - see release.yml), use that as the real version instead of the
+// dev git-hash scheme above, and derive a versionCode that increases
+// release-over-release so in-place upgrade installs work.
+fun releaseTagVersion(): Triple<Int, Int, Int>? {
+    val describe = providers.exec {
+        commandLine("git", "describe", "--tags", "--exact-match", "--match", "v[0-9]*.[0-9]*.[0-9]*")
+        isIgnoreExitValue = true
+    }.standardOutput.asText.get().trim()
+    val match = Regex("""^v(\d+)\.(\d+)\.(\d+)$""").matchEntire(describe) ?: return null
+    val (major, minor, patch) = match.destructured
+    return Triple(major.toInt(), minor.toInt(), patch.toInt())
+}
+
+val releaseTag = releaseTagVersion()
+
 val localProps = Properties().also { props ->
     rootProject.file("local.properties").takeIf { it.exists() }
         ?.inputStream()?.use { props.load(it) }
@@ -26,8 +42,8 @@ android {
         applicationId = "com.autom8ed.fibersocial"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = gitVersionName()
+        versionCode = releaseTag?.let { (major, minor, patch) -> major * 1_000_000 + minor * 1_000 + patch } ?: 1
+        versionName = releaseTag?.let { (major, minor, patch) -> "$major.$minor.$patch" } ?: gitVersionName()
         buildConfigField("String", "RAVELRY_CLIENT_ID", "\"${localProps.getProperty("ravelry.client_id", "")}\"")
         buildConfigField("String", "RAVELRY_CLIENT_SECRET", "\"${localProps.getProperty("ravelry.client_secret", "")}\"")
     }
