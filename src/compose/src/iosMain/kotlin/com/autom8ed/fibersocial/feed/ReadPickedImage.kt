@@ -14,6 +14,9 @@ import platform.UIKit.UIImage
 import platform.UIKit.UIImageJPEGRepresentation
 import platform.posix.memcpy
 
+/** Length of NSUUID's canonical string form (`8-4-4-4-12` hex groups + 4 hyphens). */
+private const val NSUUID_STRING_LENGTH = 36
+
 /**
  * Reads a PHPicker-copied image file into memory for upload, or `null` when the file
  * can't be read — the iOS analog of Android's `readImageForUpload`.
@@ -29,7 +32,12 @@ suspend fun readPickedImage(path: String): UploadableImage? = withContext(Dispat
             println("FiberSocial: readPickedImage($path) — file unreadable")
             return@withContext null
         }
-        val fileName = path.substringAfterLast('/').substringAfter('-')
+        // The picker writes the tmp file as "<NSUUID>-<original name>" (see rememberImagePicker).
+        // NSUUID's canonical string is a fixed 36 chars and itself contains hyphens, so drop that
+        // "<uuid>-" prefix by its known length — substringAfter('-') would cut inside the UUID and
+        // mangle the recovered name (the extension check below still works, but the upload filename
+        // would carry a UUID fragment).
+        val fileName = path.substringAfterLast('/').drop(NSUUID_STRING_LENGTH + 1)
         val extension = fileName.substringAfterLast('.', "").lowercase()
         when (extension) {
             "jpg", "jpeg" -> UploadableImage(fileName, "image/jpeg", data.toByteArray())
