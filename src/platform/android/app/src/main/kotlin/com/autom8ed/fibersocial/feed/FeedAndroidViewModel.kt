@@ -1,6 +1,7 @@
 package com.autom8ed.fibersocial.feed
 
 import android.app.Application
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.autom8ed.fibersocial.BuildConfig
@@ -33,6 +34,11 @@ class FeedAndroidViewModel(app: Application) : AndroidViewModel(app) {
     val feed = FeedViewModel(repository, viewModelScope, AndroidGroupOrderStore(app))
     val topicDetail = TopicDetailViewModel(apiClient, viewModelScope)
     val newTopic = NewTopicViewModel(apiClient, viewModelScope)
+
+    // One attach-image flow per composer, so an upload finishing for one composer
+    // can never deliver its markdown into the other's draft.
+    val newTopicImage = ImageAttachmentViewModel(apiClient, viewModelScope)
+    val replyImage = ImageAttachmentViewModel(apiClient, viewModelScope)
     val feedback = FeedbackViewModel(apiClient, viewModelScope)
     val events = EventsViewModel(apiClient, viewModelScope)
     val eventDetail = EventDetailViewModel(
@@ -49,6 +55,8 @@ class FeedAndroidViewModel(app: Application) : AndroidViewModel(app) {
         feed.sessionExpired,
         topicDetail.sessionExpired,
         newTopic.sessionExpired,
+        newTopicImage.sessionExpired,
+        replyImage.sessionExpired,
         feedback.sessionExpired,
         events.sessionExpired,
         eventDetail.sessionExpired,
@@ -60,6 +68,23 @@ class FeedAndroidViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             eventDetail.attendanceChanged.collect { change ->
                 events.applyAttendanceChange(change.permalink, change.attending)
+            }
+        }
+    }
+
+    /** Reads the picked image behind [uri] and uploads it for the new-topic composer. */
+    fun attachNewTopicImage(uri: Uri) = attachImage(uri, newTopicImage)
+
+    /** Reads the picked image behind [uri] and uploads it for the reply composer. */
+    fun attachReplyImage(uri: Uri) = attachImage(uri, replyImage)
+
+    private fun attachImage(uri: Uri, target: ImageAttachmentViewModel) {
+        viewModelScope.launch {
+            val image = readImageForUpload(getApplication(), uri)
+            if (image == null) {
+                target.reportUnreadable()
+            } else {
+                target.attach(image.fileName, image.contentType, image.bytes)
             }
         }
     }

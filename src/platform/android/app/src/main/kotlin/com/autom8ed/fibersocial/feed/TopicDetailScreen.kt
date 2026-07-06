@@ -1,5 +1,6 @@
 package com.autom8ed.fibersocial.feed
 
+import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -81,6 +82,9 @@ fun TopicDetailScreen(
     onSendReply: (String) -> Unit = {},
     onReplySent: () -> Unit = {},
     onRefresh: () -> Unit = {},
+    attachment: ImageAttachmentState = ImageAttachmentState.Idle,
+    onImagePicked: (Uri) -> Unit = {},
+    onAttachmentInserted: () -> Unit = {},
 ) {
     var pendingDelete by remember { mutableStateOf<Post?>(null) }
     pendingDelete?.let { post ->
@@ -171,6 +175,9 @@ fun TopicDetailScreen(
                     replyState = replyState,
                     onSend = onSendReply,
                     onSent = onReplySent,
+                    attachment = attachment,
+                    onImagePicked = onImagePicked,
+                    onAttachmentInserted = onAttachmentInserted,
                 )
             }
         },
@@ -465,6 +472,9 @@ internal fun ReplyComposer(
     // for the edit bar (a bottomBar branch swap disposes composition state).
     text: String,
     onTextChange: (String) -> Unit,
+    attachment: ImageAttachmentState = ImageAttachmentState.Idle,
+    onImagePicked: (Uri) -> Unit = {},
+    onAttachmentInserted: () -> Unit = {},
 ) {
     val sending = replyState is ReplyState.Sending
 
@@ -472,6 +482,13 @@ internal fun ReplyComposer(
         if (replyState is ReplyState.Sent) {
             onTextChange("")
             onSent()
+        }
+    }
+
+    LaunchedEffect(attachment) {
+        if (attachment is ImageAttachmentState.Ready) {
+            onTextChange(appendImageMarkdown(text, attachment.markdown))
+            onAttachmentInserted()
         }
     }
 
@@ -491,7 +508,20 @@ internal fun ReplyComposer(
                     modifier = Modifier.padding(bottom = 4.dp),
                 )
             }
+            if (attachment is ImageAttachmentState.Error) {
+                Text(
+                    text = attachment.message,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(bottom = 4.dp),
+                )
+            }
             Row(verticalAlignment = Alignment.Bottom) {
+                AttachImageButton(
+                    attachment = attachment,
+                    enabled = !sending,
+                    onImagePicked = onImagePicked,
+                )
                 OutlinedTextField(
                     value = text,
                     onValueChange = onTextChange,

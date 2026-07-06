@@ -19,6 +19,8 @@ import com.autom8ed.fibersocial.feed.models.Topic
 import com.autom8ed.fibersocial.feed.models.VoteType
 import io.ktor.client.HttpClient
 import io.ktor.client.request.forms.FormDataContent
+import io.ktor.client.request.forms.MultiPartFormDataContent
+import io.ktor.client.request.forms.formData
 import io.ktor.client.request.forms.submitForm
 import io.ktor.client.request.get
 import io.ktor.client.request.header
@@ -27,6 +29,7 @@ import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
 import io.ktor.client.statement.request
+import io.ktor.http.Headers
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.Parameters
@@ -41,6 +44,11 @@ import kotlinx.datetime.Clock
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.longOrNull
 
 private const val BASE_URL = "https://api.ravelry.com"
 private const val WWW_URL = "https://www.ravelry.com"
@@ -722,6 +730,85 @@ class RavelryApiClient(
         return lenientJson.decodeFromString<TopicDetailResponse>(raw).topic
     }
 
+    /**
+     * Uploads an image and converts it into an attachment that can be referenced from a
+     * forum post body (or any other markdown field).
+     *
+     * Ravelry's documented three-step flow: `upload/request_token` issues a one-time
+     * token, `upload/image` takes the multipart file data, and `extras/create_attachment`
+     * turns the uploaded image into a hosted attachment.
+     *
+     * @param fileName Display name of the picked file, sent as the multipart filename.
+     * @param contentType MIME type of the image (Ravelry accepts PNG, JPEG and HEIF/HEIC).
+     * @param bytes Raw image data; a single upload POST is capped at 50 MB by Ravelry.
+     * @return Site-relative image URL (e.g. `/attached/...`) to embed as markdown `![](url)`.
+     * @throws ForbiddenException if the account has no Ravelry Extras subscription —
+     *   attachment hosting is an Extras feature, per the `extras/create_attachment` docs.
+     */
+    suspend fun uploadForumImage(fileName: String, contentType: String, bytes: ByteArray): String {
+        val tokenRaw = authenticatedRequest {
+            httpClient.post("$BASE_URL/upload/request_token.json") {
+                header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
+            }
+        }
+        val uploadToken = lenientJson.decodeFromString<UploadTokenResponse>(tokenRaw).uploadToken
+
+        // Deliberately NOT via authenticatedRequest: the docs state upload/image takes no
+        // OAuth headers — the one-time upload_token alone authorizes it — so a 401/403
+        // here can't be fixed by a token refresh and must not be treated as one.
+        val uploadResponse = httpClient.post("$BASE_URL/upload/image.json") {
+            setBody(
+                MultiPartFormDataContent(
+                    formData {
+                        append("upload_token", uploadToken)
+                        append(
+                            "file0",
+                            bytes,
+                            Headers.build {
+                                append(HttpHeaders.ContentType, contentType)
+                                // Quotes stripped rather than escaped: a quote inside a
+                                // filename would terminate the header parameter early.
+                                append(HttpHeaders.ContentDisposition, "filename=\"${fileName.replace("\"", "")}\"")
+                            },
+                        )
+                    },
+                ),
+            )
+        }
+        if (!uploadResponse.status.isSuccess()) {
+            error("Image upload failed: HTTP ${uploadResponse.status.value}")
+        }
+        val imageId = parseUploadedImageId(uploadResponse.bodyAsText())
+
+        val attachmentRaw = authenticatedRequest {
+            httpClient.post("$BASE_URL/extras/create_attachment.json") {
+                header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
+                setBody(FormDataContent(Parameters.build { append("image_id", imageId.toString()) }))
+            }
+        }
+        return lenientJson.decodeFromString<AttachmentResponse>(attachmentRaw).imagePath
+    }
+
+    /**
+     * Extracts `file0`'s `image_id` from an `upload/image` response. The docs' prose says
+     * the result is keyed by file parameter (`{"uploads": {"file0": {"image_id": 16}}}`)
+     * while their example wraps each key in an array element
+     * (`{"uploads": [{"file0": {"image_id": 16}}]}`) — accept both shapes.
+     */
+    private fun parseUploadedImageId(raw: String): Long {
+        val uploads = runCatching { lenientJson.parseToJsonElement(raw).jsonObject["uploads"] }.getOrNull()
+        val entry = when (uploads) {
+            is JsonObject -> uploads["file0"]
+            is JsonArray -> uploads.filterIsInstance<JsonObject>().firstNotNullOfOrNull { it["file0"] }
+            else -> null
+        }
+        return (entry as? JsonObject)?.get("image_id")?.jsonPrimitive?.longOrNull
+            ?: run {
+                println("FiberSocial: uploadForumImage unexpected upload response: ${raw.take(200)}")
+                error("Unexpected Ravelry response — the image may not have uploaded.")
+            }
+    }
+
     @Serializable private data class PostsResponse(
         val posts: List<Post> = emptyList(),
         @SerialName("vote_totals") val voteTotals: Map<String, Map<String, Int>> = emptyMap(),
@@ -745,6 +832,8 @@ class RavelryApiClient(
         @SerialName("vote_totals") val voteTotals: Map<String, Int> = emptyMap(),
         @SerialName("user_votes") val userVotes: List<String> = emptyList(),
     )
+    @Serializable private data class UploadTokenResponse(@SerialName("upload_token") val uploadToken: String)
+    @Serializable private data class AttachmentResponse(@SerialName("image_path") val imagePath: String)
 }
 
 /**

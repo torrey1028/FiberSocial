@@ -1,7 +1,9 @@
 package com.autom8ed.fibersocial.feed
 
+import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
@@ -29,6 +31,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.autom8ed.fibersocial.feed.models.Group
@@ -51,6 +54,9 @@ fun NewTopicScreen(
     onBack: () -> Unit,
     onPost: (Group, String, String, String) -> Unit,
     onCreated: (Topic, Group) -> Unit,
+    attachment: ImageAttachmentState = ImageAttachmentState.Idle,
+    onImagePicked: (Uri) -> Unit = {},
+    onAttachmentInserted: () -> Unit = {},
 ) {
     // Group is not Saveable; survives recomposition, not process death — acceptable
     // for a modal composer, and title/summary/body (the real typing effort) do survive.
@@ -66,6 +72,13 @@ fun NewTopicScreen(
     // mid-send, but that only protects the ViewModel's state — not whether anyone's
     // still observing it).
     BackHandler(enabled = !sending, onBack = onBack)
+
+    LaunchedEffect(attachment) {
+        if (attachment is ImageAttachmentState.Ready) {
+            body = appendImageMarkdown(body, attachment.markdown)
+            onAttachmentInserted()
+        }
+    }
 
     LaunchedEffect(state) {
         if (state is NewTopicState.Created) {
@@ -175,8 +188,23 @@ fun NewTopicScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
-                    .padding(top = 8.dp, bottom = 8.dp),
+                    .padding(top = 8.dp),
             )
+
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                AttachImageButton(
+                    attachment = attachment,
+                    enabled = !sending,
+                    onImagePicked = onImagePicked,
+                )
+                if (attachment is ImageAttachmentState.Error) {
+                    Text(
+                        text = attachment.message,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+            }
         }
     }
 }
