@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Dark launch-window theme: without this, the pre-Compose window background
+         flashes white at startup when the device is in dark mode (issue #153). The
+         in-app Light/Dark override only affects Compose content; this resource-level
+         choice follows the system, which is the right default for the launch flash. -->
+    <style name="Theme.FiberSocial" parent="android:Theme.Material.NoActionBar" />
+</resources>
