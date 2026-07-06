@@ -24,6 +24,8 @@ import com.autom8ed.fibersocial.feed.FeedScreen
 import com.autom8ed.fibersocial.feed.LocalProjectLinkOpener
 import com.autom8ed.fibersocial.profile.LocalProfileOpener
 import com.autom8ed.fibersocial.login.LoginScreen
+import com.autom8ed.fibersocial.notifications.EventSync
+import com.autom8ed.fibersocial.notifications.IosEventNotifier
 import com.autom8ed.fibersocial.login.WebViewLoginScreen
 import com.autom8ed.fibersocial.notifications.KeyValueNotificationSettingsStore
 import com.autom8ed.fibersocial.settings.KeyValueThemeSettingsStore
@@ -152,7 +154,12 @@ private fun IosApp(authModel: IosAuthModel, feedModel: IosFeedModel) {
                             NsUserDefaultsKeyValueStore(NOTIFICATION_SETTINGS_STORE_NAME),
                         )
                     }
-                    LaunchedEffect(Unit) { feedModel.load() }
+                    LaunchedEffect(Unit) {
+                        feedModel.load()
+                        // Same point in the flow where Android prompts (MainActivity
+                        // requests POST_NOTIFICATIONS at launch).
+                        IosEventNotifier().requestAuthorization()
+                    }
                     // On session expiry: show WebView login before clearing auth so
                     // there's no LoginScreen flash (same as MainActivity).
                     LaunchedEffect(feedModel) {
@@ -165,6 +172,7 @@ private fun IosApp(authModel: IosAuthModel, feedModel: IosFeedModel) {
                             authModel.auth.logout()
                         }
                     }
+                    val deepLink by deepLinkEvent.collectAsState()
                     // Project links tapped in post content open the in-app project page
                     // (issue #103); tapping a username opens the profile (issue #194).
                     CompositionLocalProvider(
@@ -180,19 +188,19 @@ private fun IosApp(authModel: IosAuthModel, feedModel: IosFeedModel) {
                                 feedModel.reset()
                                 authModel.auth.logout()
                             },
-                            // Notification deep links land with #118.
-                            deepLinkEventPermalink = null,
+                            deepLinkEventPermalink = deepLink,
+                            onDeepLinkConsumed = { deepLinkEvent.value = null },
                             themeMode = themeMode,
                             onThemeModeSelected = { mode ->
                                 themeMode = mode
                                 themeScope.launch { themeStore.save(ThemeSettings(mode = mode)) }
                             },
                             notificationSettingsStore = notificationSettingsStore,
-                            // Background polling lands with #118; until then the
-                            // cadence is stored but drives nothing.
-                            onPollCadenceChanged = {},
+                            // A cadence change re-baselines the next background-refresh
+                            // request (iOS treats it as a floor, not a schedule).
+                            onPollCadenceChanged = { EventSync.scheduleBackgroundRefresh(it) },
                             debugPanelEnabled = Platform.isDebugBinary,
-                            onRunEventSync = {},
+                            onRunEventSync = { EventSync.runOnce() },
                             deviceInfo = deviceContext(),
                         )
                     }

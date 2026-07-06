@@ -15,6 +15,7 @@ import com.autom8ed.fibersocial.feed.TopicDetailViewModel
 import com.autom8ed.fibersocial.feedback.FeedbackViewModel
 import com.autom8ed.fibersocial.profile.UserProfileViewModel
 import com.autom8ed.fibersocial.net.ravelryApiClient
+import com.autom8ed.fibersocial.notifications.EventSync
 import com.autom8ed.fibersocial.net.ravelryAuthRepository
 import com.autom8ed.fibersocial.net.ravelryHttpClient
 import com.autom8ed.fibersocial.projects.ProjectPageViewModel
@@ -128,9 +129,10 @@ class IosFeedModel(scope: CoroutineScope) : FeedScreenModel {
     override val eventDetail = EventDetailViewModel(
         apiClient,
         scope,
-        // Notifications land with #118; until then an RSVP change has no reminders
-        // to resync on iOS.
-        onAttendanceChanged = {},
+        // RSVP changes resync notifications immediately: reminders for a fresh RSVP
+        // are scheduled — and pending ones for a withdrawn RSVP cancelled — without
+        // waiting for the next foreground/background sync (same as Android).
+        onAttendanceChanged = { EventSync.runOnce() },
     )
 
     /** Emits when any screen's data source encounters a session expiry. */
