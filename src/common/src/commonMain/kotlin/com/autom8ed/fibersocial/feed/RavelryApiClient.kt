@@ -15,6 +15,7 @@ import com.autom8ed.fibersocial.events.SavedEventsParser
 import com.autom8ed.fibersocial.feed.models.Group
 import com.autom8ed.fibersocial.feed.models.Post
 import com.autom8ed.fibersocial.feed.models.RavelryUser
+import com.autom8ed.fibersocial.profile.UserProfile
 import com.autom8ed.fibersocial.feed.models.Topic
 import com.autom8ed.fibersocial.feed.models.VoteType
 import com.autom8ed.fibersocial.projects.PatternInfo
@@ -183,6 +184,20 @@ class RavelryApiClient(
      * @param username Ravelry username whose memberships to fetch.
      * @return Groups the user belongs to. Groups not found via search are silently omitted.
      */
+    /**
+     * Returns [username]'s public profile (issue #194).
+     *
+     * @param username Ravelry username; the profile endpoint accepts it as the `{id}`.
+     */
+    suspend fun getUserProfile(username: String): UserProfile {
+        val raw = authenticatedRequest {
+            httpClient.get("$BASE_URL/people/$username.json") {
+                header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
+            }
+        }
+        return lenientJson.decodeFromString<UserProfileResponse>(raw).user
+    }
+
     suspend fun getUserGroups(username: String): List<Group> = coroutineScope {
         val html = httpClient.get("https://www.ravelry.com/people/$username/groups/memberships") {
             header(HttpHeaders.Cookie, sessionCookie())
@@ -979,6 +994,7 @@ class RavelryApiClient(
     @Serializable private data class ForumPostResponse(@SerialName("forum_post") val forumPost: Post)
     @Serializable private data class TopicCreateResponse(val topic: Topic)
     @Serializable private data class CurrentUserResponse(val user: RavelryUser)
+    @Serializable private data class UserProfileResponse(val user: UserProfile)
     @Serializable private data class GroupsSearchResponse(val groups: List<Group> = emptyList())
     @Serializable private data class TopicsResponse(
         val topics: List<Topic> = emptyList(),

@@ -29,6 +29,7 @@ import com.autom8ed.fibersocial.feed.html.parsePreviewDocument
 import com.autom8ed.fibersocial.feed.html.previewImageUrl
 import com.autom8ed.fibersocial.feed.html.previewInlines
 import com.autom8ed.fibersocial.feed.models.FeedItem
+import com.autom8ed.fibersocial.profile.UsernameLink
 
 @Composable
 fun TopicCard(
@@ -110,10 +111,11 @@ fun TopicCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(
-                    text = "@${item.displayAuthor.username}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                UsernameLink(
+                    username = item.displayAuthor.username,
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    ),
                 )
                 Text(
                     text = "💬 ${item.replyCount} · ${relativeTime(item.lastPostAt)}",

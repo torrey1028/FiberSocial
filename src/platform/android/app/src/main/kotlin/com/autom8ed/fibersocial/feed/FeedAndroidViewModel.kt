@@ -13,6 +13,7 @@ import com.autom8ed.fibersocial.net.ravelryApiClient
 import com.autom8ed.fibersocial.net.ravelryAuthRepository
 import com.autom8ed.fibersocial.net.ravelryHttpClient
 import com.autom8ed.fibersocial.notifications.EventSyncWorker
+import com.autom8ed.fibersocial.profile.UserProfileViewModel
 import com.autom8ed.fibersocial.projects.ProjectPageViewModel
 import com.autom8ed.fibersocial.projects.ProjectPhotoPickerViewModel
 import com.autom8ed.fibersocial.storage.AUTH_PREFS_NAME
@@ -48,6 +49,9 @@ class FeedAndroidViewModel(app: Application) : AndroidViewModel(app), FeedScreen
 
     // In-app project page for tapped ravelry.com/projects links (issue #103).
     override val projectPage = ProjectPageViewModel(apiClient, viewModelScope)
+
+    // In-app user profile for tapped usernames (issue #194).
+    override val userProfile = UserProfileViewModel(apiClient, viewModelScope)
     override val feedback = FeedbackViewModel(apiClient, viewModelScope)
     override val events = EventsViewModel(apiClient, viewModelScope)
     override val eventDetail = EventDetailViewModel(
@@ -68,6 +72,7 @@ class FeedAndroidViewModel(app: Application) : AndroidViewModel(app), FeedScreen
         replyImage.sessionExpired,
         projectPicker.sessionExpired,
         projectPage.sessionExpired,
+        userProfile.sessionExpired,
         feedback.sessionExpired,
         events.sessionExpired,
         eventDetail.sessionExpired,

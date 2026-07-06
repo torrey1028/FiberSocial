@@ -37,6 +37,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import com.autom8ed.fibersocial.profile.UsernameLink
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -219,10 +220,7 @@ private fun AttendeeRow(attendee: EventAttendee) {
     ) {
         Avatar(url = attendee.avatarUrl, size = 36.dp)
         Spacer(Modifier.width(10.dp))
-        Text(
-            text = "@${attendee.username}",
-            style = MaterialTheme.typography.bodyMedium,
-        )
+        UsernameLink(username = attendee.username, style = MaterialTheme.typography.bodyMedium)
     }
 }
 
