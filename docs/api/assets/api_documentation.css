@@ -1,0 +1,132 @@
+body {
+  font-size: 16px;
+  line-height: 1.4em;
+  font-family: "HelveticaNeue", Helvetica, Arial, sans-serif;
+}
+
+h2 {
+  font-size: 1.3em;
+  background-color: #72DFD0;
+  padding: 3px;
+  margin-top: 2em; 
+}
+
+h1 {
+  font-size: 2em;
+  font-weight: bold;
+}
+
+h3 {
+  background-color: #DBDED3;
+  padding: 3px; 
+}
+
+img.emo {
+  width: 1em;
+  height: 1em;
+  vertical-align: text-top;
+}
+
+br {
+  margin-top: 1.4rem;
+  display: block;
+}
+
+.doc_navigation {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 250px;
+  overflow-y: scroll;
+}
+
+.doc_navigation h2 {
+  margin-top: 0;
+  background-color: transparent
+}
+.doc_navigation ul {
+  margin-bottom: 0 !important;
+  margin-top: 0 !important;
+  list-style-type: none;
+  padding-left: 1em;
+}
+
+.doc_navigation ul {
+  padding-bottom: 1em;
+}
+
+.doc_navigation li {
+  list-style-type: none;
+  list-style-position: inside;
+}
+.doc_navigation .method_description {
+  display: none;
+}
+
+.doc_content {
+  margin-left: 270px;
+  max-width: 800px;
+}
+
+a {
+  color: #2E606B;
+}
+
+a:hover {
+  color: #1A444D;
+}
+
+a:visited {
+  color: #173036;
+}
+
+
+table {
+  margin-left: 2em;
+  border: 1px solid #ddd;
+  border-spacing: 0; 
+}
+
+table thead td {
+  background-color: #f3f4f0;
+}
+
+td {
+  padding: 3px;
+  border-left: 1px solid #ddd;
+  border-bottom: 1px solid #ddd;
+}
+
+td.name {
+  width: 100px; 
+}
+
+td.type {
+  width: 200px; 
+}
+
+td.required {
+  width: 80px; 
+}
+
+td.description {
+  width: 400px; 
+}
+
+.api_method {
+  padding-bottom: 2em;
+}
+
+.uri {
+  margin-bottom: 1em;
+  font-size: 1.3em; 
+}
+
+.description {
+  margin-bottom: 1em; 
+}
+
+.authenticated {
+  margin-top: 1em; 
+}
