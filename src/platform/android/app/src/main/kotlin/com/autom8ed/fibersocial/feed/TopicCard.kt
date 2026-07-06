@@ -14,11 +14,15 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.autom8ed.fibersocial.ui.Avatar
+import com.autom8ed.fibersocial.feed.html.parsePreviewDocument
+import com.autom8ed.fibersocial.feed.html.previewInlines
 import com.autom8ed.fibersocial.feed.models.FeedItem
 
 @Composable
@@ -50,10 +54,21 @@ fun TopicCard(
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                     )
-                    if (item.displayPreview.isNotBlank()) {
+                    // Rich preview (issue #154): render the summary/reply's actual
+                    // formatting instead of stripping it (imperfectly) to plain text.
+                    // The old stripped string stays as a fallback for content that
+                    // flattens to nothing renderable.
+                    val previewInlines = remember(item) { item.parsePreviewDocument().previewInlines() }
+                    val preview = buildInlineText(
+                        content = previewInlines,
+                        linkColor = MaterialTheme.colorScheme.primary,
+                        codeBackground = MaterialTheme.colorScheme.surfaceVariant,
+                    ).takeIf { it.text.isNotBlank() }
+                        ?: AnnotatedString(item.displayPreview)
+                    if (preview.text.isNotBlank()) {
                         Spacer(modifier = Modifier.height(2.dp))
                         Text(
-                            text = item.displayPreview,
+                            text = preview,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 2,

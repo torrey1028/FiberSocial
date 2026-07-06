@@ -348,6 +348,8 @@ class FeedRepositoryTest {
         val item = repo.singlePageItems().single()
         assertEquals(200, item.latestReplyPreview?.length)
         assertEquals("y".repeat(200), item.latestReplyPreview)
+        // The raw HTML is carried untruncated for the card's rich preview (issue #154).
+        assertEquals(longBody, item.latestReplyHtml)
     }
 
     @Test

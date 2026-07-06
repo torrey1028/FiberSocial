@@ -126,6 +126,7 @@ class FeedRepository(private val apiClient: RavelryApiClient) {
             // missing must not show its text attributed to the opening poster.
             latestReplyAuthor = attributableReply?.user,
             latestReplyPreview = attributableReply?.let { htmlPreview(it.bodyHtml) },
+            latestReplyHtml = attributableReply?.bodyHtml,
         )
     }
 

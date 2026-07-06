@@ -276,4 +276,24 @@ class MarkdownPostParserTest {
         val paragraph = assertIs<PostBlock.Paragraph>(item.parseSummaryDocument().blocks.single())
         assertEquals(1, paragraph.content.filterIsInstance<Inline.Styled>().size)
     }
+
+    @Test
+    fun `parsePreviewDocument prefers the latest reply's html`() {
+        // Mirrors displayPreview's reply-else-opener rule (the card previews the reply).
+        val item = feedItem(
+            bodySummary = "opening post",
+            bodySummaryHtml = "<p>opening post</p>",
+        ).copy(latestReplyHtml = "<p><em>latest reply</em></p>")
+        val paragraph = assertIs<PostBlock.Paragraph>(item.parsePreviewDocument().blocks.single())
+        val styled = paragraph.content.filterIsInstance<Inline.Styled>().single()
+        assertEquals(InlineStyle.ITALIC, styled.style)
+        assertEquals(listOf<Inline>(Inline.Text("latest reply")), styled.children)
+    }
+
+    @Test
+    fun `parsePreviewDocument falls back to the summary without a reply`() {
+        val item = feedItem(bodySummary = "opening post", bodySummaryHtml = "<p>opening post</p>")
+        val paragraph = assertIs<PostBlock.Paragraph>(item.parsePreviewDocument().blocks.single())
+        assertEquals(listOf<Inline>(Inline.Text("opening post")), paragraph.content)
+    }
 }

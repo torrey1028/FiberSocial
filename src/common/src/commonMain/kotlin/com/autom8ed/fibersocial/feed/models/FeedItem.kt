@@ -29,6 +29,9 @@ package com.autom8ed.fibersocial.feed.models
  *   topic has no replies (or the latest reply couldn't be fetched).
  * @property latestReplyPreview Truncated plain-text excerpt of the most recent reply
  *   (max 200 chars), or `null` under the same conditions as [latestReplyAuthor].
+ * @property latestReplyHtml Ravelry's HTML rendering of the most recent reply's body —
+ *   the source for the card's rich preview (issue #154) — or `null` under the same
+ *   conditions as [latestReplyAuthor].
  */
 data class FeedItem(
     val id: Long,
@@ -44,9 +47,10 @@ data class FeedItem(
     val sticky: Boolean = false,
     val latestReplyAuthor: RavelryUser? = null,
     val latestReplyPreview: String? = null,
+    val latestReplyHtml: String? = null,
 ) {
     init {
-        require(!sticky || (latestReplyAuthor == null && latestReplyPreview == null)) {
+        require(!sticky || (latestReplyAuthor == null && latestReplyPreview == null && latestReplyHtml == null)) {
             "Sticky topics attribute to the opening post; latest-reply fields must stay null"
         }
     }

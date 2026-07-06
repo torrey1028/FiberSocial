@@ -192,3 +192,12 @@ fun Post.parseBodyDocument(): PostDocument =
 fun FeedItem.parseSummaryDocument(): PostDocument =
     if (bodySummaryHtml.isNotBlank()) HtmlPostParser.parse(bodySummaryHtml)
     else MarkdownPostParser.parse(bodySummary)
+
+/**
+ * Parses whatever the feed card should preview: the latest reply when one is attributed
+ * (mirroring [FeedItem.displayPreview]'s reply-else-opener rule), otherwise the topic
+ * summary via [parseSummaryDocument].
+ */
+fun FeedItem.parsePreviewDocument(): PostDocument =
+    latestReplyHtml?.takeIf { it.isNotBlank() }?.let { HtmlPostParser.parse(it) }
+        ?: parseSummaryDocument()
