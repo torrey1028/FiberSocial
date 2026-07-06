@@ -61,7 +61,12 @@ if [ -n "$INSTALLED_FLAGS" ]; then
 fi
 
 echo "Found $DEVICES device(s). Installing..."
-adb install -r "$APK_PATH"
+# -d (allow downgrade): builds on a release-tagged commit get a tag-derived
+# versionCode in the millions while ordinary dev builds are versionCode 1, so
+# the first dev install after building on a tagged commit is a "downgrade".
+# Only works debug-over-debug; replacing an installed *release* build with a
+# debug one needs an uninstall anyway (different signing key).
+adb install -r -d "$APK_PATH"
 
 # Auto-backup restores the old build's app data right after an uninstall/reinstall
 # cycle — including the EncryptedSharedPreferences keyset, whose Keystore master key

@@ -1,5 +1,6 @@
 package com.autom8ed.fibersocial.feed
 
+import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -81,6 +82,9 @@ fun TopicDetailScreen(
     onSendReply: (String) -> Unit = {},
     onReplySent: () -> Unit = {},
     onRefresh: () -> Unit = {},
+    attachment: ImageAttachmentState = ImageAttachmentState.Idle,
+    onImagePicked: (Uri) -> Unit = {},
+    onAttachmentInserted: () -> Unit = {},
 ) {
     var pendingDelete by remember { mutableStateOf<Post?>(null) }
     pendingDelete?.let { post ->
@@ -171,6 +175,9 @@ fun TopicDetailScreen(
                     replyState = replyState,
                     onSend = onSendReply,
                     onSent = onReplySent,
+                    attachment = attachment,
+                    onImagePicked = onImagePicked,
+                    onAttachmentInserted = onAttachmentInserted,
                 )
             }
         },
@@ -465,6 +472,9 @@ internal fun ReplyComposer(
     // for the edit bar (a bottomBar branch swap disposes composition state).
     text: String,
     onTextChange: (String) -> Unit,
+    attachment: ImageAttachmentState = ImageAttachmentState.Idle,
+    onImagePicked: (Uri) -> Unit = {},
+    onAttachmentInserted: () -> Unit = {},
 ) {
     val sending = replyState is ReplyState.Sending
 
@@ -474,6 +484,12 @@ internal fun ReplyComposer(
             onSent()
         }
     }
+
+    InsertAttachmentEffect(
+        attachment = attachment,
+        onInsert = { onTextChange(appendImageMarkdown(text, it)) },
+        onInserted = onAttachmentInserted,
+    )
 
     Surface(tonalElevation = 3.dp) {
         // imePadding keeps the composer above the on-screen keyboard while typing.
@@ -491,7 +507,20 @@ internal fun ReplyComposer(
                     modifier = Modifier.padding(bottom = 4.dp),
                 )
             }
+            if (attachment is ImageAttachmentState.Error) {
+                Text(
+                    text = attachment.message,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(bottom = 4.dp),
+                )
+            }
             Row(verticalAlignment = Alignment.Bottom) {
+                AttachImageButton(
+                    attachment = attachment,
+                    enabled = !sending,
+                    onImagePicked = onImagePicked,
+                )
                 OutlinedTextField(
                     value = text,
                     onValueChange = onTextChange,
@@ -506,7 +535,9 @@ internal fun ReplyComposer(
                 } else {
                     IconButton(
                         onClick = { onSend(text) },
-                        enabled = text.isNotBlank(),
+                        // Gated on the upload too: sending mid-upload would post without
+                        // the image and the markdown would land in the cleared draft.
+                        enabled = text.isNotBlank() && attachment !is ImageAttachmentState.Uploading,
                     ) {
                         Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send reply")
                     }

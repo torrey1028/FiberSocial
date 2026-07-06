@@ -1,5 +1,6 @@
 package com.autom8ed.fibersocial.feed
 
+import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -137,6 +138,10 @@ fun FeedScreen(
             eventsGroup = null
             composingTopic = false
             sendingFeedback = false
+            // This path closes both composers without going through their onBack
+            // handlers, so their attachment flows must be reset here too.
+            viewModel.replyImage.reset()
+            viewModel.newTopicImage.reset()
             viewModel.eventDetail.load(deepLinkEventPermalink)
             selectedEventPermalink = deepLinkEventPermalink
             onDeepLinkConsumed()
@@ -229,6 +234,7 @@ fun FeedScreen(
         val replyState by viewModel.topicDetail.replyState.collectAsState()
         val deleteState by viewModel.topicDetail.deleteState.collectAsState()
         val editState by viewModel.topicDetail.editState.collectAsState()
+        val replyAttachment by viewModel.replyImage.state.collectAsState()
         val currentUsername = when (val s = state) {
             is FeedState.Loaded -> s.user.username
             is FeedState.Refreshing -> s.stale.user.username
@@ -241,7 +247,12 @@ fun FeedScreen(
             onVote = { post, type -> viewModel.topicDetail.toggleVote(post, type) },
             onSendReply = { body -> viewModel.topicDetail.sendReply(topic.id, body) },
             onReplySent = { viewModel.topicDetail.acknowledgeReplySent() },
-            onBack = { selectedTopic = null },
+            onBack = {
+                // An upload result that lands after leaving must not append into the
+                // next topic's draft.
+                viewModel.replyImage.reset()
+                selectedTopic = null
+            },
             // A reply bumps its topic to the top of the website's feed; refresh here so
             // the app catches up instead of showing stale ordering/last-reply data until
             // the next natural reload (issue #88). Skipped when the user merely browsed
@@ -255,19 +266,27 @@ fun FeedScreen(
             editState = editState,
             onEditPost = { post, newBody -> viewModel.topicDetail.editPost(post, newBody) },
             onEditErrorShown = { viewModel.topicDetail.acknowledgeEditError() },
+            attachment = replyAttachment,
+            onImagePicked = { uri -> viewModel.attachReplyImage(uri) },
+            onAttachmentInserted = { viewModel.replyImage.acknowledgeInserted() },
         )
         return
     }
 
     if (composingTopic) {
         val newTopicState by viewModel.newTopic.state.collectAsState()
+        val newTopicAttachment by viewModel.newTopicImage.state.collectAsState()
         NewTopicScreen(
             groups = groups,
             initialGroup = loaded?.selectedGroup,
             state = newTopicState,
+            attachment = newTopicAttachment,
+            onImagePicked = { uri -> viewModel.attachNewTopicImage(uri) },
+            onAttachmentInserted = { viewModel.newTopicImage.acknowledgeInserted() },
             onBack = {
                 composingTopic = false
                 viewModel.newTopic.reset()
+                viewModel.newTopicImage.reset()
             },
             onPost = { group, title, body, summary ->
                 viewModel.newTopic.create(group.forumId, title, body, summary)
@@ -275,6 +294,7 @@ fun FeedScreen(
             onCreated = { topic, group ->
                 composingTopic = false
                 viewModel.newTopic.acknowledgeCreated()
+                viewModel.newTopicImage.reset()
                 // Land the author inside their new topic, and refresh so the feed
                 // shows it once they navigate back.
                 viewModel.topicDetail.load(topic.id)
@@ -404,6 +424,7 @@ fun FeedScreen(
                     FloatingActionButton(
                         onClick = {
                             viewModel.newTopic.reset()
+                            viewModel.newTopicImage.reset()
                             composingTopic = true
                         },
                     ) {
@@ -444,6 +465,10 @@ fun FeedScreen(
                         loadingMore = s.loadingMore,
                         onLoadMore = { viewModel.feed.loadMore() },
                         onTopicClick = { topic ->
+                            // Reset on open as well as on back, so this topic's reply
+                            // composer starts from a clean attachment flow no matter how
+                            // the previous one was left.
+                            viewModel.replyImage.reset()
                             viewModel.topicDetail.load(topic.id)
                             selectedTopic = topic
                         },
@@ -460,6 +485,10 @@ fun FeedScreen(
                         loadingMore = s.stale.loadingMore,
                         onLoadMore = { viewModel.feed.loadMore() },
                         onTopicClick = { topic ->
+                            // Reset on open as well as on back, so this topic's reply
+                            // composer starts from a clean attachment flow no matter how
+                            // the previous one was left.
+                            viewModel.replyImage.reset()
                             viewModel.topicDetail.load(topic.id)
                             selectedTopic = topic
                         },
@@ -507,6 +536,9 @@ internal fun TopicDetailRoute(
     editState: EditState = EditState.Idle,
     onEditPost: (Post, String) -> Unit = { _, _ -> },
     onEditErrorShown: () -> Unit = {},
+    attachment: ImageAttachmentState = ImageAttachmentState.Idle,
+    onImagePicked: (Uri) -> Unit = {},
+    onAttachmentInserted: () -> Unit = {},
 ) {
     // ReplyState is transient — it flips Sent -> Idle again as soon as the composer
     // acknowledges it (see ReplyComposer/acknowledgeReplySent) — so whether a reply went
@@ -536,6 +568,9 @@ internal fun TopicDetailRoute(
         editState = editState,
         onEditPost = onEditPost,
         onEditErrorShown = onEditErrorShown,
+        attachment = attachment,
+        onImagePicked = onImagePicked,
+        onAttachmentInserted = onAttachmentInserted,
     )
 }
 

@@ -71,6 +71,87 @@ class ReplyComposerTest {
         compose.onNodeWithText("boom").assertIsDisplayed()
         compose.onNodeWithText("my precious draft").assertIsDisplayed()
     }
+
+    @Test
+    fun `attach image button is shown and disabled while a reply is sending`() {
+        var replyState by mutableStateOf<ReplyState>(ReplyState.Idle)
+        compose.setContent { StatefulReplyComposer(replyState = replyState, onSend = {}, onSent = {}) }
+        compose.onNodeWithContentDescription("Attach image").assertIsEnabled()
+        compose.runOnIdle { replyState = ReplyState.Sending }
+        compose.onNodeWithContentDescription("Attach image").assertIsNotEnabled()
+    }
+
+    @Test
+    fun `send is disabled while an image upload is in flight`() {
+        var attachment by mutableStateOf<ImageAttachmentState>(ImageAttachmentState.Idle)
+        compose.setContent {
+            StatefulReplyComposer(
+                replyState = ReplyState.Idle,
+                onSend = {},
+                onSent = {},
+                attachment = attachment,
+            )
+        }
+        compose.onNodeWithText("Write a reply…").performTextInput("look at my socks")
+        compose.onNodeWithContentDescription("Send reply").assertIsEnabled()
+        // Sending mid-upload would post without the image and strand its markdown
+        // in the cleared draft.
+        compose.runOnIdle { attachment = ImageAttachmentState.Uploading }
+        compose.onNodeWithContentDescription("Send reply").assertIsNotEnabled()
+    }
+
+    @Test
+    fun `Ready attachment appends its markdown to the draft and acknowledges`() {
+        var inserted = 0
+        var attachment by mutableStateOf<ImageAttachmentState>(ImageAttachmentState.Idle)
+        compose.setContent {
+            StatefulReplyComposer(
+                replyState = ReplyState.Idle,
+                onSend = {},
+                onSent = {},
+                attachment = attachment,
+                onAttachmentInserted = { inserted++ },
+            )
+        }
+        compose.onNodeWithText("Write a reply…").performTextInput("look at my socks")
+        compose.runOnIdle { attachment = ImageAttachmentState.Ready("![](/attached/me/1.jpg)") }
+        compose.waitForIdle()
+        compose.runOnIdle { assertEquals(1, inserted) }
+        compose.onNodeWithText("look at my socks\n\n![](/attached/me/1.jpg)").assertIsDisplayed()
+    }
+
+    @Test
+    fun `attachment upload shows a spinner instead of the attach button`() {
+        compose.setContent {
+            StatefulReplyComposer(
+                replyState = ReplyState.Idle,
+                onSend = {},
+                onSent = {},
+                attachment = ImageAttachmentState.Uploading,
+            )
+        }
+        compose.onNodeWithContentDescription("Attach image").assertDoesNotExist()
+    }
+
+    @Test
+    fun `attachment error message is shown and the draft is kept`() {
+        var attachment by mutableStateOf<ImageAttachmentState>(ImageAttachmentState.Idle)
+        compose.setContent {
+            StatefulReplyComposer(
+                replyState = ReplyState.Idle,
+                onSend = {},
+                onSent = {},
+                attachment = attachment,
+            )
+        }
+        compose.onNodeWithText("Write a reply…").performTextInput("my precious draft")
+        compose.runOnIdle {
+            attachment = ImageAttachmentState.Error(ImageAttachmentViewModel.EXTRAS_REQUIRED_MESSAGE)
+        }
+        compose.waitForIdle()
+        compose.onNodeWithText(ImageAttachmentViewModel.EXTRAS_REQUIRED_MESSAGE).assertIsDisplayed()
+        compose.onNodeWithText("my precious draft").assertIsDisplayed()
+    }
 }
 
 /** Test wrapper providing the hoisted draft state the screen normally owns. */
@@ -79,6 +160,8 @@ private fun StatefulReplyComposer(
     replyState: ReplyState,
     onSend: (String) -> Unit,
     onSent: () -> Unit,
+    attachment: ImageAttachmentState = ImageAttachmentState.Idle,
+    onAttachmentInserted: () -> Unit = {},
 ) {
     var text by remember { mutableStateOf("") }
     ReplyComposer(
@@ -87,5 +170,7 @@ private fun StatefulReplyComposer(
         onSent = onSent,
         text = text,
         onTextChange = { text = it },
+        attachment = attachment,
+        onAttachmentInserted = onAttachmentInserted,
     )
 }

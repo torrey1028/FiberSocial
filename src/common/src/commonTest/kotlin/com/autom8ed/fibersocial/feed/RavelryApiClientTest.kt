@@ -7,7 +7,9 @@ import com.autom8ed.fibersocial.feed.models.VoteType
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
+import io.ktor.client.engine.mock.toByteArray
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.client.request.HttpRequestData
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
@@ -1466,6 +1468,139 @@ class RavelryApiClientTest {
         val post = client.postReply(42L, "hi")
         assertEquals(5L, post.id)
         assertEquals(null, post.editable)
+    }
+
+    /**
+     * MockEngine wired for the three-request upload flow. Captures each request so the
+     * tests can assert on auth headers and bodies per endpoint.
+     */
+    private fun uploadApiClient(
+        uploadsJson: String = """{"uploads":{"file0":{"image_id":16}}}""",
+        tokenStatus: HttpStatusCode = HttpStatusCode.OK,
+        attachmentStatus: HttpStatusCode = HttpStatusCode.OK,
+        attachmentBody: String = """{"image_path":"/attached/yarnie/16.jpg"}""",
+        capture: MutableMap<String, HttpRequestData> = mutableMapOf(),
+    ): RavelryApiClient {
+        val engine = MockEngine { request ->
+            capture[request.url.encodedPath] = request
+            when (request.url.encodedPath) {
+                "/upload/request_token.json" -> respond(
+                    """{"upload_token":"tok-abc"}""", tokenStatus,
+                    headersOf("Content-Type", ContentType.Application.Json.toString()),
+                )
+                "/upload/image.json" -> respond(
+                    uploadsJson, HttpStatusCode.OK,
+                    headersOf("Content-Type", ContentType.Application.Json.toString()),
+                )
+                "/extras/create_attachment.json" -> respond(
+                    attachmentBody, attachmentStatus,
+                    headersOf("Content-Type", ContentType.Application.Json.toString()),
+                )
+                else -> error("Unexpected request: ${request.url}")
+            }
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        return RavelryApiClient(httpClient, FakeFeedTokenStorage())
+    }
+
+    @Test
+    fun `uploadForumImage chains token, multipart upload and attachment`() = runTest {
+        val capture = mutableMapOf<String, HttpRequestData>()
+        val client = uploadApiClient(capture = capture)
+        val imagePath = client.uploadForumImage("photo.jpg", "image/jpeg", byteArrayOf(1, 2, 3))
+        assertEquals("/attached/yarnie/16.jpg", imagePath)
+
+        val multipart = capture.getValue("/upload/image.json").body.toByteArray().decodeToString()
+        assertTrue("tok-abc" in multipart, "upload_token missing from multipart body")
+        assertTrue("name=file0" in multipart || "name=\"file0\"" in multipart, "file0 part missing")
+        assertTrue("filename=\"photo.jpg\"" in multipart, "filename missing")
+
+        val attachmentBody = capture.getValue("/extras/create_attachment.json").body.toByteArray().decodeToString()
+        assertEquals("image_id=16", attachmentBody)
+    }
+
+    @Test
+    fun `uploadForumImage authenticates token and attachment requests but not the upload itself`() = runTest {
+        val capture = mutableMapOf<String, HttpRequestData>()
+        uploadApiClient(capture = capture).uploadForumImage("p.png", "image/png", byteArrayOf(1))
+        assertEquals(
+            "Bearer test-token",
+            capture.getValue("/upload/request_token.json").headers[HttpHeaders.Authorization],
+        )
+        assertEquals(
+            "Bearer test-token",
+            capture.getValue("/extras/create_attachment.json").headers[HttpHeaders.Authorization],
+        )
+        // Docs: upload/image is NOT an authenticated method — the one-time token authorizes it.
+        assertEquals(null, capture.getValue("/upload/image.json").headers[HttpHeaders.Authorization])
+    }
+
+    @Test
+    fun `uploadForumImage accepts the docs example array-shaped uploads response`() = runTest {
+        val client = uploadApiClient(uploadsJson = """{"uploads":[{"file0":{"image_id":16}}]}""")
+        assertEquals("/attached/yarnie/16.jpg", client.uploadForumImage("p.jpg", "image/jpeg", byteArrayOf(1)))
+    }
+
+    @Test
+    fun `uploadForumImage fails loudly when the upload response has no image_id`() = runTest {
+        val client = uploadApiClient(uploadsJson = """{"uploads":{}}""")
+        assertFailsWith<IllegalStateException> {
+            client.uploadForumImage("p.jpg", "image/jpeg", byteArrayOf(1))
+        }
+    }
+
+    @Test
+    fun `uploadForumImage surfaces a 403 on create_attachment as ForbiddenException`() = runTest {
+        val client = uploadApiClient(attachmentStatus = HttpStatusCode.Forbidden)
+        assertFailsWith<ForbiddenException> {
+            client.uploadForumImage("p.jpg", "image/jpeg", byteArrayOf(1))
+        }
+    }
+
+    @Test
+    fun `uploadForumImage strips quotes from the multipart filename`() = runTest {
+        val capture = mutableMapOf<String, HttpRequestData>()
+        uploadApiClient(capture = capture).uploadForumImage("""my "best" photo.jpg""", "image/jpeg", byteArrayOf(1))
+        val multipart = capture.getValue("/upload/image.json").body.toByteArray().decodeToString()
+        assertTrue("filename=\"my best photo.jpg\"" in multipart, "quotes not stripped: $multipart")
+    }
+
+    @Test
+    fun `uploadForumImage strips control characters and backslashes from the filename`() = runTest {
+        // A hostile provider's DISPLAY_NAME with CR/LF would make Ktor's header
+        // validation throw before any request is made; backslashes would escape the
+        // quoted header parameter.
+        val capture = mutableMapOf<String, HttpRequestData>()
+        uploadApiClient(capture = capture).uploadForumImage("bad\r\nname\\photo.jpg", "image/jpeg", byteArrayOf(1))
+        val multipart = capture.getValue("/upload/image.json").body.toByteArray().decodeToString()
+        assertTrue("filename=\"badnamephoto.jpg\"" in multipart, "control chars not stripped: $multipart")
+    }
+
+    @Test
+    fun `uploadForumImage does not report a request_token 403 as ForbiddenException`() = runTest {
+        // Only create_attachment's 403 means "no Extras subscription"; a 403 on the
+        // token request must not be mapped to the Extras upsell message by callers.
+        val client = uploadApiClient(tokenStatus = HttpStatusCode.Forbidden)
+        val e = assertFailsWith<IllegalStateException> {
+            client.uploadForumImage("p.jpg", "image/jpeg", byteArrayOf(1))
+        }
+        assertTrue("upload token" in e.message.orEmpty(), "unexpected message: ${e.message}")
+    }
+
+    @Test
+    fun `uploadForumImage turns a garbage create_attachment body into a readable error`() = runTest {
+        // authenticatedRequest passes non-401/403 error bodies through; the decode
+        // failure must not leak raw SerializationException text into the UI.
+        val client = uploadApiClient(
+            attachmentStatus = HttpStatusCode.InternalServerError,
+            attachmentBody = "<html>Server Error</html>",
+        )
+        val e = assertFailsWith<IllegalStateException> {
+            client.uploadForumImage("p.jpg", "image/jpeg", byteArrayOf(1))
+        }
+        assertTrue("Ravelry" in e.message.orEmpty(), "unexpected message: ${e.message}")
     }
 }
 

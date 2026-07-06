@@ -4,9 +4,11 @@ App for community connection/organization for Ravelry users.
 
 ## Download & install (Android)
 
-The latest signed build is always available here:
+The most recent release is always available here:
 
-**[⬇ Download the latest APK](https://github.com/torrey1028/FiberSocial/releases/latest/download/app-release.apk)**
+**[⬇ Download the latest release APK](https://github.com/torrey1028/FiberSocial/releases/latest/download/app-release.apk)**
+
+Releases are cut deliberately (a maintainer tags a version), so this link points at the newest *released* version rather than the newest commit.
 
 This is a direct APK download, not a Play Store listing, so Android will warn you about installing from an unknown source — that's expected.
 
