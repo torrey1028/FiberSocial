@@ -1477,6 +1477,7 @@ class RavelryApiClientTest {
     private fun uploadApiClient(
         uploadsJson: String = """{"uploads":{"file0":{"image_id":16}}}""",
         tokenStatus: HttpStatusCode = HttpStatusCode.OK,
+        uploadStatus: HttpStatusCode = HttpStatusCode.OK,
         attachmentStatus: HttpStatusCode = HttpStatusCode.OK,
         attachmentBody: String = """{"image_path":"/attached/yarnie/16.jpg"}""",
         capture: MutableMap<String, HttpRequestData> = mutableMapOf(),
@@ -1489,7 +1490,7 @@ class RavelryApiClientTest {
                     headersOf("Content-Type", ContentType.Application.Json.toString()),
                 )
                 "/upload/image.json" -> respond(
-                    uploadsJson, HttpStatusCode.OK,
+                    uploadsJson, uploadStatus,
                     headersOf("Content-Type", ContentType.Application.Json.toString()),
                 )
                 "/extras/create_attachment.json" -> respond(
@@ -1601,6 +1602,109 @@ class RavelryApiClientTest {
             client.uploadForumImage("p.jpg", "image/jpeg", byteArrayOf(1))
         }
         assertTrue("Ravelry" in e.message.orEmpty(), "unexpected message: ${e.message}")
+    }
+
+    @Test
+    fun `uploadForumImage fails loudly when the upload POST is rejected`() = runTest {
+        val client = uploadApiClient(uploadStatus = HttpStatusCode.PayloadTooLarge)
+        val e = assertFailsWith<IllegalStateException> {
+            client.uploadForumImage("p.jpg", "image/jpeg", byteArrayOf(1))
+        }
+        assertTrue("413" in (e.message ?: ""), "expected status in message: ${e.message}")
+    }
+
+    @Test
+    fun `uploadForumImage fails loudly on a malformed upload response`() = runTest {
+        val client = uploadApiClient(uploadsJson = "not json at all")
+        assertFailsWith<IllegalStateException> {
+            client.uploadForumImage("p.jpg", "image/jpeg", byteArrayOf(1))
+        }
+    }
+
+    @Test
+    fun `uploadForumImage fails loudly when uploads is neither object nor array`() = runTest {
+        val client = uploadApiClient(uploadsJson = """{"uploads":"nope"}""")
+        assertFailsWith<IllegalStateException> {
+            client.uploadForumImage("p.jpg", "image/jpeg", byteArrayOf(1))
+        }
+    }
+
+    @Test
+    fun `getProjects hits the list endpoint sorted newest-first and parses summaries`() = runTest {
+        var captured: io.ktor.http.Url? = null
+        val client = routingApiClientCapturing(onRequest = { captured = it }) {
+            """{"projects":[
+                {"id":1,"name":"Autumn Socks","permalink":"autumn-socks",
+                 "first_photo":{"id":901,"square_url":"https://img.example/sq.jpg"},"photos_count":2}
+            ]}"""
+        }
+        val projects = client.getProjects("yarnie")
+        assertEquals("/projects/yarnie/list.json", captured?.encodedPath)
+        // "created_" (trailing underscore) is Ravelry's descending sort — newest first.
+        // Plain "created" would return oldest first, burying recent projects.
+        assertEquals("created_", captured?.parameters?.get("sort"))
+        assertEquals(1, projects.size)
+        assertEquals("Autumn Socks", projects[0].name)
+        assertEquals("https://img.example/sq.jpg", projects[0].firstPhoto?.squareUrl)
+        assertEquals(2, projects[0].photosCount)
+    }
+
+    @Test
+    fun `getProjects defaults to empty when the response omits the projects field`() = runTest {
+        val client = routingApiClient { "{}" }
+        assertEquals(emptyList(), client.getProjects("yarnie"))
+    }
+
+    @Test
+    fun `getProjectPhotos returns the project detail's photos`() = runTest {
+        var captured: io.ktor.http.Url? = null
+        val client = routingApiClientCapturing(onRequest = { captured = it }) {
+            """{"project":{"id":7,"name":"Autumn Socks","photos":[
+                {"id":901,"medium_url":"https://img.example/m1.jpg"},
+                {"id":902,"medium_url":"https://img.example/m2.jpg"}
+            ]}}"""
+        }
+        val photos = client.getProjectPhotos("yarnie", 7L)
+        assertEquals("/projects/yarnie/7.json", captured?.encodedPath)
+        assertEquals(listOf(901L, 902L), photos.map { it.id })
+    }
+
+    @Test
+    fun `getProjectPhotos defaults to empty when the project has no photos field`() = runTest {
+        val client = routingApiClient { """{"project":{"id":7,"name":"Autumn Socks"}}""" }
+        assertEquals(emptyList(), client.getProjectPhotos("yarnie", 7L))
+    }
+
+    @Test
+    fun `getProjects fails loudly when a project is missing its id`() = runTest {
+        val client = routingApiClient { """{"projects":[{}]}""" }
+        assertFailsWith<Exception> { client.getProjects("yarnie") }
+    }
+
+    @Test
+    fun `getProjectPhotos fails loudly when the response is missing the project`() = runTest {
+        val client = routingApiClient { "{}" }
+        assertFailsWith<Exception> { client.getProjectPhotos("yarnie", 7L) }
+    }
+
+    @Test
+    fun `uploadForumImage fails loudly when the token response is malformed`() = runTest {
+        val client = routingApiClient { path ->
+            if (path == "/upload/request_token.json") "{}" else error("should not get past the token step")
+        }
+        assertFailsWith<Exception> { client.uploadForumImage("p.jpg", "image/jpeg", byteArrayOf(1)) }
+    }
+
+    @Test
+    fun `uploadForumImage fails loudly when the attachment response is malformed`() = runTest {
+        val client = routingApiClient { path ->
+            when (path) {
+                "/upload/request_token.json" -> """{"upload_token":"tok"}"""
+                "/upload/image.json" -> """{"uploads":{"file0":{"image_id":7}}}"""
+                else -> "{}"
+            }
+        }
+        assertFailsWith<Exception> { client.uploadForumImage("p.jpg", "image/jpeg", byteArrayOf(1)) }
     }
 }
 

@@ -57,6 +57,7 @@ fun NewTopicScreen(
     attachment: ImageAttachmentState = ImageAttachmentState.Idle,
     onImagePicked: (Uri) -> Unit = {},
     onAttachmentInserted: () -> Unit = {},
+    onPickFromProjects: (() -> Unit)? = null,
 ) {
     // Group is not Saveable; survives recomposition, not process death — acceptable
     // for a modal composer, and title/summary/body (the real typing effort) do survive.
@@ -199,6 +200,7 @@ fun NewTopicScreen(
                     attachment = attachment,
                     enabled = !sending,
                     onImagePicked = onImagePicked,
+                    onPickFromProjects = onPickFromProjects,
                 )
                 if (attachment is ImageAttachmentState.Error) {
                     Text(

@@ -22,6 +22,7 @@ class SharedPreferencesKeyValueStore(private val prefs: SharedPreferences) : Key
 const val AUTH_PREFS_NAME = "fibersocial_auth"
 const val NOTIFICATION_STATE_PREFS_NAME = "notification_state"
 const val NOTIFICATION_SETTINGS_PREFS_NAME = "notification_settings"
+const val THEME_SETTINGS_PREFS_NAME = "theme_settings"
 
 /**
  * Plain `SharedPreferences`-backed store — for non-sensitive data.
