@@ -29,6 +29,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
@@ -62,9 +63,33 @@ import com.autom8ed.fibersocial.feed.html.InlineStyle
 import com.autom8ed.fibersocial.feed.html.PostBlock
 import com.autom8ed.fibersocial.feed.html.PostDocument
 import com.autom8ed.fibersocial.feed.html.TableCell
+import com.autom8ed.fibersocial.projects.ProjectLink
+import com.autom8ed.fibersocial.projects.parseProjectLink
 
 /** String-annotation tag carrying a resolved link target inside built [AnnotatedString]s. */
 internal const val URL_ANNOTATION = "URL"
+
+/**
+ * Handler for tapped links that resolve to a Ravelry project (issue #103). When set,
+ * project links open in-app through it; everything else (and every link when it's
+ * null, e.g. in previews or tests) falls back to the browser via [LocalUriHandler].
+ */
+val LocalProjectLinkOpener = staticCompositionLocalOf<((ProjectLink) -> Unit)?> { null }
+
+/**
+ * Routes a tapped link [target]: to [openProject] when it's a Ravelry project link and
+ * an in-app opener is available (issue #103), otherwise to [openBrowser]. Pure so the
+ * routing is unit-testable without Compose's tap machinery. [openBrowser] is expected to
+ * guard against no-activity-found itself (user-generated URLs may match no handler).
+ */
+internal fun routeLinkTap(
+    target: String,
+    openProject: ((ProjectLink) -> Unit)?,
+    openBrowser: (String) -> Unit,
+) {
+    val projectLink = parseProjectLink(target)
+    if (projectLink != null && openProject != null) openProject(projectLink) else openBrowser(target)
+}
 
 /** Widest a table cell may grow before its text wraps. */
 private val MAX_TABLE_CELL_WIDTH = 360.dp
@@ -106,6 +131,7 @@ private fun BlockView(block: PostBlock) {
 @Composable
 private fun ParagraphView(content: List<Inline>) {
     val uriHandler = LocalUriHandler.current
+    val projectOpener = LocalProjectLinkOpener.current
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         splitOnImages(content).forEach { segment ->
             when (segment) {
@@ -121,12 +147,14 @@ private fun ParagraphView(content: List<Inline>) {
                             .then(
                                 if (target == null) Modifier
                                 else Modifier.clickable {
-                                    // User-generated target: no activity may handle it;
-                                    // don't crash on tap (same contract as InlineText).
-                                    try {
-                                        uriHandler.openUri(target)
-                                    } catch (e: Exception) {
-                                        println("FiberSocial: couldn't open link $target: ${e.message}")
+                                    routeLinkTap(target, projectOpener) { url ->
+                                        // User-generated target: no activity may handle it;
+                                        // don't crash on tap (same contract as InlineText).
+                                        try {
+                                            uriHandler.openUri(url)
+                                        } catch (e: Exception) {
+                                            println("FiberSocial: couldn't open link $url: ${e.message}")
+                                        }
                                     }
                                 },
                             ),
@@ -149,17 +177,20 @@ private fun InlineText(
         buildInlineText(content, linkColor, codeBackground)
     }
     val uriHandler = LocalUriHandler.current
+    val projectOpener = LocalProjectLinkOpener.current
     val resolvedStyle = style.copy(color = MaterialTheme.colorScheme.onSurface, textAlign = textAlign)
 
     fun openLink(offset: Int) {
         text.getStringAnnotations(URL_ANNOTATION, offset, offset)
             .firstOrNull()
             ?.let { annotation ->
-                // User-generated target: no activity may handle it; don't crash on tap.
-                try {
-                    uriHandler.openUri(annotation.item)
-                } catch (e: Exception) {
-                    println("FiberSocial: couldn't open link ${annotation.item}: ${e.message}")
+                routeLinkTap(annotation.item, projectOpener) { url ->
+                    // User-generated target: no activity may handle it; don't crash on tap.
+                    try {
+                        uriHandler.openUri(url)
+                    } catch (e: Exception) {
+                        println("FiberSocial: couldn't open link $url: ${e.message}")
+                    }
                 }
             }
     }
