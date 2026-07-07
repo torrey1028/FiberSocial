@@ -24,9 +24,10 @@ import com.autom8ed.fibersocial.feed.models.FeedItem
 import com.autom8ed.fibersocial.ui.Avatar
 
 /**
- * A forum-style feed card (issue #185): the topic title, who started it, the
- * author-written summary rendered in full (omitted when there is none), the reply count,
- * how many posts are unread (from Ravelry's own read marker), and when it was last active.
+ * A forum-style feed card (issue #185): the topic title, who started it and when (issue
+ * #242), the author-written summary rendered in full (omitted when there is none), the
+ * reply count, how many posts are unread (from Ravelry's own read marker), and when it
+ * was last active.
  */
 @Composable
 fun TopicCard(
@@ -57,8 +58,17 @@ fun TopicCard(
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                     )
+                    // Issue #242: show when the topic was started alongside who started it,
+                    // in addition to the last-activity time in the bottom meta row. Falls
+                    // back to the plain "Started by" line when createdAt is missing or the
+                    // timestamp can't be parsed (relativeTime returns "" in both cases).
+                    val startedRelative = relativeTime(item.createdAt)
                     Text(
-                        text = "Started by @${item.author.username}",
+                        text = if (startedRelative.isNotBlank()) {
+                            "Started $startedRelative by @${item.author.username}"
+                        } else {
+                            "Started by @${item.author.username}"
+                        },
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -99,8 +109,18 @@ fun TopicCard(
                         )
                     }
                 }
+                // Labeled "Last post" (not just the bare time) so it isn't confused with
+                // the "Started ... " time now shown above (issue #242). A topic with only
+                // its opening post (postCount <= 1) has no reply yet, so its own start
+                // time IS the last post's time — use createdAt rather than lastPostAt
+                // there, regardless of what Ravelry's replied_at happens to report for an
+                // un-replied-to topic (its exact null-vs-populated behavior in that case
+                // isn't relied on here).
+                val lastPostRelative = relativeTime(
+                    if (item.postCount <= 1) item.createdAt else item.lastPostAt,
+                )
                 Text(
-                    text = relativeTime(item.lastPostAt),
+                    text = if (lastPostRelative.isNotBlank()) "Last post $lastPostRelative" else "",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

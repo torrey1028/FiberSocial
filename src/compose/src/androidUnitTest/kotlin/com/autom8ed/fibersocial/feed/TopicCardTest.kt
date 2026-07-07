@@ -33,11 +33,13 @@ class TopicCardTest {
         postCount: Int = 3,
         unreadCount: Int = 0,
         sticky: Boolean = false,
+        lastPostAt: String? = null,
+        createdAt: String? = null,
     ) = FeedItem(
         id = 1L,
         groupId = 10L,
         groupName = "KAL Hub",
-        lastPostAt = null,
+        lastPostAt = lastPostAt,
         author = RavelryUser(username = author),
         title = title,
         bodySummary = bodySummary,
@@ -45,6 +47,7 @@ class TopicCardTest {
         postCount = postCount,
         unreadCount = unreadCount,
         sticky = sticky,
+        createdAt = createdAt,
     )
 
     @Test
@@ -52,6 +55,63 @@ class TopicCardTest {
         compose.setContent { TopicCard(item = item(author = "yarnie"), onClick = {}) }
         compose.onNodeWithText("Show us your WIPs").assertIsDisplayed()
         compose.onNodeWithText("Started by @yarnie").assertIsDisplayed()
+    }
+
+    @Test
+    fun `shows when the topic was started alongside who started it`() {
+        // Issue #242: the card should surface the topic's original start time, not just
+        // its last-reply time.
+        compose.setContent {
+            TopicCard(item = item(author = "yarnie", createdAt = "2020/01/01 00:00:00 +0000"), onClick = {})
+        }
+        compose.onNodeWithText("ago by @yarnie", substring = true).assertIsDisplayed()
+    }
+
+    @Test
+    fun `shows only the plain started-by line when createdAt is unavailable`() {
+        compose.setContent { TopicCard(item = item(author = "yarnie", createdAt = null), onClick = {}) }
+        compose.onNodeWithText("Started by @yarnie").assertIsDisplayed()
+    }
+
+    @Test
+    fun `labels the last-post time distinctly from the started time`() {
+        // Issue #242: once "Started ... ago" appears too, the bottom-row time must be
+        // labeled so it isn't mistaken for the start time.
+        compose.setContent {
+            TopicCard(item = item(lastPostAt = "2020/01/01 00:00:00 +0000"), onClick = {})
+        }
+        compose.onNodeWithText("Last post", substring = true).assertIsDisplayed()
+    }
+
+    @Test
+    fun `a single-post topic's last-post time falls back to when it was started`() {
+        // A topic with just its opening post has no reply yet, so its own start time IS
+        // the last post's time — verified with lastPostAt null (Ravelry's replied_at may
+        // simply be absent pre-reply).
+        compose.setContent {
+            TopicCard(
+                item = item(postCount = 1, lastPostAt = null, createdAt = "2020/01/01 00:00:00 +0000"),
+                onClick = {},
+            )
+        }
+        compose.onNodeWithText("Last post", substring = true).assertIsDisplayed()
+    }
+
+    @Test
+    fun `a single-post topic uses createdAt even if lastPostAt is also populated`() {
+        // Whatever Ravelry's replied_at happens to report for a topic nobody has replied
+        // to yet, a single-post topic's last post is unconditionally its start time.
+        compose.setContent {
+            TopicCard(
+                item = item(
+                    postCount = 1,
+                    lastPostAt = "2020/06/01 00:00:00 +0000",
+                    createdAt = "2020/01/01 00:00:00 +0000",
+                ),
+                onClick = {},
+            )
+        }
+        compose.onNodeWithText("Last post", substring = true).assertIsDisplayed()
     }
 
     @Test
