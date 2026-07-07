@@ -38,6 +38,7 @@ import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -632,6 +633,8 @@ fun FeedScreen(
                 },
                 onReorder = { viewModel.feed.reorderGroups(it) },
                 onFindGroups = { uriHandler.openUri("https://www.ravelry.com/groups/search") },
+                isRefreshing = state is FeedState.Refreshing,
+                onRefresh = { viewModel.feed.refresh() },
                 onLeaveGroup = { group -> viewModel.feed.leaveGroup(group) },
                 leavingGroupId = leavingGroupId,
                 onGroupEventsClick = { group ->
@@ -946,6 +949,8 @@ internal fun GroupDrawer(
     onFindGroups: () -> Unit = {},
     onLeaveGroup: (Group) -> Unit = {},
     leavingGroupId: Long? = null,
+    isRefreshing: Boolean = false,
+    onRefresh: () -> Unit = {},
 ) {
     // The group awaiting a leave confirmation (issue #231), if any.
     var pendingLeave by remember { mutableStateOf<Group?>(null) }
@@ -1069,6 +1074,21 @@ internal fun GroupDrawer(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.weight(1f),
                         )
+                        // Issue #246: joining a group elsewhere in the app left no way to
+                        // refresh the drawer's list short of leaving and re-entering the app.
+                        // The refresh reuses the same feed refresh that already re-fetches
+                        // groups (FeedViewModel.refresh() -> getUserGroups()), so this button
+                        // just surfaces an affordance for it from inside the open drawer.
+                        if (isRefreshing) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(24.dp).padding(8.dp),
+                                strokeWidth = 2.dp,
+                            )
+                        } else {
+                            IconButton(onClick = onRefresh) {
+                                Icon(Icons.Default.Refresh, contentDescription = "Refresh groups")
+                            }
+                        }
                         TextButton(onClick = { reorderMode = !reorderMode }) {
                             Text(if (reorderMode) "Done" else "Edit")
                         }

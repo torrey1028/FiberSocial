@@ -297,6 +297,39 @@ class GroupDrawerTest {
     }
 
     @Test
+    fun `refresh button invokes onRefresh and hides while a refresh is in flight`() {
+        // Issue #246: joining a group elsewhere left no way to refresh the drawer's list
+        // short of leaving and re-entering the app.
+        var refreshes = 0
+        var refreshing by mutableStateOf(false)
+        compose.setContent {
+            GroupDrawer(
+                groups = twoGroups,
+                selectedGroup = twoGroups.first(),
+                eventCounts = emptyMap(),
+                user = user,
+                onGroupSelected = {},
+                onGroupEventsClick = {},
+                onSettingsClick = {},
+                isRefreshing = refreshing,
+                onRefresh = { refreshes++ },
+            )
+        }
+        compose.onNodeWithContentDescription("Refresh groups").performClick()
+        compose.runOnIdle { assertEquals(1, refreshes) }
+
+        // While a refresh is in flight, the button yields to a spinner so there's no
+        // affordance to double-fire the refresh.
+        refreshing = true
+        compose.waitForIdle()
+        compose.onNodeWithContentDescription("Refresh groups").assertDoesNotExist()
+
+        refreshing = false
+        compose.waitForIdle()
+        compose.onNodeWithContentDescription("Refresh groups").assertIsDisplayed()
+    }
+
+    @Test
     fun `footer falls back to Account label when user is not loaded yet`() {
         compose.setContent {
             GroupDrawer(
