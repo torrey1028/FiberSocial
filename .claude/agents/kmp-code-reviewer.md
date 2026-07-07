@@ -26,8 +26,8 @@ Read the changed files in full where a finding needs surrounding context — the
 
 ### (a) PostDocument two-walker sync invariant — HIGHEST RISK
 There are TWO independent flatteners that walk the same `PostDocument` tree and MUST collapse every node identically:
-- `fun PostDocument.previewInlines(maxLength=200)` in `src/common/src/commonMain/kotlin/com/autom8ed/fibersocial/feed/html/PreviewInlines.kt`
-- `fun plainText(markdown)` (`blockPlainText`/`inlinePlainText`) in `src/common/src/commonMain/kotlin/com/autom8ed/fibersocial/feed/html/MarkdownPostParser.kt`
+- `fun PostDocument.previewInlines(maxLength=200)` in `src/common/logic/commonMain/kotlin/com/autom8ed/fibersocial/feed/html/PreviewInlines.kt`
+- `fun plainText(markdown)` (`blockPlainText`/`inlinePlainText`) in `src/common/logic/commonMain/kotlin/com/autom8ed/fibersocial/feed/html/MarkdownPostParser.kt`
 
 **GOTCHA: `sealed` types force both `when`s to compile when a new `PostBlock`/`Inline` variant is added, but a *policy* change (how a node collapses — block separator, `HardBreak`→space, links→text, inline-emoji→alt, full photos→dropped) does NOT compile-break the other walker.** If the diff touches one walker's flatten policy, or adds an `Inline`/`PostBlock` variant handled in only one, that is a bug. Verify the mirror by reading BOTH files. Flag any edit to one walker with no matching edit to the other, and confirm the tests (`PreviewInlinesTest.kt`, `MarkdownPostParserTest.kt`) cover the new/changed policy. See the `feed-rendering` skill.
 
@@ -85,12 +85,12 @@ git diff origin/main...HEAD | grep -nE '403|Forbidden|SessionExpired'
 Flag any new `403` branch that refreshes the token, throws `SessionExpiredException`, or routes the user to re-login. Also flag a user-facing 403 message that says "403" (the real message deliberately omits the code). Web-protocol/scraping actions detect session expiry by redirect inspection, not by status code — don't confuse the two.
 
 ### (g) New API call with no MockEngine test / coverage-gate trip
-Every new `suspend fun` on `RavelryApiClient` needs a Ktor `MockEngine` test in `src/common/src/commonTest/kotlin/com/autom8ed/fibersocial/feed/RavelryApiClientTest.kt` (see also `RavelryClientsTest.kt`). New untested logic will also trip the coverage gate.
+Every new `suspend fun` on `RavelryApiClient` needs a Ktor `MockEngine` test in `src/common/logic/commonTest/kotlin/com/autom8ed/fibersocial/feed/RavelryApiClientTest.kt` (see also `RavelryClientsTest.kt`). New untested logic will also trip the coverage gate.
 
 ```bash
 cd /home/betorr/FiberSocial
-git diff origin/main...HEAD -- 'src/common/src/commonMain/**/RavelryApiClient.kt' | grep -nE 'suspend fun '
-git diff origin/main...HEAD --stat -- 'src/common/src/commonTest/**'   # did tests move at all?
+git diff origin/main...HEAD -- 'src/common/logic/commonMain/**/RavelryApiClient.kt' | grep -nE 'suspend fun '
+git diff origin/main...HEAD --stat -- 'src/common/logic/commonTest/**'   # did tests move at all?
 ```
 
 Flag a new/changed endpoint with no corresponding test change. **Note the two coverage-gate FALSE POSITIVES** so you don't over-flag: (1) doc-comment line-number drift makes an unchanged method look "fully new"; (2) dead synthetic Kotlin defaults-bridge `<init>` constructors read as uncovered even in the baseline. If the "uncovered" code is pre-existing debt (misses in the baseline too), it is not this PR's regression. Coverage-gate exit code `2` = could-not-run (missing/corrupt report), NOT a regression. See the `test-and-coverage` skill.

@@ -15,7 +15,7 @@ For the full reference consult the **test-and-coverage** skill; this agent is th
 
 **Gradle root is `src/platform/android/`, NOT the repo root.** Every `./gradlew` runs from there. Tests live in five roots:
 
-- `src/common/src/commonTest/` — pure-Kotlin (JVM + K/N), incl. the MockEngine API tests
+- `src/common/logic/commonTest/` — pure-Kotlin (JVM + K/N), incl. the MockEngine API tests
 - `src/compose/src/androidUnitTest/` — Robolectric Compose UI tests
 - `src/compose/src/iosTest/`, `src/platform/android/app/src/test/`, `src/platform/ios/FiberSocialTests/` (hosted XCTest)
 
@@ -51,8 +51,8 @@ The report tasks depend on `jvmTest` / `testDebugUnitTest`, so the coverage scri
 
 TWO independently-gated Jacoco reports — **compare BOTH**:
 
-- JVM: `src/common/build/reports/jacoco/jvmCoverageReport/report.xml`
-- Android/Robolectric: `src/common/build/reports/coverage/test/debug/report.xml`
+- JVM: `src/common/logic/build/reports/jacoco/jvmCoverageReport/report.xml`
+- Android/Robolectric: `src/common/logic/build/reports/coverage/test/debug/report.xml`
 
 `common/test.sh` invokes the same script CI uses (from the repo root):
 
@@ -62,7 +62,7 @@ python3 scripts/compare_coverage.py <LABEL> <report.xml> [baseline.xml]
 
 - Metrics: `INSTRUCTION` + `BRANCH`, summed per-method. Methods named `write$Self*` are excluded (kotlinx.serialization K2 encoder codegen — dead for deserialize-only DTOs).
 - Threshold `HIGH_COVERAGE_THRESHOLD = 0.85`: **below** it only a `0.001` rounding tolerance is allowed; **at/above** it a PR may regress by up to (not including) `0.01` (1 point).
-- **Baseline = the Jacoco artifact from the latest *successful* `main` run of `tests.yml`** (downloaded via `gh` into `src/common/build/coverage-baseline/`), NOT current `main`'s source. If `gh` is offline/unauthenticated it runs with no baseline — prints percentages, exit 0.
+- **Baseline = the Jacoco artifact from the latest *successful* `main` run of `tests.yml`** (downloaded via `gh` into `src/common/logic/build/coverage-baseline/`), NOT current `main`'s source. If `gh` is offline/unauthenticated it runs with no baseline — prints percentages, exit 0.
 - On regression the script prints exactly what to fix: `-> cover at least N more instructions/branches to pass`, plus a worst-first method-level diff. Read that diff — it names the `Class.method (line …)` to test.
 
 **TRAP — exit codes: `0` = ok / no baseline, `1` = regression, `2` = could-not-run (missing/corrupt report). NEVER treat `2` as a coverage regression.** `common/test.sh` already separates these (`SCRIPT_ERROR` vs `REGRESSED`); a `2` means the report is missing/corrupt (e.g. a Gradle/AGP move) — fix the report path, not the tests.
@@ -80,12 +80,12 @@ Inspect a report/baseline for a method's counters before deciding:
 ```bash
 # from repo root — the exact rows the gate keys on, for one method
 grep -n 'method name="getUserProfile"' \
-  src/common/build/reports/jacoco/jvmCoverageReport/report.xml
+  src/common/logic/build/reports/jacoco/jvmCoverageReport/report.xml
 ```
 
 ## Writing a real test — MockEngine API tests
 
-The central Ktor `RavelryApiClient` is tested with a `MockEngine` in `src/common/src/commonTest/kotlin/com/autom8ed/fibersocial/feed/RavelryApiClientTest.kt`. Shared fakes live beside it in `Fakes.kt` — **reuse them, don't hand-roll a client**:
+The central Ktor `RavelryApiClient` is tested with a `MockEngine` in `src/common/logic/commonTest/kotlin/com/autom8ed/fibersocial/feed/RavelryApiClientTest.kt`. Shared fakes live beside it in `Fakes.kt` — **reuse them, don't hand-roll a client**:
 
 - `routingApiClient { path -> jsonString }` — route the response by request path; token storage defaults to `FakeFeedTokenStorage` (a non-expiring `AuthToken` with a session cookie).
 - `routingApiClientCapturing(onRequest = { url -> … }) { path -> json }` — same, but captures each request `Url` so you can assert the endpoint / query params hit (e.g. `assertEquals("/people/yarnie.json", captured?.encodedPath)`).

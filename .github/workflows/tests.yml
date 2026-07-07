@@ -64,7 +64,7 @@ jobs:
         if: github.event_name == 'pull_request' && steps.baseline-jvm.outputs.available == 'true'
         run: |
           python3 scripts/compare_coverage.py JVM \
-            src/common/build/reports/jacoco/jvmCoverageReport/report.xml \
+            src/common/logic/build/reports/jacoco/jvmCoverageReport/report.xml \
             /tmp/jvm-baseline/report.xml
 
       - name: Upload JVM coverage report
@@ -72,7 +72,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: jvm-coverage-report
-          path: src/common/build/reports/jacoco/jvmCoverageReport/html/
+          path: src/common/logic/build/reports/jacoco/jvmCoverageReport/html/
           retention-days: 7
 
       # Publish the XML on main so future PRs can download it as their baseline.
@@ -81,7 +81,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: jvm-coverage-baseline
-          path: src/common/build/reports/jacoco/jvmCoverageReport/report.xml
+          path: src/common/logic/build/reports/jacoco/jvmCoverageReport/report.xml
           retention-days: 90
 
   common-android-unit-tests:
@@ -136,7 +136,7 @@ jobs:
         if: github.event_name == 'pull_request' && steps.baseline-android.outputs.available == 'true'
         run: |
           python3 scripts/compare_coverage.py Android \
-            src/common/build/reports/coverage/test/debug/report.xml \
+            src/common/logic/build/reports/coverage/test/debug/report.xml \
             /tmp/android-baseline/report.xml
 
       - name: Upload Android coverage report
@@ -144,7 +144,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: android-coverage-report
-          path: src/common/build/reports/coverage/test/debug/
+          path: src/common/logic/build/reports/coverage/test/debug/
           retention-days: 7
 
       - name: Publish Android coverage baseline
@@ -152,7 +152,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: android-coverage-baseline
-          path: src/common/build/reports/coverage/test/debug/report.xml
+          path: src/common/logic/build/reports/coverage/test/debug/report.xml
           retention-days: 90
 
   common-ios-tests:
