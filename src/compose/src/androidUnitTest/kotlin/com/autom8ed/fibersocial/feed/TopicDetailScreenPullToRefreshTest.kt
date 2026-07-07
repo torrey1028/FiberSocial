@@ -3,8 +3,10 @@ package com.autom8ed.fibersocial.feed
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasScrollAction
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeDown
 import com.autom8ed.fibersocial.feed.models.FeedItem
@@ -73,5 +75,40 @@ class TopicDetailScreenPullToRefreshTest {
         }
 
         compose.onNodeWithText("Jump to last read").assertIsDisplayed()
+    }
+
+    @Test
+    fun `shows the all-caught-up marker at the end of a fully loaded thread`() {
+        // Issue #202: once the newest post is loaded (hasMore = false), the thread ends
+        // with a one-time "all caught up" marker.
+        val posts = listOf(Post(id = 1L, bodyHtml = "<p>one</p>", user = RavelryUser(username = "a")))
+        compose.setContent {
+            TopicDetailScreen(
+                topic = topic.copy(postCount = 1),
+                postsState = TopicDetailState.Loaded(posts = posts, hasMore = false),
+                onBack = {},
+                onVote = { _, _ -> },
+            )
+        }
+
+        compose.onNode(hasScrollAction())
+            .performScrollToNode(hasText("You're all caught up"))
+        compose.onNodeWithText("You're all caught up").assertIsDisplayed()
+    }
+
+    @Test
+    fun `hides the all-caught-up marker while more pages remain`() {
+        // With further pages to load, the end marker must not show yet (issue #202).
+        val posts = listOf(Post(id = 1L, bodyHtml = "<p>one</p>", user = RavelryUser(username = "a")))
+        compose.setContent {
+            TopicDetailScreen(
+                topic = topic.copy(postCount = 25),
+                postsState = TopicDetailState.Loaded(posts = posts, hasMore = true),
+                onBack = {},
+                onVote = { _, _ -> },
+            )
+        }
+
+        compose.onNodeWithText("You're all caught up").assertDoesNotExist()
     }
 }

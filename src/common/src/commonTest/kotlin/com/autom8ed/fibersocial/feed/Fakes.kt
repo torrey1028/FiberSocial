@@ -128,6 +128,13 @@ fun postsJson(vararg ids: Long) = """{"posts":[${
     }
 }]}"""
 
+/** Like [postsJson] but carrying a paginator, so load-more pagination can be exercised. */
+fun postsPageJson(page: Int, pageCount: Int, vararg ids: Long) = """{"posts":[${
+    ids.joinToString(",") { id ->
+        """{"id":$id,"body_html":"<p>Reply $id</p>","body":"Reply $id","editable":true,"created_at":"2024-01-15T10:00:00Z","user":{"username":"user$id"}}"""
+    }
+}],"paginator":{"page":$page,"page_count":$pageCount}}"""
+
 fun voteResponseJson(type: String, count: Int, userVoted: Boolean) = """{
     "vote_totals":{"$type":$count},
     "user_votes":[${if (userVoted) "\"$type\"" else ""}]
