@@ -26,6 +26,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.Typography
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -95,13 +96,25 @@ internal fun routeLinkTap(
 private val MAX_TABLE_CELL_WIDTH = 360.dp
 
 /**
+ * Whether links and images inside a [PostBody] respond to taps. Off for feed cards
+ * (issue #216): a card is one big tap target that opens the topic, so its summary must
+ * let taps fall through to the card instead of a `ClickableText`/image swallowing them.
+ */
+val LocalPostBodyInteractive = staticCompositionLocalOf { true }
+
+/**
  * Renders a parsed Ravelry post body ([PostDocument]) natively: paragraphs, headings,
  * lists, quotes, horizontally scrolling code blocks and tables, dividers, and images.
+ *
+ * @param interactive When false, link/image taps are disabled so an enclosing clickable
+ *   (e.g. a feed card) receives the tap instead (issue #216).
  */
 @Composable
-fun PostBody(document: PostDocument, modifier: Modifier = Modifier) {
-    Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        document.blocks.forEach { BlockView(it) }
+fun PostBody(document: PostDocument, modifier: Modifier = Modifier, interactive: Boolean = true) {
+    CompositionLocalProvider(LocalPostBodyInteractive provides interactive) {
+        Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            document.blocks.forEach { BlockView(it) }
+        }
     }
 }
 
@@ -138,6 +151,7 @@ private fun ParagraphView(content: List<Inline>) {
                 is ParagraphSegment.TextRun -> InlineText(segment.content)
                 is ParagraphSegment.Photo -> {
                     val target = segment.linkHref?.let(::resolveRavelryHref)
+                    val interactive = LocalPostBodyInteractive.current
                     AsyncImage(
                         model = segment.image.url,
                         contentDescription = segment.image.alt.ifEmpty { null },
@@ -145,7 +159,7 @@ private fun ParagraphView(content: List<Inline>) {
                         modifier = Modifier
                             .fillMaxWidth()
                             .then(
-                                if (target == null) Modifier
+                                if (target == null || !interactive) Modifier
                                 else Modifier.clickable {
                                     routeLinkTap(target, projectOpener) { url ->
                                         // User-generated target: no activity may handle it;
@@ -196,9 +210,16 @@ private fun InlineText(
     }
 
     val emoji = remember(content) { collectInlineEmoji(content) }
+    val interactive = LocalPostBodyInteractive.current
     if (emoji.isEmpty()) {
-        // No inline emoji: keep the exact original rendering path.
-        ClickableText(text = text, style = resolvedStyle, onClick = ::openLink)
+        if (!interactive) {
+            // Feed card (issue #216): render the text but let taps fall through to the
+            // card, so tapping the summary opens the topic like tapping anywhere else.
+            Text(text = text, style = resolvedStyle)
+        } else {
+            // No inline emoji: keep the exact original rendering path.
+            ClickableText(text = text, style = resolvedStyle, onClick = ::openLink)
+        }
         return
     }
 
@@ -232,7 +253,8 @@ private fun InlineText(
         style = resolvedStyle,
         inlineContent = inlineContent,
         onTextLayout = { layoutResult = it },
-        modifier = Modifier.pointerInput(text) {
+        // Non-interactive (feed card, issue #216): no tap handler, so the card gets the tap.
+        modifier = if (!interactive) Modifier else Modifier.pointerInput(text) {
             detectTapGestures { tapOffset ->
                 layoutResult?.getOffsetForPosition(tapOffset)?.let(::openLink)
             }

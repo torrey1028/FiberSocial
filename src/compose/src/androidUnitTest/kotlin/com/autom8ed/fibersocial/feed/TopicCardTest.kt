@@ -4,6 +4,7 @@ import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import com.autom8ed.fibersocial.feed.models.FeedItem
 import com.autom8ed.fibersocial.feed.models.RavelryUser
 import org.junit.Rule
@@ -11,6 +12,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import kotlin.test.assertEquals
 
 /**
  * The forum-style card (issue #185): title, "Started by @starter", the author-written
@@ -111,6 +113,18 @@ class TopicCardTest {
     fun `marks a pinned topic`() {
         compose.setContent { TopicCard(item = item(sticky = true), onClick = {}) }
         compose.onNodeWithText("Pinned", substring = true).assertIsDisplayed()
+    }
+
+    @Test
+    fun `tapping the summary opens the topic`() {
+        // Issue #216: the summary must not swallow the tap — the whole card is one tap
+        // target, so tapping the summary text fires onClick just like tapping the title.
+        var clicks = 0
+        compose.setContent {
+            TopicCard(item = item(bodySummary = "Cast on all the stitches"), onClick = { clicks++ })
+        }
+        compose.onNodeWithText("Cast on all the stitches").performClick()
+        assertEquals(1, clicks)
     }
 
     @Test
