@@ -384,10 +384,10 @@ fun FeedScreen(
     }
     val feedListState = key(selectedGroupId) { rememberLazyListState() }
     // "Unread only" filter (issue #210): a purely client-side toggle over the already-
-    // loaded feed. Scoped per-group like feedListState above — keyed on selectedGroupId
-    // so switching groups resets it to "show all" instead of carrying a stale filter
-    // into a group where the user never asked to see only unread topics.
-    var showUnreadOnly by key(selectedGroupId) { remember { mutableStateOf(false) } }
+    // loaded feed. Unlike feedListState above, this is intentionally NOT scoped per
+    // group — it's a standing preference the user sets once and expects to carry across
+    // group switches, not a per-group default that resets to "show all" each time.
+    var showUnreadOnly by remember { mutableStateOf(false) }
     var selectedTopic by remember { mutableStateOf<FeedItem?>(null) }
     var selectedEventPermalink by remember { mutableStateOf<String?>(null) }
     var eventsGroup by remember { mutableStateOf<Group?>(null) }
