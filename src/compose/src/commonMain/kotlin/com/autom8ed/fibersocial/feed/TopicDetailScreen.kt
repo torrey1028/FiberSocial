@@ -250,18 +250,33 @@ fun TopicDetailScreen(
                 .collect { (index, offset) -> onScrollPositionChanged(index, offset) }
         }
         val jumpScope = rememberCoroutineScope()
-        // "Jump to last read" targets the first unread post's number (issue #185): the
-        // header is list index 0 and posts follow, so post number N is list index N.
+        // "Jump to last read" targets the first unread post's number when there's a real
+        // one to resume from (issue #185); it targets the very last post instead when
+        // either nothing is unread, or NOTHING has ever been read (firstUnread == post 1,
+        // where "resuming" at post 1 is meaningless — the user is already there, and the
+        // genuinely useful jump is to the most recent activity). Same button, same label,
+        // same behavior either way. The header is list index 0 and posts follow, so post
+        // number N is list index N.
         val firstUnread = topic.firstUnreadPostNumber
+        val jumpTarget = if (firstUnread == null || firstUnread <= 1) topic.postCount else firstUnread
         // A deep jump may have to wait for pages to load in before it can scroll there
         // (issue #205); while it does, the button shows a spinner and this stays true.
         var pendingJump by remember(topic.id) { mutableStateOf(false) }
-        // Show the jump button until the user has scrolled down to (or past) that post,
-        // or while a deep jump is still loading the pages in between.
-        val showJump by remember(firstUnread) {
+        // Show the jump button until the ACTUAL jump target is already visible on screen,
+        // or while a deep jump is still loading the pages in between. Gated on jumpTarget,
+        // not unconditionally on the topic's very last post (postCount): on a long-running
+        // thread (hundreds of posts over months), postCount can sit far beyond the real
+        // target, so the button would otherwise linger — and visually overlap content —
+        // long after the user has already scrolled past what they needed to catch up on.
+        // (issue #255's original complaint — "you can see the whole topic" — is still
+        // covered: for a short, fully-read topic, jumpTarget IS postCount, so the two
+        // checks agree there.)
+        val showJump by remember(jumpTarget) {
             derivedStateOf {
-                firstUnread != null && !markedAllRead &&
-                    (pendingJump || listState.firstVisibleItemIndex < firstUnread)
+                if (markedAllRead) return@derivedStateOf false
+                if (pendingJump) return@derivedStateOf true
+                val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+                lastVisible < jumpTarget
             }
         }
         // Load the next page as the user nears the end of the thread (issue #202). The
@@ -299,8 +314,8 @@ fun TopicDetailScreen(
         // scrollToItem, not animateScrollToItem: animating across hundreds of posts would
         // compose and parse every one it flies past (janky); a jump should land instantly.
         LaunchedEffect(pendingJump, loaded?.isLoadingMore) {
-            if (pendingJump && firstUnread != null && loaded?.isLoadingMore == false) {
-                listState.scrollToItem(firstUnread.coerceIn(0, postCount))
+            if (pendingJump && loaded?.isLoadingMore == false) {
+                listState.scrollToItem(jumpTarget.coerceIn(0, postCount))
                 pendingJump = false
             }
         }
@@ -312,7 +327,17 @@ fun TopicDetailScreen(
             LazyColumn(
                 state = listState,
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+                // Extra bottom room while the jump FAB floats over the list (issue #255
+                // follow-up): without it, the FAB visually sits on top of the last couple
+                // of posts, and a scroll gesture starting on that overlapped area doesn't
+                // reach the LazyColumn — it can register as a tap on the FAB instead,
+                // firing an unwanted jump back to the target mid-scroll.
+                contentPadding = PaddingValues(
+                    start = 16.dp,
+                    end = 16.dp,
+                    top = 12.dp,
+                    bottom = if (showJump) 96.dp else 12.dp,
+                ),
                 verticalArrangement = Arrangement.spacedBy(0.dp),
             ) {
                 item(key = "header") {
@@ -407,18 +432,18 @@ fun TopicDetailScreen(
                 }
             }
         }
-        if (showJump && firstUnread != null) {
+        if (showJump) {
             ExtendedFloatingActionButton(
                 onClick = {
                     if (pendingJump) return@ExtendedFloatingActionButton
                     val count = loaded?.posts?.size ?: 0
-                    if (count >= firstUnread || loaded?.hasMore != true) {
+                    if (count >= jumpTarget || loaded?.hasMore != true) {
                         // Target already loaded (or nothing more to load): scroll now.
-                        jumpScope.launch { listState.animateScrollToItem(firstUnread.coerceIn(0, count)) }
+                        jumpScope.launch { listState.animateScrollToItem(jumpTarget.coerceIn(0, count)) }
                     } else {
                         // Target is pages away: load forward, then the effect above scrolls.
                         pendingJump = true
-                        onLoadUntil(firstUnread)
+                        onLoadUntil(jumpTarget)
                     }
                 },
                 modifier = Modifier
