@@ -4,8 +4,11 @@ import androidx.activity.ComponentActivity
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.performScrollToIndex
 import com.autom8ed.fibersocial.feed.models.FeedItem
+import com.autom8ed.fibersocial.feed.models.Post
 import com.autom8ed.fibersocial.feed.models.RavelryUser
 import org.junit.Rule
 import org.junit.Test
@@ -145,5 +148,36 @@ class TopicDetailRouteTest {
             assertEquals(0, refreshCount)
             assertEquals(1, backCount)
         }
+    }
+
+    @Test
+    fun `initialScrollPosition and onScrollPositionChanged pass through to TopicDetailScreen`() {
+        // Issue #243: FeedScreen wires these through TopicDetailRoute to the ViewModel's
+        // stored per-topic position — pin down the route itself doesn't drop them.
+        var reported = ScrollPosition.TOP
+        val posts = (1..60L).map { id -> Post(id = id, body = "Reply $id", bodyHtml = "<p>Reply $id</p>") }
+
+        compose.setContent {
+            TopicDetailRoute(
+                topic = topic,
+                postsState = TopicDetailState.Loaded(posts),
+                replyState = ReplyState.Idle,
+                onVote = { _, _ -> },
+                onSendReply = {},
+                onReplySent = {},
+                onBack = {},
+                onRefreshFeed = {},
+                onRefresh = {},
+                initialScrollPosition = ScrollPosition(index = 10, offset = 5),
+                onScrollPositionChanged = { index, offset -> reported = ScrollPosition(index, offset) },
+            )
+        }
+
+        // Seeded position echoes straight back through onScrollPositionChanged.
+        compose.runOnIdle { assertEquals(ScrollPosition(10, 5), reported) }
+
+        compose.onNode(hasScrollAction()).performScrollToIndex(30)
+        compose.waitForIdle()
+        compose.runOnIdle { assertTrue(reported.index > 10, "expected the route to report the new scroll position") }
     }
 }

@@ -599,6 +599,14 @@ fun FeedScreen(
             onImagePicked = { uri -> viewModel.attachReplyImage(uri) },
             onAttachmentInserted = { viewModel.replyImage.acknowledgeInserted() },
             onPickFromProjects = currentUsername?.let { u -> { viewModel.projectPicker.open(u) } },
+            // Restores the reply list's scroll position on re-entry (issue #243): opening a
+            // project link from within a topic composes the project page over this route via
+            // an early-return above, tearing TopicDetailScreen (and its rememberLazyListState)
+            // down; the ViewModel's plain field is what survives to seed it back on return.
+            initialScrollPosition = viewModel.topicDetail.scrollPositionFor(topic.id),
+            onScrollPositionChanged = { index, offset ->
+                viewModel.topicDetail.setScrollPosition(topic.id, index, offset)
+            },
         )
         ProjectPhotoPickerHost(viewModel, target = viewModel.replyImage)
         return
@@ -912,6 +920,8 @@ internal fun TopicDetailRoute(
     onImagePicked: (String) -> Unit = {},
     onAttachmentInserted: () -> Unit = {},
     onPickFromProjects: (() -> Unit)? = null,
+    initialScrollPosition: ScrollPosition = ScrollPosition.TOP,
+    onScrollPositionChanged: (index: Int, offset: Int) -> Unit = { _, _ -> },
 ) {
     // ReplyState is transient — it flips Sent -> Idle again as soon as the composer
     // acknowledges it (see ReplyComposer/acknowledgeReplySent) — so whether a reply went
@@ -948,6 +958,8 @@ internal fun TopicDetailRoute(
         onImagePicked = onImagePicked,
         onAttachmentInserted = onAttachmentInserted,
         onPickFromProjects = onPickFromProjects,
+        initialScrollPosition = initialScrollPosition,
+        onScrollPositionChanged = onScrollPositionChanged,
     )
 }
 
