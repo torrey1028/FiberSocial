@@ -108,6 +108,12 @@ fun TopicDetailScreen(
     onImagePicked: (String) -> Unit = {},
     onAttachmentInserted: () -> Unit = {},
     onPickFromProjects: (() -> Unit)? = null,
+    // Where to seed the reply list's scroll position on (re)entry, and where to report it
+    // as the user scrolls (issue #243). Sourced from TopicDetailViewModel, which survives
+    // this composable being torn down and recomposed — e.g. while a tapped project link's
+    // page is shown over it — unlike a plain `rememberLazyListState()` here would.
+    initialScrollPosition: ScrollPosition = ScrollPosition.TOP,
+    onScrollPositionChanged: (index: Int, offset: Int) -> Unit = { _, _ -> },
 ) {
     var pendingDelete by remember { mutableStateOf<Post?>(null) }
     pendingDelete?.let { post ->
@@ -231,7 +237,18 @@ fun TopicDetailScreen(
             }
         },
     ) { padding ->
-        val listState = rememberLazyListState()
+        // Seeded from the ViewModel (issue #243) so a re-entry after the composable was torn
+        // down (e.g. a project page shown over it) lands back where the user left off instead
+        // of at the top. rememberLazyListState only reads these initial* values the first time
+        // this composable enters composition, matching when they need to apply.
+        val listState = rememberLazyListState(
+            initialFirstVisibleItemIndex = initialScrollPosition.index,
+            initialFirstVisibleItemScrollOffset = initialScrollPosition.offset,
+        )
+        LaunchedEffect(listState) {
+            snapshotFlow { listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset }
+                .collect { (index, offset) -> onScrollPositionChanged(index, offset) }
+        }
         val jumpScope = rememberCoroutineScope()
         // "Jump to last read" targets the first unread post's number (issue #185): the
         // header is list index 0 and posts follow, so post number N is list index N.

@@ -1551,4 +1551,31 @@ class TopicDetailViewModelTest {
         vm.acknowledgeReplySent()
         assertIs<ReplyState.Error>(vm.replyState.value)
     }
+
+    // --- Scroll position (issue #243) ---
+    // Persisted as a plain field on the ViewModel — not Compose state — so it survives
+    // TopicDetailScreen being torn down and recomposed (e.g. a project link's page shown
+    // over it via FeedScreen's early-return branches).
+
+    @Test
+    fun `scrollPositionFor defaults to the top for a topic never recorded`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = TopicDetailViewModel(routingApiClient { postsJson(1L) }, this)
+        assertEquals(ScrollPosition.TOP, vm.scrollPositionFor(999L))
+    }
+
+    @Test
+    fun `setScrollPosition then scrollPositionFor returns what was recorded`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = TopicDetailViewModel(routingApiClient { postsJson(1L) }, this)
+        vm.setScrollPosition(topicId = 42L, index = 7, offset = 130)
+        assertEquals(ScrollPosition(index = 7, offset = 130), vm.scrollPositionFor(42L))
+    }
+
+    @Test
+    fun `scroll positions for different topics do not clobber each other`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = TopicDetailViewModel(routingApiClient { postsJson(1L) }, this)
+        vm.setScrollPosition(topicId = 1L, index = 3, offset = 10)
+        vm.setScrollPosition(topicId = 2L, index = 9, offset = 40)
+        assertEquals(ScrollPosition(3, 10), vm.scrollPositionFor(1L))
+        assertEquals(ScrollPosition(9, 40), vm.scrollPositionFor(2L))
+    }
 }
