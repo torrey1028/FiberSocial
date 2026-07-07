@@ -34,19 +34,25 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.materialIcon
+import androidx.compose.material.icons.materialPath
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
@@ -80,6 +86,7 @@ import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -206,9 +213,40 @@ private fun Modifier.horizontalEdgeFade(
     }
 
 /**
+ * Material's "filter_list" glyph, defined inline because the app only ships
+ * material-icons-core, which doesn't include it (issue #210's unread-topics toggle).
+ */
+private val FilterListIcon: ImageVector by lazy {
+    materialIcon(name = "Filled.FilterList") {
+        materialPath {
+            moveTo(10.0f, 18.0f)
+            horizontalLineToRelative(4.0f)
+            verticalLineToRelative(-2.0f)
+            horizontalLineToRelative(-4.0f)
+            close()
+            moveTo(3.0f, 6.0f)
+            verticalLineToRelative(2.0f)
+            horizontalLineToRelative(18.0f)
+            verticalLineToRelative(-2.0f)
+            close()
+            moveTo(6.0f, 13.0f)
+            horizontalLineToRelative(12.0f)
+            verticalLineToRelative(-2.0f)
+            horizontalLineToRelative(-12.0f)
+            close()
+        }
+    }
+}
+
+/**
  * The feed's top bar (issue #207): the selected group's badge and name on the left (the
  * name scrolls sideways with an edge fade when it's too long to fit), and the FiberSocial
  * logo pinned to the far right. The navigation icon opens the group drawer.
+ *
+ * A topic filter menu (issue #210) sits between the title and the logo — a client-side
+ * filter over the already-loaded feed (including sticky/pinned topics — sticky is just a
+ * sort-order flag on [com.autom8ed.fibersocial.feed.models.FeedItem], not a separate list,
+ * so the same predicate covers both), so flipping it needs no network call.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -216,6 +254,8 @@ internal fun FeedTopBar(
     title: String,
     selectedGroup: Group?,
     onOpenDrawer: () -> Unit,
+    showUnreadOnly: Boolean = false,
+    onToggleUnreadOnly: () -> Unit = {},
 ) {
     TopAppBar(
         title = {
@@ -250,6 +290,50 @@ internal fun FeedTopBar(
             }
         },
         actions = {
+            // Topic filter menu (#210): a dropdown rather than a bare toggle, since a
+            // plain icon tint alone didn't clearly communicate what tapping it would do.
+            // The icon itself still tints to the theme's primary color while a filter is
+            // active, so the state is visible without opening the menu.
+            var filterMenuExpanded by remember { mutableStateOf(false) }
+            Box {
+                IconButton(onClick = { filterMenuExpanded = true }) {
+                    Icon(
+                        imageVector = FilterListIcon,
+                        tint = if (showUnreadOnly) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            LocalContentColor.current
+                        },
+                        contentDescription = if (showUnreadOnly) {
+                            "Filter: showing unread topics only. Tap to change."
+                        } else {
+                            "Filter: showing all topics. Tap to change."
+                        },
+                    )
+                }
+                DropdownMenu(expanded = filterMenuExpanded, onDismissRequest = { filterMenuExpanded = false }) {
+                    DropdownMenuItem(
+                        text = { Text("All topics") },
+                        leadingIcon = if (!showUnreadOnly) {
+                            { Icon(Icons.Default.Check, contentDescription = null) }
+                        } else null,
+                        onClick = {
+                            filterMenuExpanded = false
+                            if (showUnreadOnly) onToggleUnreadOnly()
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Unread only") },
+                        leadingIcon = if (showUnreadOnly) {
+                            { Icon(Icons.Default.Check, contentDescription = null) }
+                        } else null,
+                        onClick = {
+                            filterMenuExpanded = false
+                            if (!showUnreadOnly) onToggleUnreadOnly()
+                        },
+                    )
+                }
+            }
             // FiberSocial logo pinned to the far right of the bar (#207).
             Image(
                 painter = painterResource(appLogoResource()),
@@ -299,6 +383,11 @@ fun FeedScreen(
         else -> null
     }
     val feedListState = key(selectedGroupId) { rememberLazyListState() }
+    // "Unread only" filter (issue #210): a purely client-side toggle over the already-
+    // loaded feed. Unlike feedListState above, this is intentionally NOT scoped per
+    // group — it's a standing preference the user sets once and expects to carry across
+    // group switches, not a per-group default that resets to "show all" each time.
+    var showUnreadOnly by remember { mutableStateOf(false) }
     var selectedTopic by remember { mutableStateOf<FeedItem?>(null) }
     var selectedEventPermalink by remember { mutableStateOf<String?>(null) }
     var eventsGroup by remember { mutableStateOf<Group?>(null) }
@@ -655,6 +744,8 @@ fun FeedScreen(
                         viewModel.feed.acknowledgeJoinError()
                         scope.launch { drawerState.open() }
                     },
+                    showUnreadOnly = showUnreadOnly,
+                    onToggleUnreadOnly = { showUnreadOnly = !showUnreadOnly },
                 )
             },
             floatingActionButton = {
@@ -701,28 +792,40 @@ fun FeedScreen(
                     onRefresh = { viewModel.feed.refresh() },
                     modifier = Modifier.padding(padding),
                 ) {
-                    FeedList(
-                        items = s.items,
-                        hasMore = s.hasMore,
-                        loadingMore = s.loadingMore,
-                        onLoadMore = { viewModel.feed.loadMore() },
-                        listState = feedListState,
-                        onTopicClick = { topic ->
-                            // Reset on open as well as on back, so this topic's reply
-                            // composer starts from a clean attachment flow no matter how
-                            // the previous one was left. Dismiss the shared project picker
-                            // too — it outlives a config change in the ViewModel and would
-                            // otherwise reappear over this topic's composer.
-                            viewModel.replyImage.reset()
-                            viewModel.projectPicker.dismiss()
-                            viewModel.topicDetail.load(topic.id)
-                            selectedTopic = topic
-                        },
-                    )
+                    val displayedItems = filterUnread(s.items, showUnreadOnly)
+                    if (showUnreadOnly && displayedItems.isEmpty()) {
+                        UnreadFilterEmptyState(
+                            hasMore = s.hasMore,
+                            loadingMore = s.loadingMore,
+                            onLoadMore = { viewModel.feed.loadMore() },
+                        )
+                    } else {
+                        FeedList(
+                            items = displayedItems,
+                            hasMore = s.hasMore,
+                            loadingMore = s.loadingMore,
+                            onLoadMore = { viewModel.feed.loadMore() },
+                            listState = feedListState,
+                            onTopicClick = { topic ->
+                                // Reset on open as well as on back, so this topic's reply
+                                // composer starts from a clean attachment flow no matter how
+                                // the previous one was left. Dismiss the shared project picker
+                                // too — it outlives a config change in the ViewModel and would
+                                // otherwise reappear over this topic's composer.
+                                viewModel.replyImage.reset()
+                                viewModel.projectPicker.dismiss()
+                                viewModel.topicDetail.load(topic.id)
+                                selectedTopic = topic
+                            },
+                        )
+                    }
                 }
                 // Switching groups (issue #214) empties the content while the new group
                 // loads: show a centered spinner over the blank area instead of an empty
                 // list under the pull indicator. A normal refresh keeps its stale content.
+                // (This still gates on the RAW stale list, not the filtered one below — it's
+                // asking "is there any previous content at all yet", not "did the filter
+                // match anything".)
                 is FeedState.Refreshing -> if (s.stale.items.isEmpty()) {
                     Box(
                         modifier = Modifier.fillMaxSize().padding(padding),
@@ -733,24 +836,33 @@ fun FeedScreen(
                     onRefresh = { viewModel.feed.refresh() },
                     modifier = Modifier.padding(padding),
                 ) {
-                    FeedList(
-                        items = s.stale.items,
-                        hasMore = s.stale.hasMore,
-                        loadingMore = s.stale.loadingMore,
-                        onLoadMore = { viewModel.feed.loadMore() },
-                        listState = feedListState,
-                        onTopicClick = { topic ->
-                            // Reset on open as well as on back, so this topic's reply
-                            // composer starts from a clean attachment flow no matter how
-                            // the previous one was left. Dismiss the shared project picker
-                            // too — it outlives a config change in the ViewModel and would
-                            // otherwise reappear over this topic's composer.
-                            viewModel.replyImage.reset()
-                            viewModel.projectPicker.dismiss()
-                            viewModel.topicDetail.load(topic.id)
-                            selectedTopic = topic
-                        },
-                    )
+                    val displayedItems = filterUnread(s.stale.items, showUnreadOnly)
+                    if (showUnreadOnly && displayedItems.isEmpty()) {
+                        UnreadFilterEmptyState(
+                            hasMore = s.stale.hasMore,
+                            loadingMore = s.stale.loadingMore,
+                            onLoadMore = { viewModel.feed.loadMore() },
+                        )
+                    } else {
+                        FeedList(
+                            items = displayedItems,
+                            hasMore = s.stale.hasMore,
+                            loadingMore = s.stale.loadingMore,
+                            onLoadMore = { viewModel.feed.loadMore() },
+                            listState = feedListState,
+                            onTopicClick = { topic ->
+                                // Reset on open as well as on back, so this topic's reply
+                                // composer starts from a clean attachment flow no matter how
+                                // the previous one was left. Dismiss the shared project picker
+                                // too — it outlives a config change in the ViewModel and would
+                                // otherwise reappear over this topic's composer.
+                                viewModel.replyImage.reset()
+                                viewModel.projectPicker.dismiss()
+                                viewModel.topicDetail.load(topic.id)
+                                selectedTopic = topic
+                            },
+                        )
+                    }
                 }
             }
         }
@@ -926,6 +1038,49 @@ internal fun FeedErrorState(
         )
         Spacer(Modifier.height(16.dp))
         Button(onClick = onRetry) { Text("Retry") }
+    }
+}
+
+/**
+ * Shown in place of the topic list when the "unread only" filter (issue #210) has
+ * nothing to show — every topic currently loaded for this group has already been read.
+ * Scrollable (like [FeedErrorState]) so the surrounding [PullToRefreshBox] still has a
+ * nested-scrolling child to engage pull-to-refresh on.
+ *
+ * Replacing [FeedList] here means its own scroll-triggered pagination never mounts, so
+ * when [hasMore] is true this offers an explicit "Check more topics" affordance instead
+ * — otherwise a group whose loaded page(s) happen to be fully read would report "No
+ * unread topics" with no way to reach further, unfetched pages that might have some.
+ */
+@Composable
+internal fun UnreadFilterEmptyState(
+    hasMore: Boolean = false,
+    loadingMore: Boolean = false,
+    onLoadMore: () -> Unit = {},
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState()),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Text(
+            text = if (hasMore) "No unread topics in what's loaded so far" else "No unread topics",
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(horizontal = 32.dp),
+        )
+        if (hasMore) {
+            Spacer(modifier = Modifier.height(12.dp))
+            if (loadingMore) {
+                CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+            } else {
+                TextButton(onClick = onLoadMore) { Text("Check more topics") }
+            }
+        }
     }
 }
 
@@ -1330,6 +1485,16 @@ private fun GroupEventsBadge(count: Int, onClick: () -> Unit) {
         )
     }
 }
+
+/**
+ * Purely client-side "unread only" filter (issue #210) — no new API call, since
+ * [FeedItem.unreadCount] is already tracked per topic. `sticky` is just a sort-order flag on
+ * [FeedItem] (pinned topics live in the same flat list, sorted first), not a separate list, so
+ * this predicate covers sticky and non-sticky topics identically: a read sticky topic is
+ * filtered out just like any other read topic.
+ */
+internal fun filterUnread(items: List<FeedItem>, showUnreadOnly: Boolean): List<FeedItem> =
+    if (showUnreadOnly) items.filter { it.unreadCount > 0 } else items
 
 /** Visible-item slack before the end of the list that triggers [onLoadMore]. */
 private const val LOAD_MORE_THRESHOLD = 5
