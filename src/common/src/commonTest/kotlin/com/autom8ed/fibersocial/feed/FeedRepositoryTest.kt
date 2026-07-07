@@ -28,8 +28,14 @@ class FeedRepositoryTest {
         when {
             path.contains("/forums/") -> topicsJson(topicId)
             path.contains("/topics/") -> topicDetailJson(
-                topicId, imagesCount, sticky, repliedAt, summary,
-                postsCount = postsCount, lastRead = lastRead, starter = starter,
+                id = topicId,
+                imagesCount = imagesCount,
+                sticky = sticky,
+                repliedAt = repliedAt,
+                summary = summary,
+                postsCount = postsCount,
+                lastRead = lastRead,
+                starter = starter,
             )
             else -> error("Unexpected: $path")
         }
@@ -140,6 +146,26 @@ class FeedRepositoryTest {
         val item = singleTopicRepo(summary = "**Please use this thread").singlePageItems().single()
         assertEquals("**Please use this thread", item.bodySummary)
         assertEquals("", item.bodySummaryHtml)
+    }
+
+    @Test
+    fun `getFeedItemsPage carries createdAt from the topic detail`() = runTest {
+        // Issue #242: the card needs the topic's original start time, not just repliedAt.
+        val repo = repoWithRoute { path ->
+            when {
+                path.contains("/forums/") -> topicsJson(100L)
+                path.contains("/topics/") -> topicDetailJson(100L, createdAt = "2024-01-01")
+                else -> error("Unexpected: $path")
+            }
+        }
+        val item = repo.singlePageItems().single()
+        assertEquals("2024-01-01", item.createdAt)
+    }
+
+    @Test
+    fun `getFeedItemsPage leaves createdAt null when the topic detail omits it`() = runTest {
+        val item = singleTopicRepo().singlePageItems().single()
+        assertNull(item.createdAt)
     }
 
     @Test

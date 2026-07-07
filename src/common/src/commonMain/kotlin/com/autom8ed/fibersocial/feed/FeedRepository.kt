@@ -98,6 +98,7 @@ class FeedRepository(private val apiClient: RavelryApiClient) {
             unreadCount = unread,
             firstUnreadPostNumber = firstUnread,
             sticky = sticky,
+            createdAt = createdAt,
         )
     }
 

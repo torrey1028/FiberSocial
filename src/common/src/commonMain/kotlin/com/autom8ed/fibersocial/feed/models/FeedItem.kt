@@ -27,6 +27,9 @@ package com.autom8ed.fibersocial.feed.models
  * @property firstUnreadPostNumber The 1-based post number to scroll to when opening the
  *   topic (the first unread post = `last_read + 1`), or `null` when nothing is unread.
  * @property sticky Whether a moderator pinned this topic to the top of the forum.
+ * @property createdAt ISO-8601 timestamp when the topic was first posted (issue #242), shown on
+ *   the card alongside [lastPostAt] so "started" and "last reply" are both visible. Null when the
+ *   API omits it.
  */
 data class FeedItem(
     val id: Long,
@@ -41,6 +44,7 @@ data class FeedItem(
     val unreadCount: Int = 0,
     val firstUnreadPostNumber: Int? = null,
     val sticky: Boolean = false,
+    val createdAt: String? = null,
 ) {
     /** Whether the topic has a summary to render on the card. */
     val hasSummary: Boolean get() = bodySummary.isNotBlank() || bodySummaryHtml.isNotBlank()
