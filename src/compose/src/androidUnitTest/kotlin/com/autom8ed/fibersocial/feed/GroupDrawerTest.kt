@@ -369,6 +369,39 @@ class GroupDrawerTest {
     }
 
     @Test
+    fun `opening the leave dialog for a different group acknowledges a stale error first`() {
+        // Regression: leaveError lives on the ViewModel (outlives GroupDrawer being torn
+        // down, e.g. by a deep link forcing the drawer closed while an error was showing),
+        // but pendingLeave is drawer-local and always starts fresh. Without clearing
+        // leaveError when a NEW group's dialog opens, a stale error left over from a
+        // previous group's unresolved dialog would show up immediately for this group,
+        // even though nothing has been attempted for it yet.
+        var leaveError by mutableStateOf<String?>("Couldn't leave the group")
+        var acknowledged = false
+        compose.setContent {
+            GroupDrawer(
+                groups = twoGroups,
+                selectedGroup = twoGroups.first(),
+                eventCounts = emptyMap(),
+                user = user,
+                onGroupSelected = {},
+                onGroupEventsClick = {},
+                onSettingsClick = {},
+                leaveError = leaveError,
+                onAcknowledgeLeaveError = { acknowledged = true; leaveError = null },
+            )
+        }
+        compose.onNodeWithText("Edit").performClick()
+        compose.onNodeWithContentDescription("Leave Sock Society", useUnmergedTree = true).performClick()
+
+        compose.runOnIdle { assertEquals(true, acknowledged) }
+        compose.onNodeWithText("Leave Sock Society?").assertIsDisplayed()
+        compose.onNodeWithText("Couldn't leave the group").assertDoesNotExist()
+        compose.onNodeWithText("You'll stop seeing this group's topics. You can re-join it from Ravelry.")
+            .assertIsDisplayed()
+    }
+
+    @Test
     fun `swiping down over the group list invokes onRefresh`() {
         // Issue #246: joining a group elsewhere left no way to refresh the drawer's list
         // short of leaving and re-entering the app. Pull-to-refresh matches every other

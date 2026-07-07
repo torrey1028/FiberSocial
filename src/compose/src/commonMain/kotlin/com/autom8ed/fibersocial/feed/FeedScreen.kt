@@ -1332,7 +1332,19 @@ internal fun GroupDrawer(
                             // in place of the event badge.
                             reorderMode -> {
                                 {
-                                    IconButton(onClick = { pendingLeave = group }) {
+                                    IconButton(
+                                        onClick = {
+                                            // Clears any leaveError left over from a
+                                            // previous group's dialog that got dismissed
+                                            // without going through Cancel/onDismissRequest
+                                            // (e.g. a deep link tearing the drawer down
+                                            // while an error was showing) — otherwise this
+                                            // fresh dialog for a DIFFERENT group would open
+                                            // already showing that stale error/Retry.
+                                            onAcknowledgeLeaveError()
+                                            pendingLeave = group
+                                        },
+                                    ) {
                                         Icon(
                                             Icons.Default.Delete,
                                             contentDescription = "Leave ${group.name}",
