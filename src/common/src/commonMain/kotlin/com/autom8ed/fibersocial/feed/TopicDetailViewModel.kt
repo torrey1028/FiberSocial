@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.yield
 
 /**
  * Represents the state of a loaded topic's reply thread.
@@ -23,9 +24,22 @@ sealed class TopicDetailState {
 
     /**
      * Posts successfully loaded.
-     * @property posts All replies in the topic, ordered oldest-first.
+     *
+     * The thread pages in oldest-first (issue #202): [posts] holds every post fetched so
+     * far, starting from the first, and grows as the user scrolls. [hasMore] is false only
+     * once the newest post is loaded — the UI shows an "all caught up" marker then.
+     *
+     * @property posts Replies loaded so far, ordered oldest-first (a contiguous prefix of
+     *   the thread from post 1).
+     * @property hasMore Whether further (newer) pages remain to be loaded.
+     * @property isLoadingMore Whether the next page is currently being fetched (drives the
+     *   bottom loading spinner and guards against overlapping load-more requests).
      */
-    data class Loaded(val posts: List<Post>) : TopicDetailState()
+    data class Loaded(
+        val posts: List<Post>,
+        val hasMore: Boolean = false,
+        val isLoadingMore: Boolean = false,
+    ) : TopicDetailState()
 
     /**
      * Failed to load posts.
@@ -144,20 +158,21 @@ class TopicDetailViewModel(
             _editState.value = EditState.Idle
             _deleteState.value = DeleteState.Idle
         }
+        val generation = topicGeneration
         scope.launch {
             println("FiberSocial: TopicDetailViewModel.load(topicId=$topicId)")
             _state.value = TopicDetailState.Loading
             try {
-                val posts = apiClient.getTopicPosts(topicId)
-                println("FiberSocial: TopicDetailViewModel loaded ${posts.size} posts")
-                // Show the thread first, THEN mark it read (issue #185). The read POST is
-                // best-effort — it advances Ravelry's own marker so the website and the
-                // feed's unread count agree next refresh — but emitting Loaded before it
-                // means a slow or failed read POST can't delay rendering the thread the
-                // user just opened. It stays in this coroutine (which outlives a quick
-                // back-out, since the VM scope isn't cancelled) so the marker still syncs.
-                _state.value = TopicDetailState.Loaded(posts)
-                if (posts.isNotEmpty()) markReadBestEffort(topicId, posts.size)
+                val firstPage = apiClient.getTopicPosts(topicId, page = 1)
+                if (generation != topicGeneration) return@launch
+                loadedPage = firstPage.page
+                println("FiberSocial: TopicDetailViewModel loaded ${firstPage.posts.size} posts (hasMore=${firstPage.hasMore})")
+                // The read marker is NOT advanced here (issue #206): "read" means the
+                // furthest post actually shown to the user, not merely the first page the
+                // app happened to fetch. The screen tracks how far the user scrolls and
+                // calls [markRead] on the way out, so a long thread the user only skims
+                // isn't marked fully read.
+                _state.value = TopicDetailState.Loaded(posts = firstPage.posts, hasMore = firstPage.hasMore)
             } catch (e: SessionExpiredException) {
                 println("FiberSocial: TopicDetailViewModel session expired")
                 _sessionExpired.trySend(Unit)
@@ -167,6 +182,105 @@ class TopicDetailViewModel(
                 _state.value = TopicDetailState.Error(e.message ?: "Failed to load replies")
             }
         }
+    }
+
+    /**
+     * Loads the next page of posts and appends it to the loaded thread (issue #202).
+     * No-ops unless the thread is loaded, has more pages, and isn't already fetching one.
+     * A failure just clears the loading flag so the UI can retry on the next scroll; only
+     * session expiry is surfaced (the thread the user is reading stays intact).
+     */
+    fun loadMore() {
+        val current = _state.value as? TopicDetailState.Loaded ?: return
+        if (!current.hasMore || current.isLoadingMore) return
+        val topicId = loadedTopicId ?: return
+        val generation = topicGeneration
+        val nextPage = loadedPage + 1
+        _state.value = current.copy(isLoadingMore = true)
+        scope.launch {
+            try {
+                val page = apiClient.getTopicPosts(topicId, page = nextPage)
+                if (generation != topicGeneration) return@launch
+                val loaded = _state.value as? TopicDetailState.Loaded ?: return@launch
+                loadedPage = page.page
+                // Dedup by id: a post inserted between page fetches can shift Ravelry's
+                // paging window and repeat a post across two pages.
+                val existing = loaded.posts.mapTo(HashSet()) { it.id }
+                val appended = loaded.posts + page.posts.filter { it.id !in existing }
+                _state.value = loaded.copy(
+                    posts = appended,
+                    hasMore = page.hasMore,
+                    isLoadingMore = false,
+                )
+            } catch (e: SessionExpiredException) {
+                println("FiberSocial: TopicDetailViewModel.loadMore session expired")
+                if (generation == topicGeneration) clearLoadingMore()
+                _sessionExpired.trySend(Unit)
+            } catch (e: Exception) {
+                println("FiberSocial: TopicDetailViewModel.loadMore error: ${e.message}")
+                if (generation == topicGeneration) clearLoadingMore()
+            }
+        }
+    }
+
+    /**
+     * Loads forward pages until post number [target] is present, or the thread ends
+     * (issue #205). Backs "jump to last read" on a long thread: the target post can sit
+     * pages beyond what's loaded, and the button waits on this before scrolling. No-ops if
+     * the target is already loaded, a load is already in flight, or there's nothing more to
+     * fetch — so [TopicDetailState.Loaded.isLoadingMore] reliably flips back to false once
+     * the jump target is reachable. Re-reads the latest state each iteration so a
+     * concurrent vote/reply isn't clobbered mid-jump.
+     */
+    fun loadUntilPost(target: Int) {
+        val current = _state.value as? TopicDetailState.Loaded ?: return
+        if (current.isLoadingMore || !current.hasMore || current.posts.size >= target) return
+        val topicId = loadedTopicId ?: return
+        val generation = topicGeneration
+        _state.value = current.copy(isLoadingMore = true)
+        scope.launch {
+            try {
+                while (true) {
+                    val loaded = _state.value as? TopicDetailState.Loaded ?: return@launch
+                    if (!loaded.hasMore || loaded.posts.size >= target) break
+                    val page = apiClient.getTopicPosts(topicId, page = loadedPage + 1)
+                    if (generation != topicGeneration) return@launch
+                    loadedPage = page.page
+                    val existing = loaded.posts.mapTo(HashSet()) { it.id }
+                    val appended = loaded.posts + page.posts.filter { it.id !in existing }
+                    _state.value = loaded.copy(posts = appended, hasMore = page.hasMore, isLoadingMore = true)
+                    // Yield between pages so a long deep-load doesn't monopolize the main
+                    // thread — keeps scrolling smooth while the jump loads in (issue #205).
+                    yield()
+                }
+                clearLoadingMore()
+            } catch (e: SessionExpiredException) {
+                println("FiberSocial: TopicDetailViewModel.loadUntilPost session expired")
+                if (generation == topicGeneration) clearLoadingMore()
+                _sessionExpired.trySend(Unit)
+            } catch (e: Exception) {
+                println("FiberSocial: TopicDetailViewModel.loadUntilPost error: ${e.message}")
+                if (generation == topicGeneration) clearLoadingMore()
+            }
+        }
+    }
+
+    /** Clears [TopicDetailState.Loaded.isLoadingMore] if the thread is still loaded. */
+    private fun clearLoadingMore() {
+        val loaded = _state.value as? TopicDetailState.Loaded ?: return
+        _state.value = loaded.copy(isLoadingMore = false)
+    }
+
+    /**
+     * Advances Ravelry's read marker for [topicId] to [lastRead] — the furthest post the
+     * user actually scrolled to (issue #206). Fire-and-forget on the VM scope (which
+     * outlives leaving the screen), so it still syncs after the user backs out. No-ops for
+     * a non-positive [lastRead] (nothing was seen). Ravelry only advances the marker, so
+     * re-marking a lower value than the server already has is harmless.
+     */
+    fun markRead(topicId: Long, lastRead: Int) {
+        if (lastRead <= 0) return
+        scope.launch { markReadBestEffort(topicId, lastRead) }
     }
 
     /** Advances Ravelry's read marker for [topicId] to [lastRead]; swallows failures. */
@@ -231,6 +345,9 @@ class TopicDetailViewModel(
 
     /** The topic [load] most recently targeted; distinguishes a new topic from a refresh. */
     private var loadedTopicId: Long? = null
+
+    /** Highest post page fetched so far for [loadedTopicId]; [loadMore] fetches the next. */
+    private var loadedPage: Int = 1
 
     /** Resets [replyState] from [ReplyState.Sent] back to [ReplyState.Idle] after the UI has reacted. */
     fun acknowledgeReplySent() {

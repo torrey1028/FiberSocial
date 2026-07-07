@@ -300,14 +300,6 @@ fun FeedScreen(
             is FeedState.Refreshing -> s.stale.user.username
             else -> null
         }
-        // Viewing a topic loads its first page of posts and advances Ravelry's read
-        // marker to that; mirror it in the feed so the card's unread badge drops to the
-        // remaining count (not zero) as soon as the user backs out (#185).
-        LaunchedEffect(topic.id, topicDetailState) {
-            (topicDetailState as? TopicDetailState.Loaded)?.let {
-                if (it.posts.isNotEmpty()) viewModel.feed.markTopicReadUpTo(topic.id, it.posts.size)
-            }
-        }
         TopicDetailRoute(
             topic = topic,
             postsState = topicDetailState,
@@ -328,6 +320,14 @@ fun FeedScreen(
             // and backed out, to avoid an unnecessary network call/spinner flash.
             onRefreshFeed = { viewModel.feed.refresh() },
             onRefresh = { viewModel.topicDetail.load(topic.id) },
+            onLoadMore = { viewModel.topicDetail.loadMore() },
+            onLoadUntil = { target -> viewModel.topicDetail.loadUntilPost(target) },
+            // Leaving the thread: sync Ravelry's read marker to how far the user scrolled
+            // and mirror it in the feed card's unread badge (issue #206).
+            onMarkRead = { lastRead ->
+                viewModel.topicDetail.markRead(topic.id, lastRead)
+                viewModel.feed.markTopicReadUpTo(topic.id, lastRead)
+            },
             currentUsername = currentUsername,
             deleteState = deleteState,
             onDeletePost = { post -> viewModel.topicDetail.deletePost(post) },
@@ -614,6 +614,9 @@ internal fun TopicDetailRoute(
     onBack: () -> Unit,
     onRefreshFeed: () -> Unit,
     onRefresh: () -> Unit,
+    onLoadMore: () -> Unit = {},
+    onLoadUntil: (Int) -> Unit = {},
+    onMarkRead: (Int) -> Unit = {},
     currentUsername: String? = null,
     deleteState: DeleteState = DeleteState.Idle,
     onDeletePost: (Post) -> Unit = {},
@@ -647,6 +650,9 @@ internal fun TopicDetailRoute(
         onSendReply = onSendReply,
         onReplySent = onReplySent,
         onRefresh = onRefresh,
+        onLoadMore = onLoadMore,
+        onLoadUntil = onLoadUntil,
+        onMarkRead = onMarkRead,
         currentUsername = currentUsername,
         deleteState = deleteState,
         onDeletePost = onDeletePost,
