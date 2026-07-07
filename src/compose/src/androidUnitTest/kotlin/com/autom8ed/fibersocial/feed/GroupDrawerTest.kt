@@ -9,9 +9,11 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeDown
 import com.autom8ed.fibersocial.feed.models.Group
 import com.autom8ed.fibersocial.feed.models.RavelryUser
 import org.junit.Rule
@@ -294,6 +296,83 @@ class GroupDrawerTest {
         compose.waitForIdle()
         compose.onNodeWithText("Leaving KAL Hub…").assertDoesNotExist()
         compose.onNodeWithText("Leave KAL Hub?").assertDoesNotExist()
+    }
+
+    @Test
+    fun `swiping down over the group list invokes onRefresh`() {
+        // Issue #246: joining a group elsewhere left no way to refresh the drawer's list
+        // short of leaving and re-entering the app. Pull-to-refresh matches every other
+        // interactable list/drawer in the app (feed, events, topic detail) rather than a
+        // one-off icon button.
+        var refreshes = 0
+        compose.setContent {
+            GroupDrawer(
+                groups = twoGroups,
+                selectedGroup = twoGroups.first(),
+                eventCounts = emptyMap(),
+                user = user,
+                onGroupSelected = {},
+                onGroupEventsClick = {},
+                onSettingsClick = {},
+                onRefresh = { refreshes++ },
+            )
+        }
+        compose.onNodeWithTag("GroupList").performTouchInput { swipeDown() }
+        compose.waitForIdle()
+        assertEquals(1, refreshes)
+    }
+
+    @Test
+    fun `the group list stays visible and interactive while a refresh is in flight`() {
+        var refreshing by mutableStateOf(false)
+        var selected: Group? = null
+        compose.setContent {
+            GroupDrawer(
+                groups = twoGroups,
+                selectedGroup = twoGroups.first(),
+                eventCounts = emptyMap(),
+                user = user,
+                onGroupSelected = { selected = it },
+                onGroupEventsClick = {},
+                onSettingsClick = {},
+                isRefreshing = refreshing,
+                onRefresh = { refreshing = true },
+            )
+        }
+        compose.onNodeWithText("KAL Hub").assertIsDisplayed()
+        refreshing = true
+        compose.waitForIdle()
+        compose.onNodeWithText("KAL Hub").assertIsDisplayed()
+        compose.onNodeWithText("Sock Society").performClick()
+        compose.runOnIdle { assertEquals(2L, selected?.id) }
+    }
+
+    @Test
+    fun `pull-to-refresh is disabled during reorder mode`() {
+        // A refresh mid-drag flips state away from Loaded, which makes reorderGroups()
+        // silently no-op and drop the in-progress reorder — suppress the gesture instead.
+        var refreshes = 0
+        compose.setContent {
+            GroupDrawer(
+                groups = twoGroups,
+                selectedGroup = twoGroups.first(),
+                eventCounts = emptyMap(),
+                user = user,
+                onGroupSelected = {},
+                onGroupEventsClick = {},
+                onSettingsClick = {},
+                onRefresh = { refreshes++ },
+            )
+        }
+        compose.onNodeWithText("Edit").performClick()
+        compose.onNodeWithTag("GroupList").performTouchInput { swipeDown() }
+        compose.waitForIdle()
+        assertEquals(0, refreshes)
+
+        compose.onNodeWithText("Done").performClick()
+        compose.onNodeWithTag("GroupList").performTouchInput { swipeDown() }
+        compose.waitForIdle()
+        assertEquals(1, refreshes)
     }
 
     @Test

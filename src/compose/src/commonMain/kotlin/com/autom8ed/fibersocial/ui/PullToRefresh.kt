@@ -22,6 +22,11 @@ import androidx.compose.ui.Modifier
  * pins `compose-bom` to `2024.06.00`, which resolves Material3 to 1.2.1 — `PullToRefreshBox`
  * wasn't added until Material3 1.3. Centralizing the `@OptIn` here keeps it out of every
  * call site.
+ *
+ * @param enabled Set `false` to suppress the pull gesture entirely (the gesture is simply
+ *   not detected — [onRefresh] is never invoked) — e.g. while some other in-progress
+ *   interaction with [content] would be corrupted by a concurrent refresh (issue #246's
+ *   group-drawer reorder mode).
  */
 @OptIn(ExperimentalMaterialApi::class)
 @Composable
@@ -29,10 +34,11 @@ fun PullToRefreshBox(
     refreshing: Boolean,
     onRefresh: () -> Unit,
     modifier: Modifier = Modifier,
+    enabled: Boolean = true,
     content: @Composable BoxScope.() -> Unit,
 ) {
     val pullRefreshState = rememberPullRefreshState(refreshing = refreshing, onRefresh = onRefresh)
-    Box(modifier = modifier.pullRefresh(pullRefreshState)) {
+    Box(modifier = modifier.pullRefresh(pullRefreshState, enabled = enabled)) {
         content()
         PullRefreshIndicator(
             refreshing = refreshing,
