@@ -157,6 +157,18 @@ class TopicDetailViewModelTest {
         // Reaching here without a thrown exception is the assertion.
     }
 
+    @Test
+    fun `markRead signals sessionExpired when the session has expired`() = runTest(UnconfinedTestDispatcher()) {
+        // markRead is now the ONLY caller of markReadBestEffort (load() no longer marks read,
+        // issue #206), so its session-expiry routing must stay covered: the read POST is
+        // best-effort, but a genuine expiry during it must reach _sessionExpired and route the
+        // user to login rather than be swallowed by the generic best-effort catch.
+        val vm = TopicDetailViewModel(sessionExpiredApiClient(), this)
+        vm.markRead(42L, 3)
+        awaitChildren(coroutineContext[Job]!!)
+        vm.sessionExpired.first()
+    }
+
     /** MockEngine that pages posts: page N returns [pageContents]`[N]`, plus a paginator. */
     private fun pagedPostsClient(pages: Map<Int, String>, pageCount: Int): RavelryApiClient {
         val engine = MockEngine { request ->
