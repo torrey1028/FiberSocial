@@ -7,6 +7,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import com.autom8ed.fibersocial.feed.models.Group
+import com.autom8ed.fibersocial.projects.ProjectLink
 import com.autom8ed.fibersocial.projects.ProjectPhoto
 import com.autom8ed.fibersocial.projects.ProjectSummary
 import org.junit.Rule
@@ -56,6 +57,19 @@ class UserProfileScreenTest {
         compose.onNodeWithText("KAL Hub").assertExists()
         // The photoless project renders its name on the placeholder tile.
         compose.onNodeWithText("Cabled Hat").assertExists()
+    }
+
+    @Test
+    fun `tapping a project invokes onOpenProject with an in-app project link`() {
+        var opened: ProjectLink? = null
+        compose.setContent {
+            UserProfileScreen(
+                UserProfileState.Loaded(profile, listOf(withPhoto), emptyList()),
+                onBack = {}, onRetry = {}, onOpenProject = { opened = it },
+            )
+        }
+        compose.onNodeWithContentDescription("Autumn Socks").performClick()
+        compose.runOnIdle { assertEquals(ProjectLink("yarnie", "autumn-socks"), opened) }
     }
 
     @Test
