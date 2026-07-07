@@ -26,6 +26,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
@@ -837,6 +838,35 @@ class TopicDetailViewModelTest {
         val state = assertIs<TopicDetailState.Loaded>(vm.state.value)
         assertEquals(listOf(2L), state.posts.map { it.id })
     }
+
+    @Test
+    fun `deletePost signals topicDeleted when the opening post is removed`() = runTest(UnconfinedTestDispatcher()) {
+        // Issue #247: deleting post #1 deletes the whole topic on Ravelry, not just that
+        // reply, so the host screen needs to hear about it to close the thread view and
+        // refresh the stale feed card.
+        val vm = TopicDetailViewModel(deleteRoutingClient(), this)
+        vm.load(42L)
+        awaitChildren(coroutineContext[Job]!!)
+        val openingPost = (vm.state.value as TopicDetailState.Loaded).posts.first()
+        assertEquals(1L, openingPost.id)
+        vm.deletePost(openingPost)
+        awaitChildren(coroutineContext[Job]!!)
+        assertEquals(Unit, vm.topicDeleted.first())
+    }
+
+    @Test
+    fun `deletePost does not signal topicDeleted when a non-opening post is removed`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val vm = TopicDetailViewModel(deleteRoutingClient(), this)
+            vm.load(42L)
+            awaitChildren(coroutineContext[Job]!!)
+            val reply = (vm.state.value as TopicDetailState.Loaded).posts[1]
+            assertEquals(2L, reply.id)
+            vm.deletePost(reply)
+            awaitChildren(coroutineContext[Job]!!)
+            assertIs<DeleteState.Idle>(vm.deleteState.value)
+            assertEquals(null, withTimeoutOrNull(1_000) { vm.topicDeleted.first() })
+        }
 
     @Test
     fun `deletePost failure keeps the thread and reports Error`() = runTest(UnconfinedTestDispatcher()) {

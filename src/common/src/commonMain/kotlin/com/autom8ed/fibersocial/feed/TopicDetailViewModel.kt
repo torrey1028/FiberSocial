@@ -115,6 +115,7 @@ class TopicDetailViewModel(
 ) {
     private val _state = MutableStateFlow<TopicDetailState>(TopicDetailState.Loading)
     private val _sessionExpired = Channel<Unit>(Channel.BUFFERED)
+    private val _topicDeleted = Channel<Unit>(Channel.BUFFERED)
 
     private val _replyState = MutableStateFlow<ReplyState>(ReplyState.Idle)
     private val _deleteState = MutableStateFlow<DeleteState>(DeleteState.Idle)
@@ -137,6 +138,17 @@ class TopicDetailViewModel(
      * exactly once — no replay on re-subscription. Collect to navigate to login.
      */
     val sessionExpired: Flow<Unit> = _sessionExpired.receiveAsFlow()
+
+    /**
+     * Emits [Unit] when [deletePost] removes the topic's opening post — on Ravelry,
+     * deleting post #1 deletes the whole topic (issue #247), not just that one reply.
+     * Nothing else in this ViewModel notices on its own: [state] just loses one more
+     * post like any other deletion. The host screen collects this to close the topic
+     * detail view and refresh the feed list immediately, instead of leaving a stale
+     * card visible until the next manual pull-to-refresh. Each emission is consumed
+     * exactly once — no replay on re-subscription, matching [sessionExpired].
+     */
+    val topicDeleted: Flow<Unit> = _topicDeleted.receiveAsFlow()
 
     /**
      * Fetches all posts for [topicId], replacing any previously loaded state.
@@ -360,6 +372,13 @@ class TopicDetailViewModel(
      * ignored while a deletion is in flight. On failure the thread is untouched and
      * [deleteState] reports the error; session expiry routes through [sessionExpired].
      *
+     * Deleting the opening post (post #1) deletes the whole topic on Ravelry, not just
+     * that one reply (issue #247): [state]'s [TopicDetailState.Loaded.posts] is always a
+     * contiguous prefix starting from post 1 (see [load]/[loadMore]), so the opening post
+     * — if still present — is always [TopicDetailState.Loaded.posts]'s first element.
+     * When that's the post being deleted, [topicDeleted] is signaled after Ravelry
+     * confirms the deletion.
+     *
      * @param post The post to delete (must be authored by the signed-in user; the server
      *   rejects deletions of others' posts).
      */
@@ -375,7 +394,9 @@ class TopicDetailViewModel(
                 if (generation != topicGeneration) return@launch
                 val current = _state.value
                 if (current is TopicDetailState.Loaded) {
+                    val wasOpeningPost = current.posts.firstOrNull()?.id == post.id
                     _state.value = TopicDetailState.Loaded(current.posts.filterNot { it.id == post.id })
+                    if (wasOpeningPost) _topicDeleted.trySend(Unit)
                 }
                 _deleteState.value = DeleteState.Idle
             } catch (e: SessionExpiredException) {
