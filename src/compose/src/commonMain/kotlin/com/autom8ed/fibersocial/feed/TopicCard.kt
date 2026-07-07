@@ -70,7 +70,9 @@ fun TopicCard(
             if (item.hasSummary) {
                 Spacer(modifier = Modifier.height(8.dp))
                 val document = remember(item) { item.parseSummaryDocument() }
-                PostBody(document = document)
+                // Non-interactive so taps on the summary open the topic (the whole card is
+                // the tap target) instead of a link/image swallowing them (issue #216).
+                PostBody(document = document, interactive = false)
             }
 
             Spacer(modifier = Modifier.height(8.dp))
