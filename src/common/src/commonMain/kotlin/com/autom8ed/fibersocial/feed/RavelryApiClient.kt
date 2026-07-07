@@ -47,6 +47,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlin.time.Clock
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -156,14 +158,27 @@ class RavelryApiClient(
     private fun forbiddenMessage(response: HttpResponse): String =
         "Permission denied for ${response.request.url.encodedPath}"
 
+    // Concurrent requests that all hit the proactive-expiry check or a 401 at once would
+    // otherwise each race their own doRefresh() call with no lock between them. Serializing
+    // behind a mutex means only one refresh actually runs; the rest wait for it, then see
+    // the token has already moved on and skip redundantly refreshing again.
+    private val refreshMutex = Mutex()
+
     private suspend fun tryRefresh() {
         val doRefresh = refreshToken ?: throw SessionExpiredException("Session expired")
-        try {
-            doRefresh()
-        } catch (e: SessionExpiredException) {
-            throw e
-        } catch (e: Exception) {
-            throw SessionExpiredException("Token refresh failed: ${e.message}")
+        val tokenBeforeWaiting = tokenStorage.load()?.accessToken
+        refreshMutex.withLock {
+            // Someone else already refreshed while we were waiting for the lock — the
+            // caller's retry will pick up that fresh token, nothing more to do here.
+            val currentToken = tokenStorage.load()?.accessToken
+            if (currentToken != null && currentToken != tokenBeforeWaiting) return
+            try {
+                doRefresh()
+            } catch (e: SessionExpiredException) {
+                throw e
+            } catch (e: Exception) {
+                throw SessionExpiredException("Token refresh failed: ${e.message}")
+            }
         }
     }
 
