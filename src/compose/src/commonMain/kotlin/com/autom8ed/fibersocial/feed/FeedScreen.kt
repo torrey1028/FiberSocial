@@ -11,6 +11,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Box
@@ -33,7 +34,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Menu
@@ -73,6 +73,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -157,6 +163,100 @@ internal fun LaunchLoadingScreen() {
     }
 }
 
+/**
+ * Softly fades [fadeWidth] of a composable's leading and/or trailing edge to transparent
+ * (issue #207): a horizontally-scrolling group title that overruns the bar fades into
+ * whichever edge has more content off-screen, hinting you can scroll that way instead of
+ * hard-clipping. Each side is gated by [fadeStart]/[fadeEnd] (typically the scroll state's
+ * `canScrollBackward`/`canScrollForward`), so a fully-visible title shows no fade.
+ */
+private fun Modifier.horizontalEdgeFade(
+    fadeWidth: Dp,
+    fadeStart: Boolean,
+    fadeEnd: Boolean,
+): Modifier = this
+    .graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
+    .drawWithContent {
+        drawContent()
+        val fadePx = fadeWidth.toPx()
+        if (size.width <= fadePx) return@drawWithContent
+        if (fadeStart) {
+            drawRect(
+                brush = Brush.horizontalGradient(
+                    colors = listOf(Color.Transparent, Color.Black),
+                    startX = 0f,
+                    endX = fadePx,
+                ),
+                blendMode = BlendMode.DstIn,
+            )
+        }
+        if (fadeEnd) {
+            drawRect(
+                brush = Brush.horizontalGradient(
+                    colors = listOf(Color.Black, Color.Transparent),
+                    startX = size.width - fadePx,
+                    endX = size.width,
+                ),
+                blendMode = BlendMode.DstIn,
+            )
+        }
+    }
+
+/**
+ * The feed's top bar (issue #207): the selected group's badge and name on the left (the
+ * name scrolls sideways with an edge fade when it's too long to fit), and the FiberSocial
+ * logo pinned to the far right. The navigation icon opens the group drawer.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun FeedTopBar(
+    title: String,
+    selectedGroup: Group?,
+    onOpenDrawer: () -> Unit,
+) {
+    TopAppBar(
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                // The group's badge takes the slot the logo used to sit in (#207).
+                selectedGroup?.let { group ->
+                    GroupBadge(group = group, size = 28.dp)
+                    Spacer(modifier = Modifier.width(8.dp))
+                }
+                // A long group name scrolls sideways instead of wrapping to a second line,
+                // and fades on whichever side has more off-screen: trailing only at the
+                // start, both in the middle, leading only once fully scrolled (#207).
+                val titleScroll = rememberScrollState()
+                Text(
+                    text = title,
+                    maxLines = 1,
+                    softWrap = false,
+                    modifier = Modifier
+                        .weight(1f)
+                        .horizontalEdgeFade(
+                            fadeWidth = 24.dp,
+                            fadeStart = titleScroll.canScrollBackward,
+                            fadeEnd = titleScroll.canScrollForward,
+                        )
+                        .horizontalScroll(titleScroll),
+                )
+            }
+        },
+        navigationIcon = {
+            IconButton(onClick = onOpenDrawer) {
+                Icon(Icons.Default.Menu, contentDescription = "Select group")
+            }
+        },
+        actions = {
+            // FiberSocial logo pinned to the far right of the bar (#207).
+            Image(
+                painter = painterResource(appLogoResource()),
+                contentDescription = stringResource(Res.string.app_logo_content_description),
+                modifier = Modifier.padding(end = 12.dp).size(28.dp),
+            )
+        },
+    )
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FeedScreen(
@@ -199,6 +299,8 @@ fun FeedScreen(
     var selectedEventPermalink by remember { mutableStateOf<String?>(null) }
     var eventsGroup by remember { mutableStateOf<Group?>(null) }
     var showSettings by rememberSaveable { mutableStateOf(false) }
+    // Declared here (not at the feed chrome below) so the Settings block above can open it (#207).
+    var showDebugPanel by remember { mutableStateOf(false) }
     var composingTopic by rememberSaveable { mutableStateOf(false) }
     var sendingFeedback by rememberSaveable { mutableStateOf(false) }
 
@@ -340,6 +442,12 @@ fun FeedScreen(
                     // The host re-registers the periodic sync at the new cadence.
                     onPollCadenceChanged(cadence)
                 }
+            },
+            // Debug panel now lives in Settings (debug builds only) instead of the top bar (#207).
+            onOpenDebugPanel = if (debugPanelEnabled) {
+                { showSettings = false; showDebugPanel = true }
+            } else {
+                null
             },
         )
         return
@@ -492,7 +600,6 @@ fun FeedScreen(
 
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
-    var showDebugPanel by remember { mutableStateOf(false) }
 
     CloseDrawerOnBack(drawerState)
 
@@ -532,32 +639,12 @@ fun FeedScreen(
     ) {
         Scaffold(
             topBar = {
-                TopAppBar(
-                    title = {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Image(
-                                painter = painterResource(appLogoResource()),
-                                contentDescription = stringResource(Res.string.app_logo_content_description),
-                                modifier = Modifier.size(28.dp),
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(title)
-                        }
-                    },
-                    navigationIcon = {
-                        IconButton(onClick = {
-                            viewModel.feed.acknowledgeJoinError()
-                            scope.launch { drawerState.open() }
-                        }) {
-                            Icon(Icons.Default.Menu, contentDescription = "Select group")
-                        }
-                    },
-                    actions = {
-                        if (debugPanelEnabled) {
-                            IconButton(onClick = { showDebugPanel = true }) {
-                                Icon(Icons.Default.Build, contentDescription = "Debug panel")
-                            }
-                        }
+                FeedTopBar(
+                    title = title,
+                    selectedGroup = selectedGroup,
+                    onOpenDrawer = {
+                        viewModel.feed.acknowledgeJoinError()
+                        scope.launch { drawerState.open() }
                     },
                 )
             },

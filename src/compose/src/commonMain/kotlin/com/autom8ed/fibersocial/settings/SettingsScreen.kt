@@ -29,6 +29,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
+import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.materialIcon
 import androidx.compose.material.icons.materialPath
@@ -66,6 +67,8 @@ fun SettingsScreen(
     onPollCadenceSelected: (PollCadence) -> Unit = {},
     themeMode: ThemeMode? = null,
     onThemeModeSelected: (ThemeMode) -> Unit = {},
+    // Non-null on debug builds only: shows a "Debug panel" entry (issue #207).
+    onOpenDebugPanel: (() -> Unit)? = null,
 ) {
     BackHandler(onBack = onBack)
     Scaffold(
@@ -135,6 +138,20 @@ fun SettingsScreen(
                     // Aligns with the row title (icon 24 + spacing 16 + padding 16).
                     modifier = Modifier.padding(start = 56.dp, end = 16.dp, bottom = 12.dp),
                 )
+                HorizontalDivider()
+            }
+            onOpenDebugPanel?.let { openDebug ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(onClick = openDebug, onClickLabel = "Open debug panel", role = Role.Button)
+                        .padding(horizontal = 16.dp, vertical = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(Icons.Default.Build, contentDescription = null)
+                    Spacer(Modifier.width(16.dp))
+                    Text(text = "Debug panel", style = MaterialTheme.typography.bodyLarge)
+                }
                 HorizontalDivider()
             }
             Row(
