@@ -41,7 +41,7 @@ from collections import defaultdict
 MODULE_ROOTS = {
     ":common": [
         "src/common/logic/commonMain/kotlin",
-        "src/common/logic/androidMain/kotlin",
+        "src/platform/android/common/androidMain/kotlin",
     ],
     ":composeApp": [
         "src/compose/src/commonMain/kotlin",
