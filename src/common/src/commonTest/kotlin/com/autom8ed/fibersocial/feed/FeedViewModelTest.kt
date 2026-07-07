@@ -219,6 +219,55 @@ class FeedViewModelTest {
     }
 
     @Test
+    fun `selectGroup switches to the new group immediately with blank loading content`() =
+        runTest(UnconfinedTestDispatcher()) {
+            // Issue #214: selecting a group snaps the chrome to it and clears the content
+            // to empty while the new group loads — not the old group's topics under a
+            // spinner. The parked forum-43 fetch lets us observe that intermediate state.
+            val gate = CompletableDeferred<Unit>()
+            val repo = FeedRepository(
+                suspendableRoutingApiClient { url ->
+                    val path = url.encodedPath
+                    when {
+                        path.contains("/current_user") -> CURRENT_USER_JSON
+                        path.contains("memberships") -> """<html><body>
+                            <a href="https://www.ravelry.com/groups/kal-hub">KAL Hub</a>
+                            <a href="https://www.ravelry.com/groups/sock">Sock Society</a>
+                            </body></html>"""
+                        path.contains("/groups/search") -> """{"groups":[
+                            {"id":10,"name":"KAL Hub","permalink":"kal-hub","forum_id":42},
+                            {"id":11,"name":"Sock Society","permalink":"sock","forum_id":43}
+                        ]}"""
+                        path.contains("/forums/43/") -> { gate.await(); topicsJson(200L) }
+                        path.contains("/forums/") -> topicsJson(100L)
+                        path.contains("/topics/") -> topicDetailJson(
+                            path.split("/topics/")[1].replace(".json", "").toLong(),
+                        )
+                        else -> error("Unexpected: $path")
+                    }
+                },
+            )
+            val group2 = Group(id = 11L, name = "Sock Society", permalink = "sock", forumId = 43L)
+            val vm = FeedViewModel(repo, this, FakeGroupOrderStore())
+            vm.load()
+            awaitChildren(coroutineContext[Job]!!)
+            assertIs<FeedState.Loaded>(vm.state.value)
+
+            vm.selectGroup(group2)
+            // The forum-43 fetch is parked: the feed is already Refreshing on the new group
+            // with no items (blank content), before any of group 2's topics have arrived.
+            val switching = assertIs<FeedState.Refreshing>(vm.state.value)
+            assertEquals(group2, switching.stale.selectedGroup)
+            assertEquals(emptyList(), switching.stale.items)
+
+            gate.complete(Unit)
+            awaitChildren(coroutineContext[Job]!!)
+            val loaded = assertIs<FeedState.Loaded>(vm.state.value)
+            assertEquals(group2, loaded.selectedGroup)
+            assertEquals(1, loaded.items.size)
+        }
+
+    @Test
     fun `reorderGroups reorders the drawer and persists the new order`() =
         runTest(UnconfinedTestDispatcher()) {
             val store = FakeGroupOrderStore()
