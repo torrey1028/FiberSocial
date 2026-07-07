@@ -339,7 +339,7 @@ class RavelryApiClientTest {
     @Test
     fun `getTopicPosts returns posts list`() = runTest {
         val client = routingApiClient { postsJson(1L, 2L) }
-        val posts = client.getTopicPosts(42L)
+        val posts = client.getTopicPosts(42L).posts
         assertEquals(2, posts.size)
         assertEquals(1L, posts[0].id)
         assertEquals("<p>Reply 1</p>", posts[0].bodyHtml)
@@ -350,13 +350,13 @@ class RavelryApiClientTest {
     @Test
     fun `getTopicPosts returns empty list when topic has no posts`() = runTest {
         val client = routingApiClient { """{"posts":[]}""" }
-        assertEquals(emptyList(), client.getTopicPosts(42L))
+        assertEquals(emptyList(), client.getTopicPosts(42L).posts)
     }
 
     @Test
     fun `getTopicPosts defaults to empty when the response omits the posts field entirely`() = runTest {
         val client = routingApiClient { "{}" }
-        assertEquals(emptyList(), client.getTopicPosts(42L))
+        assertEquals(emptyList(), client.getTopicPosts(42L).posts)
     }
 
     @Test
@@ -383,7 +383,7 @@ class RavelryApiClientTest {
             """{"posts":[{"id":1,"body_html":"<p>Reply</p>","user":{"username":"user1"}}],
                 "vote_totals":{"1":{"love":3}},"user_votes":{"1":["love"]}}"""
         }
-        val posts = client.getTopicPosts(42L)
+        val posts = client.getTopicPosts(42L).posts
         assertEquals(mapOf("love" to 3), posts[0].voteTotals)
         assertEquals(listOf("love"), posts[0].userVotes)
     }
@@ -398,7 +398,7 @@ class RavelryApiClientTest {
                "vote_totals":{"1":{"interesting":1,"agree":2},"2":{"funny":1}},
                "user_votes":{"1":["agree"],"2":[]}}"""
         }
-        val posts = client.getTopicPosts(42L)
+        val posts = client.getTopicPosts(42L).posts
         assertEquals(mapOf("interesting" to 1, "agree" to 2), posts[0].voteTotals)
         assertEquals(listOf("agree"), posts[0].userVotes)
         assertEquals(mapOf("funny" to 1), posts[1].voteTotals)
@@ -408,9 +408,53 @@ class RavelryApiClientTest {
     @Test
     fun `getTopicPosts defaults vote fields to empty when absent`() = runTest {
         val client = routingApiClient { postsJson(1L) }
-        val posts = client.getTopicPosts(42L)
+        val posts = client.getTopicPosts(42L).posts
         assertEquals(emptyMap(), posts[0].voteTotals)
         assertEquals(emptyList(), posts[0].userVotes)
+    }
+
+    @Test
+    fun `getTopicPosts sends the requested page and page_size`() = runTest {
+        var capturedPage: String? = null
+        var capturedPageSize: String? = null
+        val engine = MockEngine { request ->
+            capturedPage = request.url.parameters["page"]
+            capturedPageSize = request.url.parameters["page_size"]
+            respond(postsJson(1L), HttpStatusCode.OK,
+                headersOf("Content-Type", ContentType.Application.Json.toString()))
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        RavelryApiClient(httpClient, FakeFeedTokenStorage()).getTopicPosts(42L, page = 3, pageSize = 25)
+        assertEquals("3", capturedPage)
+        assertEquals("25", capturedPageSize)
+    }
+
+    @Test
+    fun `getTopicPosts reports hasMore when the paginator has further pages`() = runTest {
+        val client = routingApiClient {
+            """{"posts":[{"id":1}],"paginator":{"page":1,"page_count":4}}"""
+        }
+        val page = client.getTopicPosts(42L, page = 1)
+        assertEquals(1, page.page)
+        assertTrue(page.hasMore)
+    }
+
+    @Test
+    fun `getTopicPosts reports no more once the paginator is on its last page`() = runTest {
+        val client = routingApiClient {
+            """{"posts":[{"id":9}],"paginator":{"page":4,"page_count":4}}"""
+        }
+        val page = client.getTopicPosts(42L, page = 4)
+        assertEquals(4, page.page)
+        assertFalse(page.hasMore)
+    }
+
+    @Test
+    fun `getTopicPosts reports no more when the response omits a paginator`() = runTest {
+        val client = routingApiClient { postsJson(1L) }
+        assertFalse(client.getTopicPosts(42L).hasMore)
     }
 
     @Test

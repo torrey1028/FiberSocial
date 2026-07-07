@@ -51,8 +51,10 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -91,6 +93,13 @@ fun TopicDetailScreen(
     onSendReply: (String) -> Unit = {},
     onReplySent: () -> Unit = {},
     onRefresh: () -> Unit = {},
+    onLoadMore: () -> Unit = {},
+    // Loads forward pages until the given post number is present, so "jump to last read"
+    // can reach a target deep in a long thread that isn't loaded yet (issue #205).
+    onLoadUntil: (Int) -> Unit = {},
+    // Called with the furthest post number the user scrolled to, as they leave the thread
+    // (issue #206) — drives the read-marker sync and the feed card's unread badge.
+    onMarkRead: (Int) -> Unit = {},
     attachment: ImageAttachmentState = ImageAttachmentState.Idle,
     onImagePicked: (String) -> Unit = {},
     onAttachmentInserted: () -> Unit = {},
@@ -112,9 +121,19 @@ fun TopicDetailScreen(
             onDismiss = onDeleteErrorShown,
         )
     }
+    // Furthest post number the user has scrolled to this visit (issue #206): the read
+    // marker follows how far they actually got, not how many posts the app fetched. A
+    // high-water mark, so scrolling down then back up still counts the deepest post seen.
+    // Reset per topic so a new thread starts from nothing.
+    var furthestSeen by remember(topic.id) { mutableStateOf(0) }
+    // Every way out of the thread (system back, top-bar arrow) syncs the marker first.
+    val handleBack: () -> Unit = {
+        onMarkRead(furthestSeen)
+        onBack()
+    }
     // The system back button must mirror the top-bar back arrow instead of
     // finishing the activity (issue #38).
-    BackHandler(onBack = onBack)
+    BackHandler(onBack = handleBack)
 
     // Pull-to-refresh calls onRefresh(), which re-triggers load(topic.id); that briefly
     // reports TopicDetailState.Loading again. Falling back to the last Loaded snapshot
@@ -152,7 +171,7 @@ fun TopicDetailScreen(
             TopAppBar(
                 title = { Text(topic.groupName) },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
+                    IconButton(onClick = handleBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
@@ -187,15 +206,58 @@ fun TopicDetailScreen(
     ) { padding ->
         val listState = rememberLazyListState()
         val jumpScope = rememberCoroutineScope()
-        // The first unread post's index in the list: the header is index 0 and posts
-        // follow, so post number N sits at index N (clamped to what actually loaded —
-        // only the first page of a long thread is fetched). Issue #185.
-        val jumpTarget = topic.firstUnreadPostNumber?.let { firstUnread ->
-            (displayState as? TopicDetailState.Loaded)?.let { firstUnread.coerceIn(0, it.posts.size) }
+        // "Jump to last read" targets the first unread post's number (issue #185): the
+        // header is list index 0 and posts follow, so post number N is list index N.
+        val firstUnread = topic.firstUnreadPostNumber
+        // A deep jump may have to wait for pages to load in before it can scroll there
+        // (issue #205); while it does, the button shows a spinner and this stays true.
+        var pendingJump by remember(topic.id) { mutableStateOf(false) }
+        // Show the jump button until the user has scrolled down to (or past) that post,
+        // or while a deep jump is still loading the pages in between.
+        val showJump by remember(firstUnread) {
+            derivedStateOf {
+                firstUnread != null && (pendingJump || listState.firstVisibleItemIndex < firstUnread)
+            }
         }
-        // Show the jump button until the user has scrolled down to (or past) that post.
-        val showJump by remember(jumpTarget) {
-            derivedStateOf { jumpTarget != null && listState.firstVisibleItemIndex < jumpTarget }
+        // Load the next page as the user nears the end of the thread (issue #202). The
+        // ViewModel no-ops unless there's actually more to load and none is already in
+        // flight, so firing a little early (within a few items) just keeps scrolling smooth.
+        val loaded = displayState as? TopicDetailState.Loaded
+        val shouldLoadMore by remember(loaded?.hasMore, loaded?.isLoadingMore) {
+            derivedStateOf {
+                if (loaded == null || !loaded.hasMore || loaded.isLoadingMore) return@derivedStateOf false
+                val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+                val total = listState.layoutInfo.totalItemsCount
+                total > 0 && lastVisible >= total - 3
+            }
+        }
+        LaunchedEffect(shouldLoadMore) {
+            if (shouldLoadMore) onLoadMore()
+        }
+        // Advance the furthest-seen high-water mark as the user scrolls (issue #206). The
+        // header is index 0 and posts occupy 1..postCount, so a last-visible index of N
+        // means post N was shown; clamp so the trailing footer row (index postCount+1)
+        // doesn't over-count. rememberUpdatedState keeps the post count current as pages
+        // load without restarting the snapshot collector.
+        val postCount = (displayState as? TopicDetailState.Loaded)?.posts?.size ?: 0
+        val postCountState = rememberUpdatedState(postCount)
+        LaunchedEffect(listState, topic.id) {
+            snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0 }
+                .collect { lastIndex ->
+                    val seen = lastIndex.coerceIn(0, postCountState.value)
+                    if (seen > furthestSeen) furthestSeen = seen
+                }
+        }
+        // Finish a pending deep jump once the load-more driving it settles — reached the
+        // target, hit the end of the thread, or errored (all clear isLoadingMore). Land on
+        // the target (or as far as we got) and drop the spinner (issue #205). Uses
+        // scrollToItem, not animateScrollToItem: animating across hundreds of posts would
+        // compose and parse every one it flies past (janky); a jump should land instantly.
+        LaunchedEffect(pendingJump, loaded?.isLoadingMore) {
+            if (pendingJump && firstUnread != null && loaded?.isLoadingMore == false) {
+                listState.scrollToItem(firstUnread.coerceIn(0, postCount))
+                pendingJump = false
+            }
         }
         Box(modifier = Modifier.padding(padding)) {
         PullToRefreshBox(
@@ -275,15 +337,59 @@ fun TopicDetailScreen(
                         HorizontalDivider()
                     }
                 }
+
+                // Bottom-of-thread affordance (issue #202): a spinner while the next page
+                // loads, then a one-time "all caught up" marker once the newest post is in.
+                if (displayState is TopicDetailState.Loaded && displayState.posts.isNotEmpty()) {
+                    item(key = "footer") {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 20.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            when {
+                                displayState.isLoadingMore ->
+                                    CircularProgressIndicator(modifier = Modifier.size(28.dp))
+                                !displayState.hasMore -> Text(
+                                    text = "You're all caught up",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                }
             }
         }
-        if (showJump && jumpTarget != null) {
+        if (showJump && firstUnread != null) {
             ExtendedFloatingActionButton(
-                onClick = { jumpScope.launch { listState.animateScrollToItem(jumpTarget) } },
+                onClick = {
+                    if (pendingJump) return@ExtendedFloatingActionButton
+                    val count = loaded?.posts?.size ?: 0
+                    if (count >= firstUnread || loaded?.hasMore != true) {
+                        // Target already loaded (or nothing more to load): scroll now.
+                        jumpScope.launch { listState.animateScrollToItem(firstUnread.coerceIn(0, count)) }
+                    } else {
+                        // Target is pages away: load forward, then the effect above scrolls.
+                        pendingJump = true
+                        onLoadUntil(firstUnread)
+                    }
+                },
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .padding(bottom = 16.dp),
-            ) { Text("Jump to last read") }
+            ) {
+                if (pendingJump) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    )
+                } else {
+                    Text("Jump to last read")
+                }
+            }
         }
         }
     }

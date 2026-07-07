@@ -66,6 +66,13 @@ private const val WWW_URL = "https://www.ravelry.com"
  * larger one means fewer round-trips while the user scrolls.
  */
 const val DEFAULT_FEED_PAGE_SIZE = 25
+
+/**
+ * Posts requested per [RavelryApiClient.getTopicPosts] page (issue #202). Same trade-off
+ * as [DEFAULT_FEED_PAGE_SIZE]: smaller pages show the thread faster and page in more
+ * often; larger pages mean fewer round-trips as the user scrolls a long thread.
+ */
+const val DEFAULT_POSTS_PAGE_SIZE = 25
 // coerceInputValues: a defensive safety net for when Ravelry returns an explicit JSON null
 // for a field our model declares non-nullable-with-default. kotlinx.serialization applies a
 // field default only when the key is ABSENT — an explicit null otherwise throws — so this
@@ -507,29 +514,53 @@ class RavelryApiClient(
     }
 
     /**
-     * Returns all posts (replies) for a topic, ordered oldest-first. Each post's
-     * [Post.voteTotals] and [Post.userVotes] are populated with its current reaction state.
+     * Returns one page of a topic's posts (replies), ordered oldest-first, so post
+     * position within the accumulated list matches Ravelry's 1-based post number (which
+     * [Topic.lastRead] indexes into). Each post's [Post.voteTotals] and [Post.userVotes]
+     * are populated with its current reaction state.
+     *
+     * Paginated (issue #202/#205): long threads load a page at a time as the user scrolls
+     * rather than all at once, and the returned [PostsPage.hasMore] drives the "all caught
+     * up" end marker. Page [page] with size [pageSize] contains post numbers
+     * `((page-1)*pageSize, page*pageSize]`, so the page holding a given post number `n` is
+     * `ceil(n / pageSize)`.
      *
      * @param topicId Ravelry topic ID.
+     * @param page 1-based page number.
+     * @param pageSize Posts per page.
      */
-    suspend fun getTopicPosts(topicId: Long): List<Post> {
+    suspend fun getTopicPosts(
+        topicId: Long,
+        page: Int = 1,
+        pageSize: Int = DEFAULT_POSTS_PAGE_SIZE,
+    ): PostsPage {
         val raw = authenticatedRequest {
             httpClient.get("$BASE_URL/topics/$topicId/posts.json") {
                 header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
-                url.parameters.append("include", "vote_totals user_votes")
+                url.parameters.apply {
+                    append("include", "vote_totals user_votes")
+                    append("page", page.toString())
+                    append("page_size", pageSize.toString())
+                }
             }
         }
         val response = lenientJson.decodeFromString<PostsResponse>(raw)
         // Unlike forum_posts/vote, this endpoint doesn't nest vote_totals/user_votes inside
         // each post — it returns them as separate maps keyed by post ID (as a string),
         // alongside the posts array. Merge them onto their matching post here.
-        return response.posts.map { post ->
+        val posts = response.posts.map { post ->
             val postKey = post.id.toString()
             post.copy(
                 voteTotals = response.voteTotals[postKey] ?: emptyMap(),
                 userVotes = response.userVotes[postKey] ?: emptyList(),
             )
         }
+        val paginator = response.paginator
+        return PostsPage(
+            posts = posts,
+            page = paginator?.page ?: page,
+            hasMore = paginator != null && paginator.page < paginator.pageCount,
+        )
     }
 
     /**
@@ -986,6 +1017,7 @@ class RavelryApiClient(
         val posts: List<Post> = emptyList(),
         @SerialName("vote_totals") val voteTotals: Map<String, Map<String, Int>> = emptyMap(),
         @SerialName("user_votes") val userVotes: Map<String, List<String>> = emptyMap(),
+        val paginator: Paginator? = null,
     )
     @Serializable private data class ForumPostResponse(@SerialName("forum_post") val forumPost: Post)
     @Serializable private data class TopicCreateResponse(val topic: Topic)
@@ -1040,6 +1072,19 @@ data class VoteResult(
  */
 data class TopicsPage(
     val topics: List<Topic>,
+    val page: Int,
+    val hasMore: Boolean,
+)
+
+/**
+ * One page of a topic's posts, as returned by [RavelryApiClient.getTopicPosts].
+ *
+ * @property posts This page's posts, oldest-first.
+ * @property page The 1-based page number these posts came from.
+ * @property hasMore Whether requesting `page + 1` would return further posts.
+ */
+data class PostsPage(
+    val posts: List<Post>,
     val page: Int,
     val hasMore: Boolean,
 )
