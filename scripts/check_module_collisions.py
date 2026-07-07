@@ -40,8 +40,8 @@ from collections import defaultdict
 # ship in the APK, so they're intentionally excluded.
 MODULE_ROOTS = {
     ":common": [
-        "src/common/src/commonMain/kotlin",
-        "src/common/src/androidMain/kotlin",
+        "src/common/logic/commonMain/kotlin",
+        "src/common/logic/androidMain/kotlin",
     ],
     ":composeApp": [
         "src/compose/src/commonMain/kotlin",

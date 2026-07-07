@@ -15,7 +15,7 @@ For the full reference consult the **test-and-coverage** skill; this agent is th
 
 **Gradle root is `src/platform/android/`, NOT the repo root.** Every `./gradlew` runs from there. Tests live in five roots:
 
-- `src/common/src/commonTest/` — pure-Kotlin (JVM + K/N), incl. the MockEngine API tests
+- `src/common/logic/commonTest/` — pure-Kotlin (JVM + K/N), incl. the MockEngine API tests
 - `src/compose/src/androidUnitTest/` — Robolectric Compose UI tests
 - `src/compose/src/iosTest/`, `src/platform/android/app/src/test/`, `src/platform/ios/FiberSocialTests/` (hosted XCTest)
 
@@ -85,7 +85,7 @@ grep -n 'method name="getUserProfile"' \
 
 ## Writing a real test — MockEngine API tests
 
-The central Ktor `RavelryApiClient` is tested with a `MockEngine` in `src/common/src/commonTest/kotlin/com/autom8ed/fibersocial/feed/RavelryApiClientTest.kt`. Shared fakes live beside it in `Fakes.kt` — **reuse them, don't hand-roll a client**:
+The central Ktor `RavelryApiClient` is tested with a `MockEngine` in `src/common/logic/commonTest/kotlin/com/autom8ed/fibersocial/feed/RavelryApiClientTest.kt`. Shared fakes live beside it in `Fakes.kt` — **reuse them, don't hand-roll a client**:
 
 - `routingApiClient { path -> jsonString }` — route the response by request path; token storage defaults to `FakeFeedTokenStorage` (a non-expiring `AuthToken` with a session cookie).
 - `routingApiClientCapturing(onRequest = { url -> … }) { path -> json }` — same, but captures each request `Url` so you can assert the endpoint / query params hit (e.g. `assertEquals("/people/yarnie.json", captured?.encodedPath)`).

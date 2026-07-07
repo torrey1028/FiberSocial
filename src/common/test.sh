@@ -12,8 +12,8 @@ REPO="torrey1028/FiberSocial"
 cd "$COMMON_DIR/../platform/android"
 ./gradlew :common:jvmCoverageReport :common:createDebugUnitTestCoverageReport
 
-JVM_REPORT="$COMMON_DIR/build/reports/jacoco/jvmCoverageReport/report.xml"
-ANDROID_REPORT="$COMMON_DIR/build/reports/coverage/test/debug/report.xml"
+JVM_REPORT="$COMMON_DIR/logic/build/reports/jacoco/jvmCoverageReport/report.xml"
+ANDROID_REPORT="$COMMON_DIR/logic/build/reports/coverage/test/debug/report.xml"
 
 if ! command -v python3 >/dev/null 2>&1; then
     echo "WARNING: python3 not found — skipping coverage summary." >&2
@@ -32,7 +32,7 @@ done
 # successful main-branch run of tests.yml). Downloads are cached per run ID —
 # the baseline only changes when a new main run succeeds. Skipped when gh is
 # unavailable/unauthenticated/offline or the artifacts don't exist yet.
-BASELINE_DIR="$COMMON_DIR/build/coverage-baseline"
+BASELINE_DIR="$COMMON_DIR/logic/build/coverage-baseline"
 JVM_BASELINE=""
 ANDROID_BASELINE=""
 if command -v gh >/dev/null 2>&1; then

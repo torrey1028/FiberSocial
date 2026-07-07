@@ -49,8 +49,8 @@ scripts re-runs those tests and additionally emits Jacoco XML.
 
 TWO independently-gated Jacoco reports — compare BOTH:
 
-- JVM: `src/common/build/reports/jacoco/jvmCoverageReport/report.xml`
-- Android/Robolectric: `src/common/build/reports/coverage/test/debug/report.xml`
+- JVM: `src/common/logic/build/reports/jacoco/jvmCoverageReport/report.xml`
+- Android/Robolectric: `src/common/logic/build/reports/coverage/test/debug/report.xml`
 
 `common/test.sh` invokes the same script CI uses:
 
@@ -66,7 +66,7 @@ python3 scripts/compare_coverage.py <LABEL> <report.xml> [baseline.xml]
   `0.01` (1 point).
 - **Baseline = the artifact from the latest *successful* `main` run of `tests.yml`**
   (downloaded via `gh`), NOT current main's source. `common/test.sh` fetches it into
-  `src/common/build/coverage-baseline/`; if `gh` is offline/unauthenticated it runs
+  `src/common/logic/build/coverage-baseline/`; if `gh` is offline/unauthenticated it runs
   with no baseline (prints percentages, exit 0).
 - **Pass/fail is decided on the report-wide AGGREGATE** `INSTRUCTION`/`BRANCH` ratio
   (total covered ÷ total, per metric) vs the baseline, within `allowed_drop`. The

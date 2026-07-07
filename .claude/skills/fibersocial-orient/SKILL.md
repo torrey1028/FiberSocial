@@ -20,7 +20,7 @@ them out of the android dir:
 | Gradle module | Actual directory | What it is |
 |---|---|---|
 | `:app` | `src/platform/android/app/` | Android application shell (`MainActivity`) |
-| `:common` | `src/common/` (repathed) | Shared non-UI Kotlin (net, auth, feed API, models, html parsing) |
+| `:common` | `src/common/logic/` (repathed) | Shared non-UI Kotlin (net, auth, feed API, models, html parsing) |
 | `:composeApp` | `src/compose/` (repathed) | Shared Compose Multiplatform UI |
 
 KMP targets & source sets (both shared modules):
