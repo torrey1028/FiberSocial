@@ -14,6 +14,8 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 
@@ -61,6 +63,10 @@ class FeedRepositoryTest {
         // requests — rate-limit bait, and a burst of concurrent 401s races the token
         // refresh. EventSyncRunner already caps its own fan-out at 4 for the same reason.
         val topicIds = (1L..10L).toList()
+        // MockEngine dispatches concurrent requests on real threads (not the runTest
+        // virtual scheduler), so plain vars here would race — a Mutex-guarded update
+        // avoids a flaky/inflated peak reading that isn't actually the semaphore's fault.
+        val counterLock = Mutex()
         var current = 0
         var peak = 0
         val engine = MockEngine { request ->
@@ -72,10 +78,9 @@ class FeedRepositoryTest {
                     headersOf("Content-Type", ContentType.Application.Json.toString()),
                 )
                 path.contains("/topics/") -> {
-                    current++
-                    peak = maxOf(peak, current)
+                    counterLock.withLock { current++; peak = maxOf(peak, current) }
                     delay(10)
-                    current--
+                    counterLock.withLock { current-- }
                     val id = path.substringAfterLast("/").removeSuffix(".json").toLong()
                     respond(
                         topicDetailJson(id = id),

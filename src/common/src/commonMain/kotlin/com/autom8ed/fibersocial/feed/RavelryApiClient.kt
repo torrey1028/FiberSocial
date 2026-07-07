@@ -158,12 +158,6 @@ class RavelryApiClient(
     private fun forbiddenMessage(response: HttpResponse): String =
         "Permission denied for ${response.request.url.encodedPath}"
 
-    // Concurrent requests that all hit the proactive-expiry check or a 401 at once would
-    // otherwise each race their own doRefresh() call with no lock between them. Serializing
-    // behind a mutex means only one refresh actually runs; the rest wait for it, then see
-    // the token has already moved on and skip redundantly refreshing again.
-    private val refreshMutex = Mutex()
-
     private suspend fun tryRefresh() {
         val doRefresh = refreshToken ?: throw SessionExpiredException("Session expired")
         val tokenBeforeWaiting = tokenStorage.load()?.accessToken
@@ -1087,6 +1081,19 @@ class RavelryApiClient(
         val patterns: PatternInfo? = null,
     ) {
         val patternOrThrow: PatternInfo get() = pattern ?: patterns ?: error("No pattern in response")
+    }
+
+    companion object {
+        // Process-wide, not per-instance: the foreground UI and a background sync
+        // (EventSyncWorker/EventSync) each construct their OWN RavelryApiClient against
+        // the SAME underlying token storage — e.g. toggling event attendance in the
+        // foreground UI deliberately spins up a concurrent background sync while the
+        // foreground client is still in active use. A per-instance mutex only serializes
+        // refreshes within one instance, so two instances could still race doRefresh()
+        // against each other with the same (possibly single-use/rotating) refresh token.
+        // Sharing one mutex across every instance is what actually delivers "only one
+        // refresh runs" app-wide, not just within whichever client happened to originate it.
+        private val refreshMutex = Mutex()
     }
 }
 
