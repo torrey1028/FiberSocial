@@ -421,6 +421,18 @@ fun FeedScreen(
         }
     }
 
+    // Deleting the opening post deletes the whole topic on Ravelry (issue #247): close
+    // the now-gone thread view immediately instead of leaving it open, and refresh the
+    // feed so the stale card disappears without waiting for a manual pull-to-refresh.
+    LaunchedEffect(Unit) {
+        viewModel.topicDetail.topicDeleted.collect {
+            viewModel.replyImage.reset()
+            viewModel.projectPicker.dismiss()
+            selectedTopic = null
+            viewModel.feed.refresh()
+        }
+    }
+
     // One unwrap for every stale-capable field: Loaded directly, Refreshing via
     // its stale snapshot, anything else has no data yet.
     val loaded = when (val s = state) {
