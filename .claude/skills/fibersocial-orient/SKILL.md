@@ -74,7 +74,7 @@ looking for the library — it isn't there.
 |---|---|
 | `src/platform/android/settings.gradle.kts` | module→dir repathing; start here to understand layout |
 | `src/platform/android/{build.gradle.kts, app/build.gradle.kts}` | Android build + versionCode/versionName derivation |
-| `src/common/build.gradle.kts` | KMP targets, coverage report tasks |
+| `src/common/logic/build.gradle.kts` | KMP targets, coverage report tasks |
 | `src/compose/build.gradle.kts` | Compose MP source sets |
 | `src/common/.../net/RavelryClients.kt` | manual DI factories |
 | `src/common/.../feed/RavelryApiClient.kt` | THE central API client (~1100 lines; JSON + scraping) |

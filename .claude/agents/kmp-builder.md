@@ -19,7 +19,7 @@ For the full build/run reference consult the **build-and-run** skill; for anythi
 cd /home/betorr/FiberSocial/src/platform/android
 ```
 
-Modules: `:app` → `src/platform/android/app/`, `:common` → `src/common/`, `:composeApp` → `src/compose/`.
+Modules: `:app` → `src/platform/android/app/`, `:common` → `src/common/logic/`, `:composeApp` → `src/compose/`.
 
 ## Fast path — Android build + deploy + observe
 
