@@ -129,6 +129,30 @@ class TopicDetailScreenPullToRefreshTest {
     }
 
     @Test
+    fun `hides the jump button once scrolled past the unread target, well before the thread's true end`() {
+        // On-device review: a long-running historical thread (hundreds of posts over
+        // months) kept the button around — and visually overlapping content — long after
+        // the user had scrolled past the actual unread post, because visibility was
+        // (wrongly) gated on the thread's literal last post instead of the real target.
+        val posts = (1..600L).map { id ->
+            Post(id = id, bodyHtml = "<p>post $id</p>", user = RavelryUser(username = "a"))
+        }
+        val unreadTopic = topic.copy(postCount = 600, unreadCount = 50, firstUnreadPostNumber = 550)
+        compose.setContent {
+            TopicDetailScreen(
+                topic = unreadTopic,
+                postsState = TopicDetailState.Loaded(posts = posts),
+                onBack = {},
+                onVote = { _, _ -> },
+            )
+        }
+
+        compose.onNode(hasScrollAction()).performScrollToNode(hasText("post 555"))
+        compose.waitForIdle()
+        compose.onNodeWithText("Jump to last read").assertDoesNotExist()
+    }
+
+    @Test
     fun `shows the jump button for a fully-read topic that isn't fully visible, targeting the end`() {
         // On-device review of #255/#256 asked for the same button (not a distinct one)
         // to still offer a way to skip to the bottom of a topic with nothing unread, as
