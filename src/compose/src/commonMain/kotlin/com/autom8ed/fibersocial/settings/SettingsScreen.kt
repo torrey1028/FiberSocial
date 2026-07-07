@@ -27,6 +27,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.compose.material.icons.filled.Build
@@ -71,6 +72,33 @@ fun SettingsScreen(
     onOpenDebugPanel: (() -> Unit)? = null,
 ) {
     BackHandler(onBack = onBack)
+    // Sign out is the only other tappable row on this screen and fires on a single tap
+    // with no undo (issue #262) — a fat-finger tap wipes the OAuth session and, via the
+    // login WebView's cookie clear, the Ravelry web session too. Confirm first, matching
+    // the leave-group dialog's pattern in FeedScreen.kt.
+    var confirmingSignOut by rememberSaveable { mutableStateOf(false) }
+    if (confirmingSignOut) {
+        AlertDialog(
+            onDismissRequest = { confirmingSignOut = false },
+            title = { Text("Sign out of FiberSocial?") },
+            text = { Text("You'll need to log in again to use the app.") },
+            confirmButton = {
+                // Tagged (rather than matched by its "Sign out" text alone) since the row
+                // that opened this dialog shares the same label and stays in the semantics
+                // tree behind the dialog, which would otherwise make the two ambiguous.
+                TextButton(
+                    onClick = {
+                        confirmingSignOut = false
+                        onSignOut()
+                    },
+                    modifier = Modifier.testTag("ConfirmSignOut"),
+                ) { Text("Sign out") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmingSignOut = false }) { Text("Cancel") }
+            },
+        )
+    }
     Scaffold(
         topBar = {
             TopAppBar(
@@ -157,7 +185,11 @@ fun SettingsScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable(onClick = onSignOut, onClickLabel = "Sign out", role = Role.Button)
+                    .clickable(
+                        onClick = { confirmingSignOut = true },
+                        onClickLabel = "Sign out",
+                        role = Role.Button,
+                    )
                     .padding(horizontal = 16.dp, vertical = 16.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
