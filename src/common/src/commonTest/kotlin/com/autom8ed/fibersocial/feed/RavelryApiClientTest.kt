@@ -23,6 +23,10 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlinx.coroutines.test.runTest
 import kotlin.time.Clock
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.serialization.json.Json
 
 class RavelryApiClientTest {
@@ -668,6 +672,81 @@ class RavelryApiClientTest {
             refreshToken = { refreshCalled = true })
         client.getCurrentUser()
         assertTrue(refreshCalled)
+    }
+
+    @Test
+    fun `concurrent 401s serialize behind one token refresh instead of one each`() = runTest {
+        // Issue #258: with no lock, N concurrent requests that all 401 at once would each
+        // race their own doRefresh() call. Every request 401s until the token has actually
+        // been swapped to "refreshed-token" — an unserialized refresh would let each of the
+        // 5 concurrent calls below run doRefresh() itself, since none of them would see the
+        // others' in-flight refresh.
+        var refreshCount = 0
+        val storage = FakeFeedTokenStorage()
+        val engine = MockEngine {
+            if (storage.load()?.accessToken != "refreshed-token") {
+                respond("", HttpStatusCode.Unauthorized, headersOf())
+            } else {
+                respond(CURRENT_USER_JSON, HttpStatusCode.OK,
+                    headersOf("Content-Type", ContentType.Application.Json.toString()))
+            }
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val client = RavelryApiClient(httpClient, storage, refreshToken = {
+            refreshCount++
+            // Widens the window so the other concurrent callers actually queue up behind
+            // the lock instead of finishing before the next one starts.
+            delay(10)
+            storage.save(AuthToken("refreshed-token", "test-refresh", Long.MAX_VALUE, "sess=test"))
+        })
+
+        coroutineScope {
+            List(5) { async { client.getCurrentUser() } }.awaitAll()
+        }
+
+        assertEquals(1, refreshCount)
+    }
+
+    @Test
+    fun `concurrent 401s across two separate client instances still serialize behind one refresh`() = runTest {
+        // Issue #258 follow-up: the foreground UI and a background sync (EventSyncWorker
+        // on Android, EventSync on iOS) each construct their OWN RavelryApiClient against
+        // the SAME underlying token storage — e.g. toggling event attendance in the
+        // foreground UI deliberately spins up a concurrent background sync. A mutex scoped
+        // to a single instance wouldn't stop two SEPARATE instances from racing their own
+        // doRefresh() calls against each other; it has to be shared across every instance.
+        var refreshCount = 0
+        val storage = FakeFeedTokenStorage()
+        val engine = MockEngine {
+            if (storage.load()?.accessToken != "refreshed-token") {
+                respond("", HttpStatusCode.Unauthorized, headersOf())
+            } else {
+                respond(CURRENT_USER_JSON, HttpStatusCode.OK,
+                    headersOf("Content-Type", ContentType.Application.Json.toString()))
+            }
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val refreshToken: suspend () -> Unit = {
+            refreshCount++
+            delay(10)
+            storage.save(AuthToken("refreshed-token", "test-refresh", Long.MAX_VALUE, "sess=test"))
+        }
+        val clientA = RavelryApiClient(httpClient, storage, refreshToken = refreshToken)
+        val clientB = RavelryApiClient(httpClient, storage, refreshToken = refreshToken)
+
+        coroutineScope {
+            listOf(
+                async { clientA.getCurrentUser() },
+                async { clientB.getCurrentUser() },
+                async { clientA.getCurrentUser() },
+            ).awaitAll()
+        }
+
+        assertEquals(1, refreshCount)
     }
 
     @Test

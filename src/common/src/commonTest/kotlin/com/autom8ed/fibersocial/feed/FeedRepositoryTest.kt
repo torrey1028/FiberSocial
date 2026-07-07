@@ -1,11 +1,23 @@
 package com.autom8ed.fibersocial.feed
 
+import io.ktor.client.HttpClient
+import io.ktor.client.engine.mock.MockEngine
+import io.ktor.client.engine.mock.respond
+import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.http.ContentType
+import io.ktor.http.HttpStatusCode
+import io.ktor.http.headersOf
+import io.ktor.serialization.kotlinx.json.json
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.Json
 
 class FeedRepositoryTest {
     private val group = com.autom8ed.fibersocial.feed.models.Group(
@@ -43,6 +55,51 @@ class FeedRepositoryTest {
 
     private suspend fun FeedRepository.singlePageItems(group: com.autom8ed.fibersocial.feed.models.Group = this@FeedRepositoryTest.group) =
         getFeedItemsPage(group, page = 1).items
+
+    @Test
+    fun `getFeedItemsPage caps concurrent topic-detail fetches at 4`() = runTest {
+        // Issue #258: a group page fans out one getTopicDetail request per topic with no
+        // cap, so an image-heavy group with many topics fired a burst of simultaneous
+        // requests — rate-limit bait, and a burst of concurrent 401s races the token
+        // refresh. EventSyncRunner already caps its own fan-out at 4 for the same reason.
+        val topicIds = (1L..10L).toList()
+        // MockEngine dispatches concurrent requests on real threads (not the runTest
+        // virtual scheduler), so plain vars here would race — a Mutex-guarded update
+        // avoids a flaky/inflated peak reading that isn't actually the semaphore's fault.
+        val counterLock = Mutex()
+        var current = 0
+        var peak = 0
+        val engine = MockEngine { request ->
+            val path = request.url.encodedPath
+            when {
+                path.contains("/forums/") -> respond(
+                    topicsJson(*topicIds.toLongArray()),
+                    HttpStatusCode.OK,
+                    headersOf("Content-Type", ContentType.Application.Json.toString()),
+                )
+                path.contains("/topics/") -> {
+                    counterLock.withLock { current++; peak = maxOf(peak, current) }
+                    delay(10)
+                    counterLock.withLock { current-- }
+                    val id = path.substringAfterLast("/").removeSuffix(".json").toLong()
+                    respond(
+                        topicDetailJson(id = id),
+                        HttpStatusCode.OK,
+                        headersOf("Content-Type", ContentType.Application.Json.toString()),
+                    )
+                }
+                else -> error("Unexpected: $path")
+            }
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val repo = FeedRepository(RavelryApiClient(httpClient, FakeFeedTokenStorage()))
+
+        repo.getFeedItemsPage(group, page = 1)
+
+        assertTrue(peak <= 4, "peak concurrent topic-detail requests was $peak, expected <= 4")
+    }
 
     @Test
     fun `getFeedItemsPage lists a topic with images like any other topic`() = runTest {
