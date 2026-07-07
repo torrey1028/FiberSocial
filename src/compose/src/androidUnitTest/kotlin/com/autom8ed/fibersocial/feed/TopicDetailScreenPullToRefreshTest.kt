@@ -6,6 +6,7 @@ import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeDown
@@ -125,6 +126,48 @@ class TopicDetailScreenPullToRefreshTest {
         compose.onNode(hasScrollAction()).performScrollToNode(hasText("three"))
         compose.waitForIdle()
         compose.onNodeWithText("Jump to last read").assertDoesNotExist()
+    }
+
+    @Test
+    fun `shows the jump button for a fully-read topic that isn't fully visible, targeting the end`() {
+        // On-device review of #255/#256 asked for the same button (not a distinct one)
+        // to still offer a way to skip to the bottom of a topic with nothing unread, as
+        // long as the thread isn't already fully on screen — visually and behaviorally
+        // identical to the unread case, just aimed at the last post instead.
+        val posts = (1..60L).map { id ->
+            Post(id = id, bodyHtml = "<p>post $id</p>", user = RavelryUser(username = "a"))
+        }
+        val readTopic = topic.copy(postCount = 60, unreadCount = 0, firstUnreadPostNumber = null)
+        compose.setContent {
+            TopicDetailScreen(
+                topic = readTopic,
+                postsState = TopicDetailState.Loaded(posts = posts),
+                onBack = {},
+                onVote = { _, _ -> },
+            )
+        }
+
+        compose.onNodeWithText("Jump to last read").assertIsDisplayed()
+    }
+
+    @Test
+    fun `tapping the jump button on a fully-read topic scrolls to the last post`() {
+        val posts = (1..60L).map { id ->
+            Post(id = id, bodyHtml = "<p>post $id</p>", user = RavelryUser(username = "a"))
+        }
+        val readTopic = topic.copy(postCount = 60, unreadCount = 0, firstUnreadPostNumber = null)
+        compose.setContent {
+            TopicDetailScreen(
+                topic = readTopic,
+                postsState = TopicDetailState.Loaded(posts = posts, hasMore = false),
+                onBack = {},
+                onVote = { _, _ -> },
+            )
+        }
+
+        compose.onNodeWithText("Jump to last read").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText("post 60").assertIsDisplayed()
     }
 
     @Test

@@ -250,24 +250,30 @@ fun TopicDetailScreen(
                 .collect { (index, offset) -> onScrollPositionChanged(index, offset) }
         }
         val jumpScope = rememberCoroutineScope()
-        // "Jump to last read" targets the first unread post's number (issue #185): the
-        // header is list index 0 and posts follow, so post number N is list index N.
+        // "Jump to last read" targets the first unread post's number when there is one
+        // (issue #185); for a topic with nothing unread, it targets the very last post
+        // instead (issue #255 follow-up) — same button, same label, same behavior from
+        // the user's point of view either way: it always jumps toward the bottom of
+        // whatever's still unseen. The header is list index 0 and posts follow, so post
+        // number N is list index N.
         val firstUnread = topic.firstUnreadPostNumber
+        val jumpTarget = firstUnread ?: topic.postCount
         // A deep jump may have to wait for pages to load in before it can scroll there
         // (issue #205); while it does, the button shows a spinner and this stays true.
         var pendingJump by remember(topic.id) { mutableStateOf(false) }
         // Show the jump button until the topic's very LAST post is already visible on
         // screen, or while a deep jump is still loading the pages in between. Gated on
-        // whether the topic's LAST post (postCount) is visible, not specifically the
-        // unread target (issue #255: "you can see the whole topic" — the complaint was
-        // that the whole thread already fit on screen, making "jump" meaningless,
-        // regardless of exactly where the unread post happens to sit). Checking against
-        // firstUnread instead would falsely hide the button for a topic where nothing
-        // has ever been read (firstUnread == post 1): post 1 is trivially visible the
-        // instant the screen opens even when the thread is long and mostly unseen.
-        val showJump by remember(firstUnread) {
+        // whether the topic's LAST post (postCount) is visible, not on where the unread
+        // target sits (issue #255: "you can see the whole topic" — the complaint was that
+        // the whole thread already fit on screen, making "jump" meaningless, regardless of
+        // exactly where the unread post happens to sit, or whether there's an unread post
+        // at all). Checking against firstUnread instead would falsely hide the button for
+        // a topic where nothing has ever been read (firstUnread == post 1): post 1 is
+        // trivially visible the instant the screen opens even when the thread is long and
+        // mostly unseen.
+        val showJump by remember(jumpTarget) {
             derivedStateOf {
-                if (firstUnread == null || markedAllRead) return@derivedStateOf false
+                if (markedAllRead) return@derivedStateOf false
                 if (pendingJump) return@derivedStateOf true
                 val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
                 lastVisible < topic.postCount
@@ -308,8 +314,8 @@ fun TopicDetailScreen(
         // scrollToItem, not animateScrollToItem: animating across hundreds of posts would
         // compose and parse every one it flies past (janky); a jump should land instantly.
         LaunchedEffect(pendingJump, loaded?.isLoadingMore) {
-            if (pendingJump && firstUnread != null && loaded?.isLoadingMore == false) {
-                listState.scrollToItem(firstUnread.coerceIn(0, postCount))
+            if (pendingJump && loaded?.isLoadingMore == false) {
+                listState.scrollToItem(jumpTarget.coerceIn(0, postCount))
                 pendingJump = false
             }
         }
@@ -416,18 +422,18 @@ fun TopicDetailScreen(
                 }
             }
         }
-        if (showJump && firstUnread != null) {
+        if (showJump) {
             ExtendedFloatingActionButton(
                 onClick = {
                     if (pendingJump) return@ExtendedFloatingActionButton
                     val count = loaded?.posts?.size ?: 0
-                    if (count >= firstUnread || loaded?.hasMore != true) {
+                    if (count >= jumpTarget || loaded?.hasMore != true) {
                         // Target already loaded (or nothing more to load): scroll now.
-                        jumpScope.launch { listState.animateScrollToItem(firstUnread.coerceIn(0, count)) }
+                        jumpScope.launch { listState.animateScrollToItem(jumpTarget.coerceIn(0, count)) }
                     } else {
                         // Target is pages away: load forward, then the effect above scrolls.
                         pendingJump = true
-                        onLoadUntil(firstUnread)
+                        onLoadUntil(jumpTarget)
                     }
                 },
                 modifier = Modifier
