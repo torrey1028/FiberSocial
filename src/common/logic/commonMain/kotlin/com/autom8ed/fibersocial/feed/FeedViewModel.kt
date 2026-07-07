@@ -113,6 +113,17 @@ class FeedViewModel(
      *  leave confirmation's spinner (issue #231). */
     val leavingGroupId: StateFlow<Long?> = _leavingGroupId.asStateFlow()
 
+    private val _leaveError = MutableStateFlow<String?>(null)
+
+    /**
+     * Human-readable message from the most recent failed [leaveGroup] call, or null.
+     * A non-session failure previously left the confirmation dialog auto-dismissing as
+     * if the leave had succeeded, with the group silently staying in the drawer and no
+     * indication anything went wrong (issue #263) — this lets the dialog surface the
+     * failure and offer a retry instead.
+     */
+    val leaveError: StateFlow<String?> = _leaveError.asStateFlow()
+
     /**
      * Joins the current user to the group at [permalink] (the app support group, from the
      * drawer's "Join feedback group" button), then reloads so the drawer reflects the new
@@ -150,6 +161,7 @@ class FeedViewModel(
     fun leaveGroup(group: Group) {
         val current = _state.value as? FeedState.Loaded ?: return
         if (_leavingGroupId.value != null) return
+        _leaveError.value = null
         _leavingGroupId.value = group.id
         scope.launch {
             try {
@@ -161,10 +173,16 @@ class FeedViewModel(
                 _sessionExpired.trySend(Unit)
             } catch (e: Exception) {
                 println("FiberSocial: leaveGroup error: ${e.message}")
+                _leaveError.value = e.message ?: "Couldn't leave the group"
             } finally {
                 _leavingGroupId.value = null
             }
         }
+    }
+
+    /** Clears a stale [leaveError] (e.g. when the leave dialog is canceled/dismissed). */
+    fun acknowledgeLeaveError() {
+        _leaveError.value = null
     }
 
     /** Clears a stale [JoinState.Error] (e.g. when the drawer reopens). No-op mid-join. */

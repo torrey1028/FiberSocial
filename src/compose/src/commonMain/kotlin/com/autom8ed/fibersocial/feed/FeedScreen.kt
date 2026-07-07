@@ -369,6 +369,7 @@ fun FeedScreen(
     val eventDetailState by viewModel.eventDetail.state.collectAsState()
     val joinState by viewModel.feed.joinState.collectAsState()
     val leavingGroupId by viewModel.feed.leavingGroupId.collectAsState()
+    val leaveError by viewModel.feed.leaveError.collectAsState()
     // Hoisted above the topic-detail early-return below so the feed's scroll position
     // survives opening a topic and coming back (issue #204): FeedList is removed from
     // composition while a topic is open, so a list state owned by it would reset to top.
@@ -747,6 +748,8 @@ fun FeedScreen(
                 onRefresh = { viewModel.feed.refresh() },
                 onLeaveGroup = { group -> viewModel.feed.leaveGroup(group) },
                 leavingGroupId = leavingGroupId,
+                leaveError = leaveError,
+                onAcknowledgeLeaveError = { viewModel.feed.acknowledgeLeaveError() },
                 onGroupEventsClick = { group ->
                     scope.launch { drawerState.close() }
                     eventsGroup = group
@@ -1129,6 +1132,8 @@ internal fun GroupDrawer(
     onFindGroups: () -> Unit = {},
     onLeaveGroup: (Group) -> Unit = {},
     leavingGroupId: Long? = null,
+    leaveError: String? = null,
+    onAcknowledgeLeaveError: () -> Unit = {},
     isRefreshing: Boolean = false,
     onRefresh: () -> Unit = {},
 ) {
@@ -1136,35 +1141,46 @@ internal fun GroupDrawer(
     var pendingLeave by remember { mutableStateOf<Group?>(null) }
     pendingLeave?.let { group ->
         // Leaving takes a moment (the app re-scrapes memberships), so the dialog stays open
-        // and turns into a spinner until it's done, then auto-dismisses.
+        // and turns into a spinner until it's done. It used to unconditionally auto-dismiss
+        // once the spinner cleared, whether the leave succeeded or failed — a non-session
+        // failure (e.g. a 403 or transient network error) left the group in the drawer with
+        // zero feedback that anything went wrong (issue #263). Now it only auto-dismisses on
+        // success; a failure keeps it open with the error message and a Retry.
         val leaving = leavingGroupId == group.id
         var started by remember(group.id) { mutableStateOf(false) }
         LaunchedEffect(leaving) {
-            if (started && !leaving) pendingLeave = null
+            if (started && !leaving && leaveError == null) pendingLeave = null
         }
         AlertDialog(
             // Can't dismiss mid-leave — the spinner is doing work.
-            onDismissRequest = { if (!leaving) pendingLeave = null },
+            onDismissRequest = {
+                if (!leaving) {
+                    pendingLeave = null
+                    onAcknowledgeLeaveError()
+                }
+            },
             title = { Text("Leave ${group.name}?") },
             text = {
-                if (leaving) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                when {
+                    leaving -> Row(verticalAlignment = Alignment.CenterVertically) {
                         CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
                         Spacer(Modifier.width(12.dp))
                         Text("Leaving ${group.name}…")
                     }
-                } else {
-                    Text("You'll stop seeing this group's topics. You can re-join it from Ravelry.")
+                    leaveError != null -> Text(leaveError, color = MaterialTheme.colorScheme.error)
+                    else -> Text("You'll stop seeing this group's topics. You can re-join it from Ravelry.")
                 }
             },
             confirmButton = {
                 if (!leaving) {
-                    TextButton(onClick = { started = true; onLeaveGroup(group) }) { Text("Leave") }
+                    TextButton(onClick = { started = true; onLeaveGroup(group) }) {
+                        Text(if (leaveError != null) "Retry" else "Leave")
+                    }
                 }
             },
             dismissButton = {
                 if (!leaving) {
-                    TextButton(onClick = { pendingLeave = null }) { Text("Cancel") }
+                    TextButton(onClick = { pendingLeave = null; onAcknowledgeLeaveError() }) { Text("Cancel") }
                 }
             },
         )
@@ -1316,7 +1332,19 @@ internal fun GroupDrawer(
                             // in place of the event badge.
                             reorderMode -> {
                                 {
-                                    IconButton(onClick = { pendingLeave = group }) {
+                                    IconButton(
+                                        onClick = {
+                                            // Clears any leaveError left over from a
+                                            // previous group's dialog that got dismissed
+                                            // without going through Cancel/onDismissRequest
+                                            // (e.g. a deep link tearing the drawer down
+                                            // while an error was showing) — otherwise this
+                                            // fresh dialog for a DIFFERENT group would open
+                                            // already showing that stale error/Retry.
+                                            onAcknowledgeLeaveError()
+                                            pendingLeave = group
+                                        },
+                                    ) {
                                         Icon(
                                             Icons.Default.Delete,
                                             contentDescription = "Leave ${group.name}",

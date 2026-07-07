@@ -4,6 +4,7 @@ import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import com.autom8ed.fibersocial.feed.models.RavelryUser
@@ -32,13 +33,61 @@ class SettingsScreenTest {
     }
 
     @Test
-    fun `sign out row invokes onSignOut`() {
+    fun `tapping sign out opens a confirmation dialog without signing out yet`() {
+        // Issue #262: a single tap must not sign out directly — it's the only other
+        // tappable row on this screen and has no undo.
         var signOuts = 0
         compose.setContent {
             SettingsScreen(user = user, onBack = {}, onSignOut = { signOuts++ })
         }
         compose.onNodeWithText("Sign out").performClick()
+        compose.onNodeWithText("Sign out of FiberSocial?").assertIsDisplayed()
+        compose.runOnIdle { assertEquals(0, signOuts) }
+    }
+
+    @Test
+    fun `confirming the sign out dialog invokes onSignOut`() {
+        var signOuts = 0
+        compose.setContent {
+            SettingsScreen(user = user, onBack = {}, onSignOut = { signOuts++ })
+        }
+        compose.onNodeWithText("Sign out").performClick()
+        compose.onNodeWithTag("ConfirmSignOut").performClick()
         compose.runOnIdle { assertEquals(1, signOuts) }
+        compose.onNodeWithText("Sign out of FiberSocial?").assertDoesNotExist()
+    }
+
+    @Test
+    fun `canceling the sign out dialog does not sign out`() {
+        var signOuts = 0
+        compose.setContent {
+            SettingsScreen(user = user, onBack = {}, onSignOut = { signOuts++ })
+        }
+        compose.onNodeWithText("Sign out").performClick()
+        compose.onNodeWithText("Cancel").performClick()
+        compose.runOnIdle { assertEquals(0, signOuts) }
+        compose.onNodeWithText("Sign out of FiberSocial?").assertDoesNotExist()
+    }
+
+    @Test
+    fun `system back press while the sign out dialog is open does not navigate out of Settings`() {
+        // Regression: BackHandler(onBack = onBack) covering the whole screen was still
+        // enabled while the dialog was up, so a back press invoked onBack directly —
+        // navigating out of Settings with the confirmation dialog left dangling open over
+        // whatever screen came next, instead of the back press being reserved for the
+        // dialog (whose own dismiss-on-back is a framework/library concern, not something
+        // this composable's own BackHandler should also be racing to handle).
+        var signOuts = 0
+        var backs = 0
+        compose.setContent {
+            SettingsScreen(user = user, onBack = { backs++ }, onSignOut = { signOuts++ })
+        }
+        compose.onNodeWithText("Sign out").performClick()
+        compose.runOnIdle { compose.activity.onBackPressedDispatcher.onBackPressed() }
+        compose.runOnIdle {
+            assertEquals(0, signOuts)
+            assertEquals(0, backs)
+        }
     }
 
     @Test
