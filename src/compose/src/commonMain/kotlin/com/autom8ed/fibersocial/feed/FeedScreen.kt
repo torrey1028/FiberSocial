@@ -37,6 +37,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FloatingActionButton
@@ -600,6 +601,7 @@ fun FeedScreen(
 
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
+    val uriHandler = LocalUriHandler.current
 
     CloseDrawerOnBack(drawerState)
 
@@ -626,6 +628,7 @@ fun FeedScreen(
                     viewModel.feed.selectGroup(group)
                 },
                 onReorder = { viewModel.feed.reorderGroups(it) },
+                onFindGroups = { uriHandler.openUri("https://www.ravelry.com/groups/search") },
                 onGroupEventsClick = { group ->
                     scope.launch { drawerState.close() }
                     eventsGroup = group
@@ -935,6 +938,7 @@ internal fun GroupDrawer(
     onGroupEventsClick: (Group) -> Unit,
     onSettingsClick: () -> Unit,
     onReorder: (List<Group>) -> Unit = {},
+    onFindGroups: () -> Unit = {},
 ) {
     // Reordering is an explicit mode (issue #97): outside it the list is locked; inside
     // it each row grows a drag handle, row taps are disabled, and rows can be dragged —
@@ -1096,6 +1100,17 @@ internal fun GroupDrawer(
                                     )
                                 },
                             ),
+                    )
+                }
+                // Discover and join more groups on Ravelry's own search page (issue #232 —
+                // linking out rather than rebuilding search in-app).
+                item(key = "find-groups") {
+                    NavigationDrawerItem(
+                        label = { Text("Find groups") },
+                        selected = false,
+                        onClick = onFindGroups,
+                        icon = { Icon(Icons.Default.Search, contentDescription = null) },
+                        modifier = Modifier.padding(horizontal = 12.dp),
                     )
                 }
                 item(key = "drawer-footer-spacer") { Spacer(Modifier.height(16.dp)) }
