@@ -47,6 +47,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlin.time.Clock
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -158,12 +160,19 @@ class RavelryApiClient(
 
     private suspend fun tryRefresh() {
         val doRefresh = refreshToken ?: throw SessionExpiredException("Session expired")
-        try {
-            doRefresh()
-        } catch (e: SessionExpiredException) {
-            throw e
-        } catch (e: Exception) {
-            throw SessionExpiredException("Token refresh failed: ${e.message}")
+        val tokenBeforeWaiting = tokenStorage.load()?.accessToken
+        refreshMutex.withLock {
+            // Someone else already refreshed while we were waiting for the lock — the
+            // caller's retry will pick up that fresh token, nothing more to do here.
+            val currentToken = tokenStorage.load()?.accessToken
+            if (currentToken != null && currentToken != tokenBeforeWaiting) return
+            try {
+                doRefresh()
+            } catch (e: SessionExpiredException) {
+                throw e
+            } catch (e: Exception) {
+                throw SessionExpiredException("Token refresh failed: ${e.message}")
+            }
         }
     }
 
@@ -1072,6 +1081,19 @@ class RavelryApiClient(
         val patterns: PatternInfo? = null,
     ) {
         val patternOrThrow: PatternInfo get() = pattern ?: patterns ?: error("No pattern in response")
+    }
+
+    companion object {
+        // Process-wide, not per-instance: the foreground UI and a background sync
+        // (EventSyncWorker/EventSync) each construct their OWN RavelryApiClient against
+        // the SAME underlying token storage — e.g. toggling event attendance in the
+        // foreground UI deliberately spins up a concurrent background sync while the
+        // foreground client is still in active use. A per-instance mutex only serializes
+        // refreshes within one instance, so two instances could still race doRefresh()
+        // against each other with the same (possibly single-use/rotating) refresh token.
+        // Sharing one mutex across every instance is what actually delivers "only one
+        // refresh runs" app-wide, not just within whichever client happened to originate it.
+        private val refreshMutex = Mutex()
     }
 }
 

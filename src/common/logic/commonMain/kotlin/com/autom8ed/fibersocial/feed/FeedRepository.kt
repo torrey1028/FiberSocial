@@ -8,6 +8,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 
 /**
  * One page of a single group's feed items, as returned by [FeedRepository.getFeedItemsPage].
@@ -28,6 +30,12 @@ data class FeedItemsPage(
  * @param apiClient Low-level Ravelry HTTP client.
  */
 class FeedRepository(private val apiClient: RavelryApiClient) {
+
+    // A group page fans out one getTopicDetail request per topic (up to ~25) with no cap,
+    // so a single refresh on an image-heavy group could fire two dozen simultaneous
+    // requests — rate-limit bait, and a burst of concurrent 401s races the token refresh.
+    // EventSyncRunner already caps its own fan-out at 4 for the same reason; mirrored here.
+    private val topicFetchConcurrency = Semaphore(4)
 
     /** @see RavelryApiClient.getCurrentUser */
     suspend fun getCurrentUser(): RavelryUser = apiClient.getCurrentUser()
@@ -62,7 +70,11 @@ class FeedRepository(private val apiClient: RavelryApiClient) {
                 // topic for those (issue #185's card renders the summary in full). The
                 // read marker (last_read/latest_reply) rides along on the detail too, so
                 // no extra request is needed for the unread count.
-                async { apiClient.getTopicDetail(topic.id).toFeedItem(group.id, group.name) }
+                async {
+                    topicFetchConcurrency.withPermit {
+                        apiClient.getTopicDetail(topic.id).toFeedItem(group.id, group.name)
+                    }
+                }
             }
             .awaitAll()
             .sortedWith(
