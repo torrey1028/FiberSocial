@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
@@ -60,6 +61,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -137,6 +139,21 @@ fun FeedScreen(
     val eventsState by viewModel.events.state.collectAsState()
     val eventDetailState by viewModel.eventDetail.state.collectAsState()
     val joinState by viewModel.feed.joinState.collectAsState()
+    // Hoisted above the topic-detail early-return below so the feed's scroll position
+    // survives opening a topic and coming back (issue #204): FeedList is removed from
+    // composition while a topic is open, so a list state owned by it would reset to top.
+    // Keyed by the selected group so it resets to the top on a group SWITCH (the new
+    // group is different content) while still surviving a topic open/return within the
+    // same group — without the key, switching groups would leave the list at the old
+    // group's stale scroll offset (and could fire a spurious load-more). `key { … }`
+    // keeps rememberLazyListState's own rememberSaveable, so config-change restore still
+    // works; a plain remember(groupId) would drop it.
+    val selectedGroupId = when (val s = state) {
+        is FeedState.Loaded -> s.selectedGroup?.id
+        is FeedState.Refreshing -> s.stale.selectedGroup?.id
+        else -> null
+    }
+    val feedListState = key(selectedGroupId) { rememberLazyListState() }
     var selectedTopic by remember { mutableStateOf<FeedItem?>(null) }
     var selectedEventPermalink by remember { mutableStateOf<String?>(null) }
     var eventsGroup by remember { mutableStateOf<Group?>(null) }
@@ -544,6 +561,7 @@ fun FeedScreen(
                         hasMore = s.hasMore,
                         loadingMore = s.loadingMore,
                         onLoadMore = { viewModel.feed.loadMore() },
+                        listState = feedListState,
                         onTopicClick = { topic ->
                             // Reset on open as well as on back, so this topic's reply
                             // composer starts from a clean attachment flow no matter how
@@ -575,6 +593,7 @@ fun FeedScreen(
                         hasMore = s.stale.hasMore,
                         loadingMore = s.stale.loadingMore,
                         onLoadMore = { viewModel.feed.loadMore() },
+                        listState = feedListState,
                         onTopicClick = { topic ->
                             // Reset on open as well as on back, so this topic's reply
                             // composer starts from a clean attachment flow no matter how
@@ -1104,16 +1123,15 @@ private fun GroupEventsBadge(count: Int, onClick: () -> Unit) {
 private const val LOAD_MORE_THRESHOLD = 5
 
 @Composable
-private fun FeedList(
+internal fun FeedList(
     items: List<FeedItem>,
     hasMore: Boolean,
     loadingMore: Boolean,
     onLoadMore: () -> Unit,
     modifier: Modifier = Modifier,
+    listState: LazyListState = rememberLazyListState(),
     onTopicClick: (FeedItem) -> Unit,
 ) {
-    val listState = rememberLazyListState()
-
     // Fires onLoadMore once the user has scrolled within LOAD_MORE_THRESHOLD items of the
     // bottom, so the next page arrives before they hit the end (issue #106).
     val shouldLoadMore by remember {

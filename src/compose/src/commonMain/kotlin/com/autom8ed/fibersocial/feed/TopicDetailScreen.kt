@@ -25,6 +25,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
@@ -537,15 +538,55 @@ private fun PostActionErrorDialog(title: String, message: String, onDismiss: () 
 
 @Composable
 private fun VoteRow(post: Post, onVote: (VoteType) -> Unit) {
-    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+    // Declutter (issue #219): only reactions that already have votes are shown; the rest
+    // hide behind a [+] that expands them so the user can add a new reaction type. Order
+    // is always VoteType.entries, so the visible reactions keep their usual arrangement.
+    // When every type already has votes there's nothing to hide, so no [+] appears.
+    var expanded by remember(post.id) { mutableStateOf(false) }
+    val hasHidden = VoteType.entries.any { post.voteCount(it) == 0 }
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         VoteType.entries.forEach { type ->
-            VoteButton(
-                emoji = VOTE_TYPE_EMOJI.getValue(type),
-                count = post.voteCount(type),
-                voted = post.hasVoted(type),
-                onClick = { onVote(type) },
-            )
+            val count = post.voteCount(type)
+            if (count > 0 || expanded) {
+                VoteButton(
+                    emoji = VOTE_TYPE_EMOJI.getValue(type),
+                    count = count,
+                    voted = post.hasVoted(type),
+                    onClick = {
+                        onVote(type)
+                        // A freshly added reaction becomes a visible one — collapse the
+                        // picker so the row settles back to just the used reactions + [+].
+                        if (count == 0) expanded = false
+                    },
+                )
+            }
         }
+        if (hasHidden) {
+            AddReactionButton(expanded = expanded, onClick = { expanded = !expanded })
+        }
+    }
+}
+
+/** The [+]/[×] pill that reveals or hides the not-yet-used reactions (issue #219). */
+@Composable
+private fun AddReactionButton(expanded: Boolean, onClick: () -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+    ) {
+        Icon(
+            imageVector = if (expanded) Icons.Default.Close else Icons.Default.Add,
+            contentDescription = if (expanded) "Hide reactions" else "Add a reaction",
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(18.dp),
+        )
     }
 }
 
