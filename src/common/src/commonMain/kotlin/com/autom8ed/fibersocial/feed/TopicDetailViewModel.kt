@@ -104,6 +104,18 @@ sealed class EditState {
 }
 
 /**
+ * A remembered scroll position within a topic's reply thread, in
+ * `androidx.compose.foundation.lazy.LazyListState` terms (first visible item index + its
+ * pixel scroll offset).
+ */
+data class ScrollPosition(val index: Int, val offset: Int) {
+    companion object {
+        /** The top of the thread — used when nothing has been recorded for a topic yet. */
+        val TOP = ScrollPosition(index = 0, offset = 0)
+    }
+}
+
+/**
  * Loads and exposes the reply thread for a single Ravelry forum topic.
  *
  * @param apiClient Used to fetch posts.
@@ -115,6 +127,23 @@ class TopicDetailViewModel(
 ) {
     private val _state = MutableStateFlow<TopicDetailState>(TopicDetailState.Loading)
     private val _sessionExpired = Channel<Unit>(Channel.BUFFERED)
+
+    // Plain (non-Compose-state) storage for each topic's scroll position, keyed by topic ID
+    // (issue #243). Tapping a project link from within a topic shows the project page via
+    // an early-return branch in FeedScreen, which stops TopicDetailScreen from being
+    // composed at all — destroying any `remember`/`rememberSaveable` state, including a
+    // plain `rememberLazyListState()`, along with it. This ViewModel is reused across the
+    // whole feed session (see [load]) and outlives that teardown, so a plain field here is
+    // what survives to restore the position once the screen is composed again.
+    private val scrollPositions = mutableMapOf<Long, ScrollPosition>()
+
+    /** The last-recorded scroll position for [topicId], or [ScrollPosition.TOP] if none yet. */
+    fun scrollPositionFor(topicId: Long): ScrollPosition = scrollPositions[topicId] ?: ScrollPosition.TOP
+
+    /** Records [topicId]'s current scroll position so re-entering the thread can restore it. */
+    fun setScrollPosition(topicId: Long, index: Int, offset: Int) {
+        scrollPositions[topicId] = ScrollPosition(index, offset)
+    }
 
     private val _replyState = MutableStateFlow<ReplyState>(ReplyState.Idle)
     private val _deleteState = MutableStateFlow<DeleteState>(DeleteState.Idle)
