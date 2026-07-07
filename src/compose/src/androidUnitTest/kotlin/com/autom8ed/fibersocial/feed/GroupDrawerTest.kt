@@ -348,6 +348,34 @@ class GroupDrawerTest {
     }
 
     @Test
+    fun `pull-to-refresh is disabled during reorder mode`() {
+        // A refresh mid-drag flips state away from Loaded, which makes reorderGroups()
+        // silently no-op and drop the in-progress reorder — suppress the gesture instead.
+        var refreshes = 0
+        compose.setContent {
+            GroupDrawer(
+                groups = twoGroups,
+                selectedGroup = twoGroups.first(),
+                eventCounts = emptyMap(),
+                user = user,
+                onGroupSelected = {},
+                onGroupEventsClick = {},
+                onSettingsClick = {},
+                onRefresh = { refreshes++ },
+            )
+        }
+        compose.onNodeWithText("Edit").performClick()
+        compose.onNodeWithTag("GroupList").performTouchInput { swipeDown() }
+        compose.waitForIdle()
+        assertEquals(0, refreshes)
+
+        compose.onNodeWithText("Done").performClick()
+        compose.onNodeWithTag("GroupList").performTouchInput { swipeDown() }
+        compose.waitForIdle()
+        assertEquals(1, refreshes)
+    }
+
+    @Test
     fun `footer falls back to Account label when user is not loaded yet`() {
         compose.setContent {
             GroupDrawer(

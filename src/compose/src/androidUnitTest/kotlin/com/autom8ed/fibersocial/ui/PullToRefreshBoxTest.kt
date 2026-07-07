@@ -48,6 +48,25 @@ class PullToRefreshBoxTest {
     }
 
     @Test
+    fun `swiping down does nothing when disabled`() {
+        // Issue #246: the group drawer suppresses the gesture entirely during reorder
+        // mode, since a refresh mid-drag would corrupt the in-progress reorder.
+        var refreshCount = 0
+        compose.setContent {
+            PullToRefreshBox(refreshing = false, onRefresh = { refreshCount++ }, enabled = false) {
+                LazyColumn(modifier = Modifier.testTag("list")) {
+                    items(20) { index -> Text("Item $index") }
+                }
+            }
+        }
+
+        compose.onNodeWithTag("list").performTouchInput { swipeDown() }
+        compose.waitForIdle()
+
+        assertEquals(0, refreshCount)
+    }
+
+    @Test
     fun `content stays displayed while refreshing`() {
         compose.setContent {
             PullToRefreshBox(refreshing = true, onRefresh = {}) {
