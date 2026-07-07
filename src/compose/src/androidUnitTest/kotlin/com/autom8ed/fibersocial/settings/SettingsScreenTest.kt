@@ -112,6 +112,25 @@ class SettingsScreenTest {
     }
 
     @Test
+    fun `debug panel row is hidden when no handler is provided`() {
+        compose.setContent {
+            SettingsScreen(user = user, onBack = {}, onSignOut = {})
+        }
+        compose.onNodeWithText("Debug panel").assertDoesNotExist()
+    }
+
+    @Test
+    fun `debug panel row shows and invokes its handler on debug builds`() {
+        var opened = 0
+        compose.setContent {
+            SettingsScreen(user = user, onBack = {}, onSignOut = {}, onOpenDebugPanel = { opened++ })
+        }
+        compose.onNodeWithText("Debug panel").assertIsDisplayed()
+        compose.onNodeWithText("Debug panel").performClick()
+        compose.runOnIdle { assertEquals(1, opened) }
+    }
+
+    @Test
     fun `theme row is hidden while loading`() {
         compose.setContent {
             SettingsScreen(user = user, onBack = {}, onSignOut = {}, themeMode = null)
