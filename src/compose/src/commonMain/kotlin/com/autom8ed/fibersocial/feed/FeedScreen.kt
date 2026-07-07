@@ -392,6 +392,7 @@ fun FeedScreen(
             state = userProfileState,
             onBack = { viewModel.userProfile.dismiss() },
             onRetry = { viewModel.userProfile.retry() },
+            onOpenProject = { project -> viewModel.projectPage.open(project) },
             onGroupClick = { group ->
                 viewModel.userProfile.dismiss()
                 viewModel.feed.selectGroup(group)
