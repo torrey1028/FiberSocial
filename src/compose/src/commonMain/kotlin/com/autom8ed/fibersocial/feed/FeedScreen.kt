@@ -34,6 +34,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
@@ -43,13 +44,15 @@ import androidx.compose.material.icons.materialIcon
 import androidx.compose.material.icons.materialPath
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.IconToggleButton
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
@@ -240,8 +243,10 @@ private val FilterListIcon: ImageVector by lazy {
  * name scrolls sideways with an edge fade when it's too long to fit), and the FiberSocial
  * logo pinned to the far right. The navigation icon opens the group drawer.
  *
- * An "unread only" filter toggle (issue #210) sits between the title and the logo — a
- * client-side filter over the already-loaded feed, so flipping it needs no network call.
+ * A topic filter menu (issue #210) sits between the title and the logo — a client-side
+ * filter over the already-loaded feed (including sticky/pinned topics — sticky is just a
+ * sort-order flag on [com.autom8ed.fibersocial.feed.models.FeedItem], not a separate list,
+ * so the same predicate covers both), so flipping it needs no network call.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -285,18 +290,49 @@ internal fun FeedTopBar(
             }
         },
         actions = {
-            // "Unread only" filter toggle (#210): IconToggleButton tints the icon with
-            // the theme's primary color while checked, so no second glyph is needed to
-            // show the on/off state.
-            IconToggleButton(checked = showUnreadOnly, onCheckedChange = { onToggleUnreadOnly() }) {
-                Icon(
-                    imageVector = FilterListIcon,
-                    contentDescription = if (showUnreadOnly) {
-                        "Showing unread topics only. Tap to show all topics."
-                    } else {
-                        "Showing all topics. Tap to show unread topics only."
-                    },
-                )
+            // Topic filter menu (#210): a dropdown rather than a bare toggle, since a
+            // plain icon tint alone didn't clearly communicate what tapping it would do.
+            // The icon itself still tints to the theme's primary color while a filter is
+            // active, so the state is visible without opening the menu.
+            var filterMenuExpanded by remember { mutableStateOf(false) }
+            Box {
+                IconButton(onClick = { filterMenuExpanded = true }) {
+                    Icon(
+                        imageVector = FilterListIcon,
+                        tint = if (showUnreadOnly) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            LocalContentColor.current
+                        },
+                        contentDescription = if (showUnreadOnly) {
+                            "Filter: showing unread topics only. Tap to change."
+                        } else {
+                            "Filter: showing all topics. Tap to change."
+                        },
+                    )
+                }
+                DropdownMenu(expanded = filterMenuExpanded, onDismissRequest = { filterMenuExpanded = false }) {
+                    DropdownMenuItem(
+                        text = { Text("All topics") },
+                        leadingIcon = if (!showUnreadOnly) {
+                            { Icon(Icons.Default.Check, contentDescription = null) }
+                        } else null,
+                        onClick = {
+                            filterMenuExpanded = false
+                            if (showUnreadOnly) onToggleUnreadOnly()
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Unread only") },
+                        leadingIcon = if (showUnreadOnly) {
+                            { Icon(Icons.Default.Check, contentDescription = null) }
+                        } else null,
+                        onClick = {
+                            filterMenuExpanded = false
+                            if (!showUnreadOnly) onToggleUnreadOnly()
+                        },
+                    )
+                }
             }
             // FiberSocial logo pinned to the far right of the bar (#207).
             Image(
@@ -755,13 +791,7 @@ fun FeedScreen(
                     onRefresh = { viewModel.feed.refresh() },
                     modifier = Modifier.padding(padding),
                 ) {
-                    // Purely client-side filter over already-loaded items (issue #210) —
-                    // no new API call, since unreadCount is already tracked per FeedItem.
-                    val displayedItems = if (showUnreadOnly) {
-                        s.items.filter { it.unreadCount > 0 }
-                    } else {
-                        s.items
-                    }
+                    val displayedItems = filterUnread(s.items, showUnreadOnly)
                     if (showUnreadOnly && displayedItems.isEmpty()) {
                         UnreadFilterEmptyState()
                     } else {
@@ -801,11 +831,7 @@ fun FeedScreen(
                     onRefresh = { viewModel.feed.refresh() },
                     modifier = Modifier.padding(padding),
                 ) {
-                    val displayedItems = if (showUnreadOnly) {
-                        s.stale.items.filter { it.unreadCount > 0 }
-                    } else {
-                        s.stale.items
-                    }
+                    val displayedItems = filterUnread(s.stale.items, showUnreadOnly)
                     if (showUnreadOnly && displayedItems.isEmpty()) {
                         UnreadFilterEmptyState()
                     } else {
@@ -1432,6 +1458,16 @@ private fun GroupEventsBadge(count: Int, onClick: () -> Unit) {
         )
     }
 }
+
+/**
+ * Purely client-side "unread only" filter (issue #210) — no new API call, since
+ * [FeedItem.unreadCount] is already tracked per topic. `sticky` is just a sort-order flag on
+ * [FeedItem] (pinned topics live in the same flat list, sorted first), not a separate list, so
+ * this predicate covers sticky and non-sticky topics identically: a read sticky topic is
+ * filtered out just like any other read topic.
+ */
+internal fun filterUnread(items: List<FeedItem>, showUnreadOnly: Boolean): List<FeedItem> =
+    if (showUnreadOnly) items.filter { it.unreadCount > 0 } else items
 
 /** Visible-item slack before the end of the list that triggers [onLoadMore]. */
 private const val LOAD_MORE_THRESHOLD = 5

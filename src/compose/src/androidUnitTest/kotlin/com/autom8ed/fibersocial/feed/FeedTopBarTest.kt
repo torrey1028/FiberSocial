@@ -51,4 +51,62 @@ class FeedTopBarTest {
         compose.onNodeWithTag("GroupBadgeMonogram").assertDoesNotExist()
         compose.onNodeWithTag("GroupBadgeImage").assertDoesNotExist()
     }
+
+    @Test
+    fun `the filter menu opens on tap and offers both options`() {
+        compose.setContent {
+            FeedTopBar(title = "KAL Hub", selectedGroup = group, onOpenDrawer = {}, showUnreadOnly = false)
+        }
+
+        compose.onNodeWithContentDescription("Filter: showing all topics. Tap to change.").performClick()
+        compose.onNodeWithText("All topics").assertIsDisplayed()
+        compose.onNodeWithText("Unread only").assertIsDisplayed()
+    }
+
+    @Test
+    fun `picking Unread only from the menu toggles the filter on`() {
+        var toggled = 0
+        compose.setContent {
+            FeedTopBar(
+                title = "KAL Hub",
+                selectedGroup = group,
+                onOpenDrawer = {},
+                showUnreadOnly = false,
+                onToggleUnreadOnly = { toggled++ },
+            )
+        }
+
+        compose.onNodeWithContentDescription("Filter: showing all topics. Tap to change.").performClick()
+        compose.onNodeWithText("Unread only").performClick()
+
+        assertEquals(1, toggled)
+    }
+
+    @Test
+    fun `picking All topics while already showing all does not toggle`() {
+        var toggled = 0
+        compose.setContent {
+            FeedTopBar(
+                title = "KAL Hub",
+                selectedGroup = group,
+                onOpenDrawer = {},
+                showUnreadOnly = false,
+                onToggleUnreadOnly = { toggled++ },
+            )
+        }
+
+        compose.onNodeWithContentDescription("Filter: showing all topics. Tap to change.").performClick()
+        compose.onNodeWithText("All topics").performClick()
+
+        assertEquals(0, toggled)
+    }
+
+    @Test
+    fun `the icon's description reflects an active unread filter`() {
+        compose.setContent {
+            FeedTopBar(title = "KAL Hub", selectedGroup = group, onOpenDrawer = {}, showUnreadOnly = true)
+        }
+
+        compose.onNodeWithContentDescription("Filter: showing unread topics only. Tap to change.").assertIsDisplayed()
+    }
 }
