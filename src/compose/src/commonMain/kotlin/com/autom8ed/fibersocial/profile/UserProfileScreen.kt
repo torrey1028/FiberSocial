@@ -46,6 +46,7 @@ import androidx.compose.ui.unit.dp
 import com.autom8ed.fibersocial.feed.PostBody
 import com.autom8ed.fibersocial.feed.html.HtmlPostParser
 import com.autom8ed.fibersocial.feed.models.Group
+import com.autom8ed.fibersocial.projects.ProjectLink
 import com.autom8ed.fibersocial.projects.ProjectSummary
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextAlign
@@ -56,9 +57,9 @@ import com.autom8ed.fibersocial.ui.GroupBadge
 
 /**
  * In-app user profile (issue #194), opened by tapping a username: the user's header,
- * the projects they've made, and the groups they're in. Tapping a project opens it on
- * Ravelry (the in-app project page from #189 can be wired in once it lands); tapping a
- * group selects it in the feed via [onGroupClick].
+ * the projects they've made, and the groups they're in. Tapping a project opens the
+ * in-app project page via [onOpenProject] (issue #244); tapping a group selects it in
+ * the feed via [onGroupClick].
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -66,6 +67,7 @@ fun UserProfileScreen(
     state: UserProfileState,
     onBack: () -> Unit,
     onRetry: () -> Unit,
+    onOpenProject: (ProjectLink) -> Unit = {},
     onGroupClick: (Group) -> Unit = {},
 ) {
     if (state is UserProfileState.Hidden) return
@@ -116,7 +118,7 @@ fun UserProfileScreen(
             is UserProfileState.Loaded -> ProfileContent(
                 state = state,
                 onOpenProject = { project ->
-                    uriHandler.openUri("https://www.ravelry.com/projects/${state.profile.username}/${project.permalink}")
+                    onOpenProject(ProjectLink(state.profile.username, project.permalink))
                 },
                 onGroupClick = onGroupClick,
                 modifier = Modifier.padding(padding),
