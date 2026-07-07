@@ -299,6 +299,109 @@ class GroupDrawerTest {
     }
 
     @Test
+    fun `a failed leave keeps the dialog open with the error and a Retry, instead of silently dismissing`() {
+        // Issue #263: leaveError previously wasn't surfaced at all, so a non-session
+        // failure looked identical to success — the dialog auto-dismissed either way.
+        var leavingGroupId by mutableStateOf<Long?>(null)
+        var leaveError by mutableStateOf<String?>(null)
+        var attempts = 0
+        var acknowledged = false
+        compose.setContent {
+            GroupDrawer(
+                groups = twoGroups,
+                selectedGroup = twoGroups.first(),
+                eventCounts = emptyMap(),
+                user = user,
+                onGroupSelected = {},
+                onGroupEventsClick = {},
+                onSettingsClick = {},
+                onLeaveGroup = {
+                    attempts++
+                    leavingGroupId = it.id
+                },
+                leavingGroupId = leavingGroupId,
+                leaveError = leaveError,
+                onAcknowledgeLeaveError = { acknowledged = true; leaveError = null },
+            )
+        }
+        compose.onNodeWithText("Edit").performClick()
+        compose.onNodeWithContentDescription("Leave KAL Hub", useUnmergedTree = true).performClick()
+        compose.onNodeWithText("Leave").performClick()
+
+        // The leave finishes, but with an error rather than success.
+        leavingGroupId = null
+        leaveError = "Couldn't leave the group"
+        compose.waitForIdle()
+
+        // The dialog stays open showing the error — it does NOT silently dismiss.
+        compose.onNodeWithText("Leave KAL Hub?").assertIsDisplayed()
+        compose.onNodeWithText("Couldn't leave the group").assertIsDisplayed()
+
+        // Retry re-invokes onLeaveGroup for the same group.
+        compose.onNodeWithText("Retry").performClick()
+        compose.runOnIdle { assertEquals(2, attempts) }
+    }
+
+    @Test
+    fun `canceling a leave dialog with an error acknowledges it`() {
+        var leaveError by mutableStateOf<String?>("Couldn't leave the group")
+        var acknowledged = false
+        compose.setContent {
+            GroupDrawer(
+                groups = twoGroups,
+                selectedGroup = twoGroups.first(),
+                eventCounts = emptyMap(),
+                user = user,
+                onGroupSelected = {},
+                onGroupEventsClick = {},
+                onSettingsClick = {},
+                leaveError = leaveError,
+                onAcknowledgeLeaveError = { acknowledged = true },
+            )
+        }
+        compose.onNodeWithText("Edit").performClick()
+        compose.onNodeWithContentDescription("Leave KAL Hub", useUnmergedTree = true).performClick()
+        compose.onNodeWithText("Couldn't leave the group").assertIsDisplayed()
+
+        compose.onNodeWithText("Cancel").performClick()
+        compose.runOnIdle { assertEquals(true, acknowledged) }
+        compose.onNodeWithText("Leave KAL Hub?").assertDoesNotExist()
+    }
+
+    @Test
+    fun `opening the leave dialog for a different group acknowledges a stale error first`() {
+        // Regression: leaveError lives on the ViewModel (outlives GroupDrawer being torn
+        // down, e.g. by a deep link forcing the drawer closed while an error was showing),
+        // but pendingLeave is drawer-local and always starts fresh. Without clearing
+        // leaveError when a NEW group's dialog opens, a stale error left over from a
+        // previous group's unresolved dialog would show up immediately for this group,
+        // even though nothing has been attempted for it yet.
+        var leaveError by mutableStateOf<String?>("Couldn't leave the group")
+        var acknowledged = false
+        compose.setContent {
+            GroupDrawer(
+                groups = twoGroups,
+                selectedGroup = twoGroups.first(),
+                eventCounts = emptyMap(),
+                user = user,
+                onGroupSelected = {},
+                onGroupEventsClick = {},
+                onSettingsClick = {},
+                leaveError = leaveError,
+                onAcknowledgeLeaveError = { acknowledged = true; leaveError = null },
+            )
+        }
+        compose.onNodeWithText("Edit").performClick()
+        compose.onNodeWithContentDescription("Leave Sock Society", useUnmergedTree = true).performClick()
+
+        compose.runOnIdle { assertEquals(true, acknowledged) }
+        compose.onNodeWithText("Leave Sock Society?").assertIsDisplayed()
+        compose.onNodeWithText("Couldn't leave the group").assertDoesNotExist()
+        compose.onNodeWithText("You'll stop seeing this group's topics. You can re-join it from Ravelry.")
+            .assertIsDisplayed()
+    }
+
+    @Test
     fun `swiping down over the group list invokes onRefresh`() {
         // Issue #246: joining a group elsewhere left no way to refresh the drawer's list
         // short of leaving and re-entering the app. Pull-to-refresh matches every other

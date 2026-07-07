@@ -628,9 +628,39 @@ class FeedViewModelTest {
 
         vm.leaveGroup(group)
         awaitChildren(coroutineContext[Job]!!)
-        // The leave failed, so the group stays and the spinner flag still resets.
+        // The leave failed, so the group stays and the spinner flag still resets — but
+        // unlike before issue #263, the failure is no longer silent: leaveError carries a
+        // message the dialog can surface instead of auto-dismissing as if it succeeded.
         assertIs<FeedState.Loaded>(vm.state.value)
         assertEquals(null, vm.leavingGroupId.value)
+        assertEquals("boom", vm.leaveError.value)
+    }
+
+    @Test
+    fun `acknowledgeLeaveError clears a stale leave error`() = runTest(UnconfinedTestDispatcher()) {
+        val repo = FeedRepository(routingApiClient { path ->
+            when {
+                path.endsWith("/leave") -> error("boom")
+                path.isEmpty() || path == "/" -> TOKEN_PAGE_HTML
+                path.contains("/current_user") -> CURRENT_USER_JSON
+                path.contains("memberships") -> MEMBERSHIPS_HTML
+                path.contains("/groups/search") -> GROUPS_JSON
+                path.contains("/forums/") -> topicsJson(100L)
+                path.contains("/topics/") -> topicDetailJson(100L)
+                else -> error("Unexpected: $path")
+            }
+        })
+        val vm = FeedViewModel(repo, this, FakeGroupOrderStore())
+        vm.load()
+        awaitChildren(coroutineContext[Job]!!)
+        val group = (vm.state.value as FeedState.Loaded).groups.first()
+
+        vm.leaveGroup(group)
+        awaitChildren(coroutineContext[Job]!!)
+        assertEquals("boom", vm.leaveError.value)
+
+        vm.acknowledgeLeaveError()
+        assertEquals(null, vm.leaveError.value)
     }
 
     /** Two-page repo for the single group above: page 1 has topic 100, page 2 has topic 200. */
