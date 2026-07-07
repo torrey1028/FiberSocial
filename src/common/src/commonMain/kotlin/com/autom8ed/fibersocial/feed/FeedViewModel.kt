@@ -216,8 +216,21 @@ class FeedViewModel(
     fun selectGroup(group: Group) {
         val current = _state.value as? FeedState.Loaded ?: return
         println("FiberSocial: FeedViewModel.selectGroup(${group.name})")
+        // Switch to the new group immediately (issue #214): show it selected in the chrome
+        // with a blank, loading content area rather than leaving the old group's topics
+        // under a spinner. Set synchronously (before launching the fetch) so the chrome —
+        // which reads title/drawer selection from stale — updates on this same frame; the
+        // empty items make the content show a spinner until the fetch lands.
+        _state.value = FeedState.Refreshing(
+            current.copy(
+                selectedGroup = group,
+                items = emptyList(),
+                hasMore = false,
+                loadingMore = false,
+                nextPage = 2,
+            ),
+        )
         scope.launch {
-            _state.value = FeedState.Refreshing(current)
             _state.value = try {
                 val page = repository.getFeedItemsPage(group, page = 1)
                 println("FiberSocial: selectGroup loaded ${page.items.size} items")

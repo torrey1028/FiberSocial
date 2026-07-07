@@ -563,7 +563,15 @@ fun FeedScreen(
                         },
                     )
                 }
-                is FeedState.Refreshing -> PullToRefreshBox(
+                // Switching groups (issue #214) empties the content while the new group
+                // loads: show a centered spinner over the blank area instead of an empty
+                // list under the pull indicator. A normal refresh keeps its stale content.
+                is FeedState.Refreshing -> if (s.stale.items.isEmpty()) {
+                    Box(
+                        modifier = Modifier.fillMaxSize().padding(padding),
+                        contentAlignment = Alignment.Center,
+                    ) { CircularProgressIndicator() }
+                } else PullToRefreshBox(
                     refreshing = true,
                     onRefresh = { viewModel.feed.refresh() },
                     modifier = Modifier.padding(padding),
