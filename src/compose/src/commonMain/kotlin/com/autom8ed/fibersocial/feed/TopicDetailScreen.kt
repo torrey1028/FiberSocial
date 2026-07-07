@@ -29,9 +29,12 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.ExtendedFloatingActionButton
@@ -127,6 +130,9 @@ fun TopicDetailScreen(
     // high-water mark, so scrolling down then back up still counts the deepest post seen.
     // Reset per topic so a new thread starts from nothing.
     var furthestSeen by remember(topic.id) { mutableStateOf(0) }
+    // Set when the user taps "mark all as read" (issue #227): advances the marker to the
+    // last post without scrolling, and hides the jump-to-last-read button afterwards.
+    var markedAllRead by remember(topic.id) { mutableStateOf(false) }
     // Every way out of the thread (system back, top-bar arrow) syncs the marker first.
     val handleBack: () -> Unit = {
         onMarkRead(furthestSeen)
@@ -176,6 +182,26 @@ fun TopicDetailScreen(
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
+                actions = {
+                    // Mark the whole topic read without scrolling to the bottom (issue #227).
+                    // Only offered while something is still unread and not already cleared.
+                    if (topic.unreadCount > 0 && !markedAllRead) {
+                        var menuOpen by remember { mutableStateOf(false) }
+                        IconButton(onClick = { menuOpen = true }) {
+                            Icon(Icons.Default.MoreVert, contentDescription = "More options")
+                        }
+                        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                            DropdownMenuItem(
+                                text = { Text("Mark all as read") },
+                                onClick = {
+                                    menuOpen = false
+                                    onMarkRead(topic.postCount)
+                                    markedAllRead = true
+                                },
+                            )
+                        }
+                    }
+                },
             )
         },
         bottomBar = {
@@ -217,7 +243,8 @@ fun TopicDetailScreen(
         // or while a deep jump is still loading the pages in between.
         val showJump by remember(firstUnread) {
             derivedStateOf {
-                firstUnread != null && (pendingJump || listState.firstVisibleItemIndex < firstUnread)
+                firstUnread != null && !markedAllRead &&
+                    (pendingJump || listState.firstVisibleItemIndex < firstUnread)
             }
         }
         // Load the next page as the user nears the end of the thread (issue #202). The
