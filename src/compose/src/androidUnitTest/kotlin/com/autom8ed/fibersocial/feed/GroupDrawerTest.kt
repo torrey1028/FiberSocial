@@ -330,6 +330,31 @@ class GroupDrawerTest {
     }
 
     @Test
+    fun `refresh button hides during reorder mode`() {
+        // A refresh mid-drag flips state away from Loaded, which makes reorderGroups()
+        // silently no-op and drop the in-progress reorder — hide the trigger instead.
+        compose.setContent {
+            GroupDrawer(
+                groups = twoGroups,
+                selectedGroup = twoGroups.first(),
+                eventCounts = emptyMap(),
+                user = user,
+                onGroupSelected = {},
+                onGroupEventsClick = {},
+                onSettingsClick = {},
+                onRefresh = {},
+            )
+        }
+        compose.onNodeWithContentDescription("Refresh groups").assertIsDisplayed()
+
+        compose.onNodeWithText("Edit").performClick()
+        compose.onNodeWithContentDescription("Refresh groups").assertDoesNotExist()
+
+        compose.onNodeWithText("Done").performClick()
+        compose.onNodeWithContentDescription("Refresh groups").assertIsDisplayed()
+    }
+
+    @Test
     fun `footer falls back to Account label when user is not loaded yet`() {
         compose.setContent {
             GroupDrawer(

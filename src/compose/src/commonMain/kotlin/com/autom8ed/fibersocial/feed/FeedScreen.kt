@@ -1079,14 +1079,19 @@ internal fun GroupDrawer(
                         // The refresh reuses the same feed refresh that already re-fetches
                         // groups (FeedViewModel.refresh() -> getUserGroups()), so this button
                         // just surfaces an affordance for it from inside the open drawer.
-                        if (isRefreshing) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(24.dp).padding(8.dp),
-                                strokeWidth = 2.dp,
-                            )
-                        } else {
-                            IconButton(onClick = onRefresh) {
-                                Icon(Icons.Default.Refresh, contentDescription = "Refresh groups")
+                        // Hidden in reorder mode: refresh() flips state away from Loaded,
+                        // which makes reorderGroups() silently no-op, and the resulting
+                        // LaunchedEffect(groups) resync would clobber an in-progress drag.
+                        if (!reorderMode) {
+                            if (isRefreshing) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(24.dp),
+                                    strokeWidth = 2.dp,
+                                )
+                            } else {
+                                IconButton(onClick = onRefresh) {
+                                    Icon(Icons.Default.Refresh, contentDescription = "Refresh groups")
+                                }
                             }
                         }
                         TextButton(onClick = { reorderMode = !reorderMode }) {
