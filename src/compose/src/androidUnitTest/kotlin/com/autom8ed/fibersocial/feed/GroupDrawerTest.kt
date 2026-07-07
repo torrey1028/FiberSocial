@@ -1,6 +1,9 @@
 package com.autom8ed.fibersocial.feed
 
 import androidx.activity.ComponentActivity
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasText
@@ -239,6 +242,39 @@ class GroupDrawerTest {
         compose.onNodeWithContentDescription("Leave KAL Hub", useUnmergedTree = true).performClick()
         compose.onNodeWithText("Leave").performClick()
         compose.runOnIdle { assertEquals(1L, left?.id) }
+    }
+
+    @Test
+    fun `the leave dialog spins while leaving and auto-dismisses when it completes`() {
+        // The VM sets leavingGroupId when the leave starts and clears it when done; drive
+        // that transition to exercise the spinner + auto-dismiss (issue #231).
+        var leavingGroupId by mutableStateOf<Long?>(null)
+        compose.setContent {
+            GroupDrawer(
+                groups = twoGroups,
+                selectedGroup = twoGroups.first(),
+                eventCounts = emptyMap(),
+                user = user,
+                onGroupSelected = {},
+                onGroupEventsClick = {},
+                onSettingsClick = {},
+                onLeaveGroup = { leavingGroupId = it.id },
+                leavingGroupId = leavingGroupId,
+            )
+        }
+        compose.onNodeWithText("Edit").performClick()
+        compose.onNodeWithContentDescription("Leave KAL Hub", useUnmergedTree = true).performClick()
+        // Confirming flips leavingGroupId → the dialog turns into a spinner; the confirm/cancel
+        // buttons disappear so it can't be dismissed mid-leave.
+        compose.onNodeWithText("Leave").performClick()
+        compose.onNodeWithText("Leaving KAL Hub…").assertIsDisplayed()
+        compose.onNodeWithText("Cancel").assertDoesNotExist()
+
+        // When the leave completes (leavingGroupId cleared), the dialog auto-dismisses.
+        leavingGroupId = null
+        compose.waitForIdle()
+        compose.onNodeWithText("Leaving KAL Hub…").assertDoesNotExist()
+        compose.onNodeWithText("Leave KAL Hub?").assertDoesNotExist()
     }
 
     @Test
