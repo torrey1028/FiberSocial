@@ -77,10 +77,36 @@ class TopicDetailScreenPullToRefreshTest {
     }
 
     @Test
+    fun `shows the jump-to-last-read button for a long unread topic even though post 1 is unread`() {
+        // On-device review of #255 found that gating on firstUnread (rather than
+        // postCount) broke a real case: a topic nobody has read yet has
+        // firstUnreadPostNumber == 1, and post 1 is trivially visible the instant the
+        // screen opens — that would hide the button immediately even for a 60-post
+        // thread that's almost entirely below the fold.
+        val posts = (1..60L).map { id ->
+            Post(id = id, bodyHtml = "<p>post $id</p>", user = RavelryUser(username = "a"))
+        }
+        val unreadTopic = topic.copy(postCount = 60, unreadCount = 60, firstUnreadPostNumber = 1)
+        compose.setContent {
+            TopicDetailScreen(
+                topic = unreadTopic,
+                postsState = TopicDetailState.Loaded(posts = posts),
+                onBack = {},
+                onVote = { _, _ -> },
+            )
+        }
+
+        compose.onNodeWithText("Jump to last read").assertIsDisplayed()
+    }
+
+    @Test
     fun `hides the jump-to-last-read button when the whole topic already fits on screen`() {
         // Issue #255: a short topic (here, 3 posts) can render entirely within the
         // viewport, including its one unread post — there's nothing left to "jump" to,
-        // even though the thread technically has an unread post.
+        // even though the thread technically has an unread post. Scrolls to the last
+        // post explicitly (mirroring the "all caught up" test below) since Robolectric's
+        // test viewport doesn't necessarily fit all 3 posts on the very first layout
+        // pass the way a real device screen does.
         val unreadTopic = topic.copy(postCount = 3, unreadCount = 2, firstUnreadPostNumber = 2)
         val posts = listOf(
             Post(id = 1L, bodyHtml = "<p>one</p>", user = RavelryUser(username = "a")),
@@ -96,6 +122,8 @@ class TopicDetailScreenPullToRefreshTest {
             )
         }
 
+        compose.onNode(hasScrollAction()).performScrollToNode(hasText("three"))
+        compose.waitForIdle()
         compose.onNodeWithText("Jump to last read").assertDoesNotExist()
     }
 

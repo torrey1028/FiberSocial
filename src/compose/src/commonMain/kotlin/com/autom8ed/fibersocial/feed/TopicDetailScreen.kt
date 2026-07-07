@@ -256,18 +256,21 @@ fun TopicDetailScreen(
         // A deep jump may have to wait for pages to load in before it can scroll there
         // (issue #205); while it does, the button shows a spinner and this stays true.
         var pendingJump by remember(topic.id) { mutableStateOf(false) }
-        // Show the jump button until the target post is already visible on screen, or
-        // while a deep jump is still loading the pages in between. Gated on the LAST
-        // visible item, not the first (issue #255): a short topic that fits entirely on
-        // screen already shows every post — including the unread one — so there's nothing
-        // left to "jump" to, even though the first visible item (the header) is still
-        // above it.
+        // Show the jump button until the topic's very LAST post is already visible on
+        // screen, or while a deep jump is still loading the pages in between. Gated on
+        // whether the topic's LAST post (postCount) is visible, not specifically the
+        // unread target (issue #255: "you can see the whole topic" — the complaint was
+        // that the whole thread already fit on screen, making "jump" meaningless,
+        // regardless of exactly where the unread post happens to sit). Checking against
+        // firstUnread instead would falsely hide the button for a topic where nothing
+        // has ever been read (firstUnread == post 1): post 1 is trivially visible the
+        // instant the screen opens even when the thread is long and mostly unseen.
         val showJump by remember(firstUnread) {
             derivedStateOf {
                 if (firstUnread == null || markedAllRead) return@derivedStateOf false
                 if (pendingJump) return@derivedStateOf true
                 val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
-                lastVisible < firstUnread
+                lastVisible < topic.postCount
             }
         }
         // Load the next page as the user nears the end of the thread (issue #202). The
