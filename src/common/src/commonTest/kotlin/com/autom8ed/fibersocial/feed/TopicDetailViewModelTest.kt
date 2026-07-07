@@ -855,6 +855,29 @@ class TopicDetailViewModelTest {
     }
 
     @Test
+    fun `deletePost signals topicDeleted when the opening post is the thread's only post`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val vm = TopicDetailViewModel(
+                routingApiClient { path ->
+                    when {
+                        path.contains("/posts.json") -> postsJson(1L)
+                        Regex("/forum_posts/\\d+$").containsMatchIn(path) -> "ok"
+                        else -> TOKEN_PAGE_HTML
+                    }
+                },
+                this,
+            )
+            vm.load(42L)
+            awaitChildren(coroutineContext[Job]!!)
+            val openingPost = (vm.state.value as TopicDetailState.Loaded).posts.first()
+            vm.deletePost(openingPost)
+            awaitChildren(coroutineContext[Job]!!)
+            assertEquals(Unit, vm.topicDeleted.first())
+            val state = assertIs<TopicDetailState.Loaded>(vm.state.value)
+            assertEquals(emptyList(), state.posts)
+        }
+
+    @Test
     fun `deletePost does not signal topicDeleted when a non-opening post is removed`() =
         runTest(UnconfinedTestDispatcher()) {
             val vm = TopicDetailViewModel(deleteRoutingClient(), this)
