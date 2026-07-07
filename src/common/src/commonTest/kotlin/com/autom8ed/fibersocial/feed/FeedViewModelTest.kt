@@ -537,6 +537,102 @@ class FeedViewModelTest {
             assertEquals(loaded.selectedGroup, after.selectedGroup)
         }
 
+    /** Two-group memberships-then-leave repo: after a /leave POST, [remaining] permalinks stay. */
+    private fun leaveRepo(remainingAfterLeave: List<String>, onLeave: () -> Unit = {}): FeedRepository {
+        var left = false
+        fun membershipsHtml(permalinks: List<String>) = "<html><body>" +
+            permalinks.joinToString("") { "<a href=\"https://www.ravelry.com/groups/$it\">$it</a>" } +
+            "</body></html>"
+        return FeedRepository(routingApiClient { path ->
+            when {
+                path.endsWith("/leave") -> { left = true; onLeave(); "ok" }
+                path.isEmpty() || path == "/" -> TOKEN_PAGE_HTML
+                path.contains("/current_user") -> CURRENT_USER_JSON
+                path.contains("memberships") ->
+                    membershipsHtml(if (left) remainingAfterLeave else listOf("kal-hub", "sock"))
+                path.contains("/groups/search") -> """{"groups":[
+                    {"id":10,"name":"KAL Hub","permalink":"kal-hub","forum_id":42},
+                    {"id":11,"name":"Sock Society","permalink":"sock","forum_id":43}
+                ]}"""
+                path.contains("/forums/") -> topicsJson(100L)
+                path.contains("/topics/") -> topicDetailJson(100L)
+                else -> error("Unexpected: $path")
+            }
+        })
+    }
+
+    @Test
+    fun `leaveGroup drops the left group and falls back to default when it was the selected one`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val sock = Group(id = 11L, name = "Sock Society", permalink = "sock", forumId = 43L)
+            val vm = FeedViewModel(leaveRepo(remainingAfterLeave = listOf("kal-hub")), this, FakeGroupOrderStore())
+            vm.load()
+            awaitChildren(coroutineContext[Job]!!)
+            vm.selectGroup(sock)
+            awaitChildren(coroutineContext[Job]!!)
+            assertEquals(11L, (vm.state.value as FeedState.Loaded).selectedGroup?.id)
+
+            vm.leaveGroup(sock)
+            awaitChildren(coroutineContext[Job]!!)
+            val loaded = assertIs<FeedState.Loaded>(vm.state.value)
+            assertTrue(loaded.groups.none { it.id == 11L }) // left group gone
+            assertEquals(10L, loaded.selectedGroup?.id)      // fell back to the default group
+            assertEquals(null, vm.leavingGroupId.value)      // spinner flag cleared
+        }
+
+    @Test
+    fun `leaveGroup keeps the current selection when a different group is left`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val kal = Group(id = 10L, name = "KAL Hub", permalink = "kal-hub", forumId = 42L)
+            val sock = Group(id = 11L, name = "Sock Society", permalink = "sock", forumId = 43L)
+            val vm = FeedViewModel(leaveRepo(remainingAfterLeave = listOf("sock")), this, FakeGroupOrderStore())
+            vm.load()
+            awaitChildren(coroutineContext[Job]!!)
+            vm.selectGroup(sock)
+            awaitChildren(coroutineContext[Job]!!)
+
+            vm.leaveGroup(kal)
+            awaitChildren(coroutineContext[Job]!!)
+            val loaded = assertIs<FeedState.Loaded>(vm.state.value)
+            assertTrue(loaded.groups.none { it.id == 10L })
+            assertEquals(11L, loaded.selectedGroup?.id) // still viewing Sock Society
+        }
+
+    @Test
+    fun `leaveGroup is ignored when the feed is not loaded`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = FeedViewModel(successRepo(), this, FakeGroupOrderStore())
+        vm.leaveGroup(Group(id = 1L, name = "x", permalink = "x", forumId = 1L))
+        awaitChildren(coroutineContext[Job]!!)
+        assertIs<FeedState.Loading>(vm.state.value)
+        assertEquals(null, vm.leavingGroupId.value)
+    }
+
+    @Test
+    fun `leaveGroup clears the leaving flag when the leave fails`() = runTest(UnconfinedTestDispatcher()) {
+        val repo = FeedRepository(routingApiClient { path ->
+            when {
+                path.endsWith("/leave") -> error("boom")
+                path.isEmpty() || path == "/" -> TOKEN_PAGE_HTML
+                path.contains("/current_user") -> CURRENT_USER_JSON
+                path.contains("memberships") -> MEMBERSHIPS_HTML
+                path.contains("/groups/search") -> GROUPS_JSON
+                path.contains("/forums/") -> topicsJson(100L)
+                path.contains("/topics/") -> topicDetailJson(100L)
+                else -> error("Unexpected: $path")
+            }
+        })
+        val vm = FeedViewModel(repo, this, FakeGroupOrderStore())
+        vm.load()
+        awaitChildren(coroutineContext[Job]!!)
+        val group = (vm.state.value as FeedState.Loaded).groups.first()
+
+        vm.leaveGroup(group)
+        awaitChildren(coroutineContext[Job]!!)
+        // The leave failed, so the group stays and the spinner flag still resets.
+        assertIs<FeedState.Loaded>(vm.state.value)
+        assertEquals(null, vm.leavingGroupId.value)
+    }
+
     /** Two-page repo for the single group above: page 1 has topic 100, page 2 has topic 200. */
     private fun twoPageRepo(): FeedRepository {
         var forumCallCount = 0

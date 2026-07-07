@@ -1313,6 +1313,47 @@ class RavelryApiClientTest {
     }
 
     @Test
+    fun `leaveGroup fetches the csrf token then PUT-overrides to the group leave endpoint`() = runTest {
+        // Issue #231: same web form as joinGroup but posted to /leave (per the group page's
+        // "Leave group" control), not /join.
+        data class Captured(val method: String, val path: String, val form: io.ktor.http.Parameters?)
+        val requests = mutableListOf<Captured>()
+        val engine = MockEngine { request ->
+            val form = (request.body as? io.ktor.client.request.forms.FormDataContent)?.formData
+            requests += Captured(request.method.value, request.url.encodedPath, form)
+            val content = if (request.method.value == "POST") "ok" else TOKEN_PAGE_HTML
+            respond(content, HttpStatusCode.OK, headersOf("Content-Type", "text/html"))
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        RavelryApiClient(httpClient, FakeFeedTokenStorage()).leaveGroup("eastside-spinners-group")
+        assertEquals(2, requests.size)
+        assertEquals("GET", requests[0].method)
+        assertEquals("POST", requests[1].method)
+        assertEquals("/groups/eastside-spinners-group/leave", requests[1].path)
+        assertEquals("put", requests[1].form?.get("_method"))
+        assertEquals("tok-abc123", requests[1].form?.get("authenticity_token"))
+    }
+
+    @Test
+    fun `leaveGroup throws ForbiddenException on 403`() = runTest {
+        val engine = MockEngine { request ->
+            if (request.method.value == "POST") {
+                respond("", HttpStatusCode.Forbidden)
+            } else {
+                respond(TOKEN_PAGE_HTML, HttpStatusCode.OK, headersOf("Content-Type", "text/html"))
+            }
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        assertFailsWith<ForbiddenException> {
+            RavelryApiClient(httpClient, FakeFeedTokenStorage()).leaveGroup("some-group")
+        }
+    }
+
+    @Test
     fun `joinGroup throws ForbiddenException on 403`() = runTest {
         val engine = MockEngine { request ->
             if (request.method.value == "POST") {
