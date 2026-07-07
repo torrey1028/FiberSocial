@@ -4,7 +4,9 @@ import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import kotlin.test.assertEquals
 import com.autom8ed.fibersocial.feed.models.Post
 import com.autom8ed.fibersocial.feed.models.RavelryUser
 import com.autom8ed.fibersocial.feed.models.VoteType
@@ -36,13 +38,33 @@ class VoteRowTest {
     fun `hides unused reactions behind a plus and reveals them on tap`() {
         compose.setContent { ReplyItem(post = post(mapOf("love" to 2)), onVote = {}) }
 
-        // Unused reactions are behind the add button; the collapse control isn't shown yet.
+        // The voted reaction shows; an unused one (funny) is hidden behind the add button,
+        // and the collapse control isn't shown yet.
+        compose.onNodeWithText("❤️").assertIsDisplayed()
+        compose.onNodeWithText("😂").assertDoesNotExist()
         compose.onNodeWithContentDescription("Add a reaction").assertIsDisplayed()
         compose.onNodeWithContentDescription("Hide reactions").assertDoesNotExist()
 
-        // Tapping it expands the not-yet-used reactions (the control flips to collapse).
+        // Tapping it actually reveals the not-yet-used reactions (not just flips the icon):
+        // the previously-hidden funny reaction is now on screen and the control flips.
         compose.onNodeWithContentDescription("Add a reaction").performClick()
+        compose.onNodeWithText("😂").assertIsDisplayed()
         compose.onNodeWithContentDescription("Hide reactions").assertIsDisplayed()
+    }
+
+    @Test
+    fun `picking a hidden reaction casts the vote and collapses the picker`() {
+        var voted: VoteType? = null
+        compose.setContent { ReplyItem(post = post(mapOf("love" to 2)), onVote = { voted = it }) }
+
+        // Expand, then tap the previously-hidden funny reaction.
+        compose.onNodeWithContentDescription("Add a reaction").performClick()
+        compose.onNodeWithText("😂").performClick()
+
+        // It cast that reaction and collapsed the picker back to [+].
+        assertEquals(VoteType.FUNNY, voted)
+        compose.onNodeWithContentDescription("Add a reaction").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Hide reactions").assertDoesNotExist()
     }
 
     @Test
