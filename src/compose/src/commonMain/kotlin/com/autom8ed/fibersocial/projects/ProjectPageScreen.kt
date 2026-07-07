@@ -22,6 +22,16 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChanged
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -455,6 +465,29 @@ private fun CommentComposer(
  * back / the close button) to dismiss. Shows the largest available size.
  */
 @OptIn(ExperimentalFoundationApi::class)
+/**
+ * Next zoom [scale] (clamped 1x–4x) and pan [offset] for the full-screen photo after a
+ * pinch [zoom] and [pan] over a view of [size] (issue #192). Pan is clamped so the image
+ * can't be dragged past its edges; zooming back to 1x recenters it.
+ */
+internal fun computeZoomTransform(
+    scale: Float,
+    offset: Offset,
+    zoom: Float,
+    pan: Offset,
+    size: IntSize,
+): Pair<Float, Offset> {
+    val newScale = (scale * zoom).coerceIn(1f, 4f)
+    if (newScale <= 1f) return 1f to Offset.Zero
+    val maxX = size.width * (newScale - 1f) / 2f
+    val maxY = size.height * (newScale - 1f) / 2f
+    val newOffset = Offset(
+        (offset.x + pan.x).coerceIn(-maxX, maxX),
+        (offset.y + pan.y).coerceIn(-maxY, maxY),
+    )
+    return newScale to newOffset
+}
+
 @Composable
 private fun FullScreenPhoto(photos: List<ProjectPhoto>, initialIndex: Int, onDismiss: () -> Unit) {
     if (photos.isEmpty()) return
@@ -466,23 +499,87 @@ private fun FullScreenPhoto(photos: List<ProjectPhoto>, initialIndex: Int, onDis
             initialPage = initialIndex.coerceIn(0, photos.size - 1),
             pageCount = { photos.size },
         )
+        // Pinch-to-zoom state for the photo on screen (issue #192). Hoisted so the pager
+        // can lock horizontal paging while zoomed (handing drags to panning instead); reset
+        // whenever the visible page changes so each photo opens fit-to-screen.
+        var scale by remember { mutableStateOf(1f) }
+        var offset by remember { mutableStateOf(Offset.Zero) }
+        LaunchedEffect(pagerState.currentPage) {
+            scale = 1f
+            offset = Offset.Zero
+        }
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(Color.Black.copy(alpha = 0.92f)),
             contentAlignment = Alignment.Center,
         ) {
-            HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { page ->
+            HorizontalPager(
+                state = pagerState,
+                modifier = Modifier.fillMaxSize(),
+                // While zoomed, a horizontal drag pans the image instead of flipping pages.
+                userScrollEnabled = scale <= 1f,
+            ) { page ->
                 val photo = photos[page]
+                val isCurrent = page == pagerState.currentPage
+                val pageScale = if (isCurrent) scale else 1f
+                val pageOffset = if (isCurrent) offset else Offset.Zero
                 Box(
-                    modifier = Modifier.fillMaxSize().clickable(onClick = onDismiss),
+                    modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center,
                 ) {
                     AsyncImage(
                         model = photo.medium2Url ?: photo.mediumUrl ?: photo.smallUrl,
                         contentDescription = "Project photo ${page + 1}",
                         contentScale = ContentScale.Fit,
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .graphicsLayer {
+                                scaleX = pageScale
+                                scaleY = pageScale
+                                translationX = pageOffset.x
+                                translationY = pageOffset.y
+                            }
+                            .pointerInput(isCurrent) {
+                                if (!isCurrent) return@pointerInput
+                                // Tap while fit-to-screen dismisses; double-tap toggles 2x.
+                                detectTapGestures(
+                                    onTap = { if (scale <= 1f) onDismiss() },
+                                    onDoubleTap = {
+                                        if (scale > 1f) {
+                                            scale = 1f
+                                            offset = Offset.Zero
+                                        } else {
+                                            scale = 2f
+                                        }
+                                    },
+                                )
+                            }
+                            .pointerInput(isCurrent) {
+                                if (!isCurrent) return@pointerInput
+                                // Consume gestures only for a pinch (2+ pointers) or once
+                                // zoomed, so a plain one-finger swipe at 1x still reaches the
+                                // pager and flips pages (the #192 gesture-coexistence catch).
+                                awaitEachGesture {
+                                    awaitFirstDown(requireUnconsumed = false)
+                                    do {
+                                        val event = awaitPointerEvent()
+                                        val pressed = event.changes.count { it.pressed }
+                                        if (pressed >= 2 || scale > 1f) {
+                                            val (newScale, newOffset) = computeZoomTransform(
+                                                scale = scale,
+                                                offset = offset,
+                                                zoom = event.calculateZoom(),
+                                                pan = event.calculatePan(),
+                                                size = size,
+                                            )
+                                            scale = newScale
+                                            offset = newOffset
+                                            event.changes.forEach { if (it.positionChanged()) it.consume() }
+                                        }
+                                    } while (event.changes.any { it.pressed })
+                                }
+                            },
                     )
                 }
             }
