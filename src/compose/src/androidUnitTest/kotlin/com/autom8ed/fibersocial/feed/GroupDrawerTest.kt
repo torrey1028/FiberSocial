@@ -114,7 +114,7 @@ class GroupDrawerTest {
     fun `in reorder mode a long-press drag over the next row commits the new order`() {
         var reordered: List<Group>? = null
         setReorderableDrawer { reordered = it }
-        compose.onNodeWithText("Reorder").performClick()
+        compose.onNodeWithText("Edit").performClick()
         val rowHeight = compose.onNodeWithText("KAL Hub").fetchSemanticsNode().size.height
         compose.onNodeWithText("KAL Hub").performTouchInput {
             down(center)
@@ -133,7 +133,7 @@ class GroupDrawerTest {
     fun `the drag handle drags immediately, without a long press`() {
         var reordered: List<Group>? = null
         setReorderableDrawer { reordered = it }
-        compose.onNodeWithText("Reorder").performClick()
+        compose.onNodeWithText("Edit").performClick()
         val rowHeight = compose.onNodeWithText("KAL Hub").fetchSemanticsNode().size.height
         // Unmerged tree: the row merges descendant semantics, so the merged match would
         // be the whole row and the touch would land at the row's center, not the handle.
@@ -186,7 +186,7 @@ class GroupDrawerTest {
                 onSettingsClick = {},
             )
         }
-        compose.onNodeWithText("Reorder").performClick()
+        compose.onNodeWithText("Edit").performClick()
         compose.onNodeWithText("Sock Society").performClick()
         compose.runOnIdle { assertEquals(null, selected) }
 
@@ -196,7 +196,7 @@ class GroupDrawerTest {
     }
 
     @Test
-    fun `group events badge is disabled while reordering and Done re-enables it`() {
+    fun `edit mode swaps the events badge for a leave control, restored on Done`() {
         var clicked: Group? = null
         compose.setContent {
             GroupDrawer(
@@ -209,13 +209,36 @@ class GroupDrawerTest {
                 onSettingsClick = {},
             )
         }
-        compose.onNodeWithText("Reorder").performClick()
-        compose.onNodeWithContentDescription("Upcoming events", useUnmergedTree = true).performClick()
-        compose.runOnIdle { assertEquals(null, clicked) }
+        // In edit mode the events badge yields the trailing slot to the leave control (#231).
+        compose.onNodeWithText("Edit").performClick()
+        compose.onNodeWithContentDescription("Upcoming events", useUnmergedTree = true).assertDoesNotExist()
 
+        // Done restores the events badge, clickable again.
         compose.onNodeWithText("Done").performClick()
         compose.onNodeWithContentDescription("Upcoming events", useUnmergedTree = true).performClick()
         compose.runOnIdle { assertEquals(1L, clicked?.id) }
+    }
+
+    @Test
+    fun `leaving a group from edit mode confirms then invokes onLeaveGroup`() {
+        var left: Group? = null
+        compose.setContent {
+            GroupDrawer(
+                groups = twoGroups,
+                selectedGroup = twoGroups.first(),
+                eventCounts = emptyMap(),
+                user = user,
+                onGroupSelected = {},
+                onGroupEventsClick = {},
+                onSettingsClick = {},
+                onLeaveGroup = { left = it },
+            )
+        }
+        compose.onNodeWithText("Edit").performClick()
+        // Tap the first group's leave control, then confirm.
+        compose.onNodeWithContentDescription("Leave KAL Hub", useUnmergedTree = true).performClick()
+        compose.onNodeWithText("Leave").performClick()
+        compose.runOnIdle { assertEquals(1L, left?.id) }
     }
 
     @Test
