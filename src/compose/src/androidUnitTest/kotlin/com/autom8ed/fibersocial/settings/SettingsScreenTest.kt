@@ -70,6 +70,27 @@ class SettingsScreenTest {
     }
 
     @Test
+    fun `system back press while the sign out dialog is open does not navigate out of Settings`() {
+        // Regression: BackHandler(onBack = onBack) covering the whole screen was still
+        // enabled while the dialog was up, so a back press invoked onBack directly —
+        // navigating out of Settings with the confirmation dialog left dangling open over
+        // whatever screen came next, instead of the back press being reserved for the
+        // dialog (whose own dismiss-on-back is a framework/library concern, not something
+        // this composable's own BackHandler should also be racing to handle).
+        var signOuts = 0
+        var backs = 0
+        compose.setContent {
+            SettingsScreen(user = user, onBack = { backs++ }, onSignOut = { signOuts++ })
+        }
+        compose.onNodeWithText("Sign out").performClick()
+        compose.runOnIdle { compose.activity.onBackPressedDispatcher.onBackPressed() }
+        compose.runOnIdle {
+            assertEquals(0, signOuts)
+            assertEquals(0, backs)
+        }
+    }
+
+    @Test
     fun `top-bar back arrow invokes onBack`() {
         var backs = 0
         compose.setContent {

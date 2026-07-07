@@ -71,12 +71,16 @@ fun SettingsScreen(
     // Non-null on debug builds only: shows a "Debug panel" entry (issue #207).
     onOpenDebugPanel: (() -> Unit)? = null,
 ) {
-    BackHandler(onBack = onBack)
     // Sign out is the only other tappable row on this screen and fires on a single tap
     // with no undo (issue #262) — a fat-finger tap wipes the OAuth session and, via the
     // login WebView's cookie clear, the Ravelry web session too. Confirm first, matching
     // the leave-group dialog's pattern in FeedScreen.kt.
     var confirmingSignOut by rememberSaveable { mutableStateOf(false) }
+    // Disabled while the dialog is up (matching NewTopicScreen/FeedbackScreen's
+    // enabled = !sending idiom): a back press otherwise still reaches this screen-level
+    // handler and navigates out of Settings with the dialog left dangling open, instead
+    // of the dialog's own dismiss-on-back consuming it.
+    BackHandler(enabled = !confirmingSignOut, onBack = onBack)
     if (confirmingSignOut) {
         AlertDialog(
             onDismissRequest = { confirmingSignOut = false },
