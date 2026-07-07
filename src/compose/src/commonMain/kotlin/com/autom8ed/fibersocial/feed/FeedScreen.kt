@@ -38,7 +38,6 @@ import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Menu
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -75,6 +74,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.BlendMode
@@ -1059,42 +1059,48 @@ internal fun GroupDrawer(
 
     ModalDrawerSheet {
         Column {
-            LazyColumn(state = listState, modifier = Modifier.weight(1f)) {
-                item(key = "drawer-header") {
-                    Spacer(Modifier.height(16.dp))
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(start = 28.dp, end = 16.dp),
-                    ) {
-                        Text(
-                            text = "Your Groups",
-                            style = MaterialTheme.typography.titleSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.weight(1f),
-                        )
-                        // Issue #246: joining a group elsewhere in the app left no way to
-                        // refresh the drawer's list short of leaving and re-entering the app.
-                        // The refresh reuses the same feed refresh that already re-fetches
-                        // groups (FeedViewModel.refresh() -> getUserGroups()), so this button
-                        // just surfaces an affordance for it from inside the open drawer.
-                        if (isRefreshing) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(24.dp).padding(8.dp),
-                                strokeWidth = 2.dp,
+            // Issue #246: joining a group elsewhere in the app left no way to refresh the
+            // drawer's list short of leaving and re-entering the app. Pull-to-refresh over
+            // the group list matches every other interactable list/drawer in the app
+            // (feed, events, topic detail) instead of a one-off icon button; it reuses the
+            // same feed refresh that already re-fetches groups (FeedViewModel.refresh() ->
+            // getUserGroups()).
+            //
+            // Disabled during reorder mode: FeedViewModel.refresh() synchronously flips
+            // state away from Loaded, which makes reorderGroups() silently no-op (dropping
+            // an in-progress drag without persisting it), and the LaunchedEffect(groups)
+            // resync that follows would clobber the drawer's working localGroups copy
+            // mid-drag. Row taps and the events badge already lock the same way (#231).
+            PullToRefreshBox(
+                refreshing = isRefreshing,
+                onRefresh = onRefresh,
+                modifier = Modifier.weight(1f),
+                enabled = !reorderMode,
+            ) {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.fillMaxSize().testTag("GroupList"),
+                ) {
+                    item(key = "drawer-header") {
+                        Spacer(Modifier.height(16.dp))
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 28.dp, end = 16.dp),
+                        ) {
+                            Text(
+                                text = "Your Groups",
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.weight(1f),
                             )
-                        } else {
-                            IconButton(onClick = onRefresh) {
-                                Icon(Icons.Default.Refresh, contentDescription = "Refresh groups")
+                            TextButton(onClick = { reorderMode = !reorderMode }) {
+                                Text(if (reorderMode) "Done" else "Edit")
                             }
                         }
-                        TextButton(onClick = { reorderMode = !reorderMode }) {
-                            Text(if (reorderMode) "Done" else "Edit")
-                        }
                     }
-                }
-                items(localGroups, key = { it.id }) { group ->
+                    items(localGroups, key = { it.id }) { group ->
                     val eventCount = eventCounts[group.id] ?: 0
                     val dragging = draggingId == group.id
                     NavigationDrawerItem(
@@ -1194,6 +1200,7 @@ internal fun GroupDrawer(
                     )
                 }
                 item(key = "drawer-footer-spacer") { Spacer(Modifier.height(16.dp)) }
+                }
             }
             HorizontalDivider()
             FeedbackDrawerAction(

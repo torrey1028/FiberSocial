@@ -9,9 +9,11 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeDown
 import com.autom8ed.fibersocial.feed.models.Group
 import com.autom8ed.fibersocial.feed.models.RavelryUser
 import org.junit.Rule
@@ -297,11 +299,12 @@ class GroupDrawerTest {
     }
 
     @Test
-    fun `refresh button invokes onRefresh and hides while a refresh is in flight`() {
+    fun `swiping down over the group list invokes onRefresh`() {
         // Issue #246: joining a group elsewhere left no way to refresh the drawer's list
-        // short of leaving and re-entering the app.
+        // short of leaving and re-entering the app. Pull-to-refresh matches every other
+        // interactable list/drawer in the app (feed, events, topic detail) rather than a
+        // one-off icon button.
         var refreshes = 0
-        var refreshing by mutableStateOf(false)
         compose.setContent {
             GroupDrawer(
                 groups = twoGroups,
@@ -311,22 +314,37 @@ class GroupDrawerTest {
                 onGroupSelected = {},
                 onGroupEventsClick = {},
                 onSettingsClick = {},
-                isRefreshing = refreshing,
                 onRefresh = { refreshes++ },
             )
         }
-        compose.onNodeWithContentDescription("Refresh groups").performClick()
-        compose.runOnIdle { assertEquals(1, refreshes) }
+        compose.onNodeWithTag("GroupList").performTouchInput { swipeDown() }
+        compose.waitForIdle()
+        assertEquals(1, refreshes)
+    }
 
-        // While a refresh is in flight, the button yields to a spinner so there's no
-        // affordance to double-fire the refresh.
+    @Test
+    fun `the group list stays visible and interactive while a refresh is in flight`() {
+        var refreshing by mutableStateOf(false)
+        var selected: Group? = null
+        compose.setContent {
+            GroupDrawer(
+                groups = twoGroups,
+                selectedGroup = twoGroups.first(),
+                eventCounts = emptyMap(),
+                user = user,
+                onGroupSelected = { selected = it },
+                onGroupEventsClick = {},
+                onSettingsClick = {},
+                isRefreshing = refreshing,
+                onRefresh = { refreshing = true },
+            )
+        }
+        compose.onNodeWithText("KAL Hub").assertIsDisplayed()
         refreshing = true
         compose.waitForIdle()
-        compose.onNodeWithContentDescription("Refresh groups").assertDoesNotExist()
-
-        refreshing = false
-        compose.waitForIdle()
-        compose.onNodeWithContentDescription("Refresh groups").assertIsDisplayed()
+        compose.onNodeWithText("KAL Hub").assertIsDisplayed()
+        compose.onNodeWithText("Sock Society").performClick()
+        compose.runOnIdle { assertEquals(2L, selected?.id) }
     }
 
     @Test
