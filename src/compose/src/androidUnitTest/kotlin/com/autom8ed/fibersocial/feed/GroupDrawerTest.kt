@@ -58,6 +58,25 @@ class GroupDrawerTest {
     }
 
     @Test
+    fun `find groups row invokes onFindGroups`() {
+        var found = 0
+        compose.setContent {
+            GroupDrawer(
+                groups = twoGroups,
+                selectedGroup = twoGroups.first(),
+                eventCounts = emptyMap(),
+                user = user,
+                onGroupSelected = {},
+                onGroupEventsClick = {},
+                onSettingsClick = {},
+                onFindGroups = { found++ },
+            )
+        }
+        compose.onNodeWithText("Find groups").performClick()
+        compose.runOnIdle { assertEquals(1, found) }
+    }
+
+    @Test
     fun `drawer lists groups in the given order with no All Groups entry`() {
         // Issue #97: the synthetic All Groups row is gone; the list order is the
         // caller's (stored) order, verbatim.

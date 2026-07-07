@@ -38,6 +38,7 @@ import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FloatingActionButton
@@ -603,6 +604,7 @@ fun FeedScreen(
 
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
+    val uriHandler = LocalUriHandler.current
 
     CloseDrawerOnBack(drawerState)
 
@@ -629,6 +631,7 @@ fun FeedScreen(
                     viewModel.feed.selectGroup(group)
                 },
                 onReorder = { viewModel.feed.reorderGroups(it) },
+                onFindGroups = { uriHandler.openUri("https://www.ravelry.com/groups/search") },
                 onLeaveGroup = { group -> viewModel.feed.leaveGroup(group) },
                 leavingGroupId = leavingGroupId,
                 onGroupEventsClick = { group ->
@@ -940,6 +943,7 @@ internal fun GroupDrawer(
     onGroupEventsClick: (Group) -> Unit,
     onSettingsClick: () -> Unit,
     onReorder: (List<Group>) -> Unit = {},
+    onFindGroups: () -> Unit = {},
     onLeaveGroup: (Group) -> Unit = {},
     leavingGroupId: Long? = null,
 ) {
@@ -1156,6 +1160,17 @@ internal fun GroupDrawer(
                                     )
                                 },
                             ),
+                    )
+                }
+                // Discover and join more groups on Ravelry's own search page (issue #232 —
+                // linking out rather than rebuilding search in-app).
+                item(key = "find-groups") {
+                    NavigationDrawerItem(
+                        label = { Text("Find groups") },
+                        selected = false,
+                        onClick = onFindGroups,
+                        icon = { Icon(Icons.Default.Search, contentDescription = null) },
+                        modifier = Modifier.padding(horizontal = 12.dp),
                     )
                 }
                 item(key = "drawer-footer-spacer") { Spacer(Modifier.height(16.dp)) }
