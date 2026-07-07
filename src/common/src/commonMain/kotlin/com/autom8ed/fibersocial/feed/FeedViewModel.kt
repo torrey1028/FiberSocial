@@ -107,6 +107,12 @@ class FeedViewModel(
     /** Observable state of a "join the support group" action (see [joinSupportGroup]). */
     val joinState: StateFlow<JoinState> = _joinState.asStateFlow()
 
+    private val _leavingGroupId = MutableStateFlow<Long?>(null)
+
+    /** Id of the group currently being left (see [leaveGroup]), or null — drives the
+     *  leave confirmation's spinner (issue #231). */
+    val leavingGroupId: StateFlow<Long?> = _leavingGroupId.asStateFlow()
+
     /**
      * Joins the current user to the group at [permalink] (the app support group, from the
      * drawer's "Join feedback group" button), then reloads so the drawer reflects the new
@@ -132,6 +138,31 @@ class FeedViewModel(
             } catch (e: Exception) {
                 println("FiberSocial: joinSupportGroup error: ${e.message}")
                 _joinState.value = JoinState.Error(e.message ?: "Couldn't join the group")
+            }
+        }
+    }
+
+    /**
+     * Leaves [group] (issue #231), then re-scrapes memberships so it drops out of the
+     * drawer. If the user was viewing the group they left, falls back to the default group;
+     * otherwise the current selection is kept. No-ops if the feed isn't loaded.
+     */
+    fun leaveGroup(group: Group) {
+        val current = _state.value as? FeedState.Loaded ?: return
+        if (_leavingGroupId.value != null) return
+        _leavingGroupId.value = group.id
+        scope.launch {
+            try {
+                repository.leaveGroup(group.permalink)
+                val newSelection = if (current.selectedGroup?.id == group.id) null else current.selectedGroup
+                _state.value = fetchFeed(selectedGroup = newSelection)
+            } catch (e: SessionExpiredException) {
+                println("FiberSocial: leaveGroup session expired")
+                _sessionExpired.trySend(Unit)
+            } catch (e: Exception) {
+                println("FiberSocial: leaveGroup error: ${e.message}")
+            } finally {
+                _leavingGroupId.value = null
             }
         }
     }

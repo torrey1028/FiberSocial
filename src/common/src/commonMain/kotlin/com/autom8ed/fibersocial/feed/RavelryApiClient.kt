@@ -395,11 +395,32 @@ class RavelryApiClient(
      * @throws ForbiddenException if Ravelry refuses the join (403).
      * @throws IllegalStateException on any other rejection.
      */
-    suspend fun joinGroup(permalink: String) {
+    suspend fun joinGroup(permalink: String) =
+        membershipAction(permalink, action = "join", verb = "Join")
+
+    /**
+     * Leaves the group with [permalink] (issue #231). The mirror image of [joinGroup]: the
+     * same membership web form on www.ravelry.com and the same Rails `_method=put` tunnel,
+     * but posted to the group's `/leave` action instead of `/join` (per the group page's
+     * own "Leave group" control).
+     *
+     * @param permalink The group's permalink, e.g. `fibersocial-app-support`.
+     * @throws SessionExpiredException if the session cookie is rejected (redirect to login).
+     * @throws ForbiddenException if Ravelry refuses the leave (403).
+     * @throws IllegalStateException on any other rejection.
+     */
+    suspend fun leaveGroup(permalink: String) =
+        membershipAction(permalink, action = "leave", verb = "Leave")
+
+    /**
+     * Shared membership web form: PUT (tunneled via `_method=put`) to the group's [action]
+     * (`join` or `leave`). [verb] labels logs/errors.
+     */
+    private suspend fun membershipAction(permalink: String, action: String, verb: String) {
         val token = fetchAuthenticityToken()
         val cookie = sessionCookie()
         val response = httpClient.submitForm(
-            url = "$WWW_URL/groups/$permalink/join",
+            url = "$WWW_URL/groups/$permalink/$action",
             formParameters = parameters {
                 append("_method", "put")
                 append("authenticity_token", token)
@@ -407,7 +428,7 @@ class RavelryApiClient(
         ) {
             header(HttpHeaders.Cookie, cookie)
         }
-        println("FiberSocial: joinGroup($permalink) -> ${response.status}")
+        println("FiberSocial: ${verb}Group($permalink) -> ${response.status}")
         // Same redirect handling as deletePost: Ktor doesn't follow POST redirects, and an
         // expired session bounces to the login page — matched on the redirect's path so a
         // group permalink containing "login"/"account" can't false-positive.
@@ -417,13 +438,13 @@ class RavelryApiClient(
         when {
             redirectPath.startsWith("/login") || redirectPath.startsWith("/account") -> {
                 cachedAuthenticityToken = null
-                throw SessionExpiredException("Join of group $permalink redirected to login")
+                throw SessionExpiredException("$verb of group $permalink redirected to login")
             }
             response.status == HttpStatusCode.Forbidden -> throw ForbiddenException(forbiddenMessage(response))
             response.status.isSuccess() || response.status.value in 300..399 -> Unit
             else -> {
                 cachedAuthenticityToken = null
-                error("Join of group $permalink rejected: HTTP ${response.status.value}")
+                error("$verb of group $permalink rejected: HTTP ${response.status.value}")
             }
         }
     }

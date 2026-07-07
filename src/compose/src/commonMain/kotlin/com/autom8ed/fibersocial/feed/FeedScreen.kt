@@ -35,6 +35,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material3.Button
@@ -48,6 +49,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -280,6 +282,7 @@ fun FeedScreen(
     val eventsState by viewModel.events.state.collectAsState()
     val eventDetailState by viewModel.eventDetail.state.collectAsState()
     val joinState by viewModel.feed.joinState.collectAsState()
+    val leavingGroupId by viewModel.feed.leavingGroupId.collectAsState()
     // Hoisted above the topic-detail early-return below so the feed's scroll position
     // survives opening a topic and coming back (issue #204): FeedList is removed from
     // composition while a topic is open, so a list state owned by it would reset to top.
@@ -626,6 +629,8 @@ fun FeedScreen(
                     viewModel.feed.selectGroup(group)
                 },
                 onReorder = { viewModel.feed.reorderGroups(it) },
+                onLeaveGroup = { group -> viewModel.feed.leaveGroup(group) },
+                leavingGroupId = leavingGroupId,
                 onGroupEventsClick = { group ->
                     scope.launch { drawerState.close() }
                     eventsGroup = group
@@ -935,7 +940,46 @@ internal fun GroupDrawer(
     onGroupEventsClick: (Group) -> Unit,
     onSettingsClick: () -> Unit,
     onReorder: (List<Group>) -> Unit = {},
+    onLeaveGroup: (Group) -> Unit = {},
+    leavingGroupId: Long? = null,
 ) {
+    // The group awaiting a leave confirmation (issue #231), if any.
+    var pendingLeave by remember { mutableStateOf<Group?>(null) }
+    pendingLeave?.let { group ->
+        // Leaving takes a moment (the app re-scrapes memberships), so the dialog stays open
+        // and turns into a spinner until it's done, then auto-dismisses.
+        val leaving = leavingGroupId == group.id
+        var started by remember(group.id) { mutableStateOf(false) }
+        LaunchedEffect(leaving) {
+            if (started && !leaving) pendingLeave = null
+        }
+        AlertDialog(
+            // Can't dismiss mid-leave — the spinner is doing work.
+            onDismissRequest = { if (!leaving) pendingLeave = null },
+            title = { Text("Leave ${group.name}?") },
+            text = {
+                if (leaving) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                        Spacer(Modifier.width(12.dp))
+                        Text("Leaving ${group.name}…")
+                    }
+                } else {
+                    Text("You'll stop seeing this group's topics. You can re-join it from Ravelry.")
+                }
+            },
+            confirmButton = {
+                if (!leaving) {
+                    TextButton(onClick = { started = true; onLeaveGroup(group) }) { Text("Leave") }
+                }
+            },
+            dismissButton = {
+                if (!leaving) {
+                    TextButton(onClick = { pendingLeave = null }) { Text("Cancel") }
+                }
+            },
+        )
+    }
     // Reordering is an explicit mode (issue #97): outside it the list is locked; inside
     // it each row grows a drag handle, row taps are disabled, and rows can be dragged —
     // immediately from the handle, or via long-press anywhere on the row.
@@ -1022,7 +1066,7 @@ internal fun GroupDrawer(
                             modifier = Modifier.weight(1f),
                         )
                         TextButton(onClick = { reorderMode = !reorderMode }) {
-                            Text(if (reorderMode) "Done" else "Reorder")
+                            Text(if (reorderMode) "Done" else "Edit")
                         }
                     }
                 }
@@ -1057,16 +1101,32 @@ internal fun GroupDrawer(
                                 )
                             }
                         },
-                        badge = if (eventCount > 0) {
-                            {
-                                GroupEventsBadge(
-                                    count = eventCount,
-                                    // Same reasoning as the row's own onClick above: a
-                                    // rearrange can't be allowed to navigate away.
-                                    onClick = { if (!reorderMode) onGroupEventsClick(group) },
-                                )
+                        badge = when {
+                            // In edit mode the trailing slot offers "leave this group" (#231)
+                            // in place of the event badge.
+                            reorderMode -> {
+                                {
+                                    IconButton(onClick = { pendingLeave = group }) {
+                                        Icon(
+                                            Icons.Default.Delete,
+                                            contentDescription = "Leave ${group.name}",
+                                            tint = MaterialTheme.colorScheme.error,
+                                        )
+                                    }
+                                }
                             }
-                        } else null,
+                            eventCount > 0 -> {
+                                {
+                                    GroupEventsBadge(
+                                        count = eventCount,
+                                        // Same reasoning as the row's own onClick above: a
+                                        // rearrange can't be allowed to navigate away.
+                                        onClick = { if (!reorderMode) onGroupEventsClick(group) },
+                                    )
+                                }
+                            }
+                            else -> null
+                        },
                         modifier = Modifier
                             .padding(horizontal = 12.dp)
                             // Displaced rows slide to their new slot so the reorder is
