@@ -74,13 +74,44 @@ class TopicCardTest {
     }
 
     @Test
-    fun `labels the last-reply time distinctly from the started time`() {
+    fun `labels the last-post time distinctly from the started time`() {
         // Issue #242: once "Started ... ago" appears too, the bottom-row time must be
         // labeled so it isn't mistaken for the start time.
         compose.setContent {
             TopicCard(item = item(lastPostAt = "2020/01/01 00:00:00 +0000"), onClick = {})
         }
-        compose.onNodeWithText("Last reply", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("Last post", substring = true).assertIsDisplayed()
+    }
+
+    @Test
+    fun `a single-post topic's last-post time falls back to when it was started`() {
+        // A topic with just its opening post has no reply yet, so its own start time IS
+        // the last post's time — verified with lastPostAt null (Ravelry's replied_at may
+        // simply be absent pre-reply).
+        compose.setContent {
+            TopicCard(
+                item = item(postCount = 1, lastPostAt = null, createdAt = "2020/01/01 00:00:00 +0000"),
+                onClick = {},
+            )
+        }
+        compose.onNodeWithText("Last post", substring = true).assertIsDisplayed()
+    }
+
+    @Test
+    fun `a single-post topic uses createdAt even if lastPostAt is also populated`() {
+        // Whatever Ravelry's replied_at happens to report for a topic nobody has replied
+        // to yet, a single-post topic's last post is unconditionally its start time.
+        compose.setContent {
+            TopicCard(
+                item = item(
+                    postCount = 1,
+                    lastPostAt = "2020/06/01 00:00:00 +0000",
+                    createdAt = "2020/01/01 00:00:00 +0000",
+                ),
+                onClick = {},
+            )
+        }
+        compose.onNodeWithText("Last post", substring = true).assertIsDisplayed()
     }
 
     @Test

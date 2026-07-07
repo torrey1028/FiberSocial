@@ -109,11 +109,18 @@ fun TopicCard(
                         )
                     }
                 }
-                // Labeled "Last reply" (not just the bare time) so it isn't confused with
-                // the "Started ... " time now shown above (issue #242).
-                val lastReplyRelative = relativeTime(item.lastPostAt)
+                // Labeled "Last post" (not just the bare time) so it isn't confused with
+                // the "Started ... " time now shown above (issue #242). A topic with only
+                // its opening post (postCount <= 1) has no reply yet, so its own start
+                // time IS the last post's time — use createdAt rather than lastPostAt
+                // there, regardless of what Ravelry's replied_at happens to report for an
+                // un-replied-to topic (its exact null-vs-populated behavior in that case
+                // isn't relied on here).
+                val lastPostRelative = relativeTime(
+                    if (item.postCount <= 1) item.createdAt else item.lastPostAt,
+                )
                 Text(
-                    text = if (lastReplyRelative.isNotBlank()) "Last reply $lastReplyRelative" else "",
+                    text = if (lastPostRelative.isNotBlank()) "Last post $lastPostRelative" else "",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
