@@ -56,9 +56,31 @@ class TopicDetailScreenPullToRefreshTest {
     }
 
     @Test
-    fun `shows the jump-to-last-read button when the topic has an unread post`() {
+    fun `shows the jump-to-last-read button when the unread post is off screen`() {
         // Issue #185: firstUnreadPostNumber drives an ExtendedFloatingActionButton that
-        // scrolls the thread to the first unread post.
+        // scrolls the thread to the first unread post. Enough posts that the target is
+        // genuinely below the fold, unlike issue #255's short-topic case below.
+        val posts = (1..60L).map { id ->
+            Post(id = id, bodyHtml = "<p>post $id</p>", user = RavelryUser(username = "a"))
+        }
+        val unreadTopic = topic.copy(postCount = 60, unreadCount = 10, firstUnreadPostNumber = 50)
+        compose.setContent {
+            TopicDetailScreen(
+                topic = unreadTopic,
+                postsState = TopicDetailState.Loaded(posts = posts),
+                onBack = {},
+                onVote = { _, _ -> },
+            )
+        }
+
+        compose.onNodeWithText("Jump to last read").assertIsDisplayed()
+    }
+
+    @Test
+    fun `hides the jump-to-last-read button when the whole topic already fits on screen`() {
+        // Issue #255: a short topic (here, 3 posts) can render entirely within the
+        // viewport, including its one unread post — there's nothing left to "jump" to,
+        // even though the thread technically has an unread post.
         val unreadTopic = topic.copy(postCount = 3, unreadCount = 2, firstUnreadPostNumber = 2)
         val posts = listOf(
             Post(id = 1L, bodyHtml = "<p>one</p>", user = RavelryUser(username = "a")),
@@ -74,7 +96,7 @@ class TopicDetailScreenPullToRefreshTest {
             )
         }
 
-        compose.onNodeWithText("Jump to last read").assertIsDisplayed()
+        compose.onNodeWithText("Jump to last read").assertDoesNotExist()
     }
 
     @Test

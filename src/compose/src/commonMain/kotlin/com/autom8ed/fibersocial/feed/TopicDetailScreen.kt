@@ -256,12 +256,18 @@ fun TopicDetailScreen(
         // A deep jump may have to wait for pages to load in before it can scroll there
         // (issue #205); while it does, the button shows a spinner and this stays true.
         var pendingJump by remember(topic.id) { mutableStateOf(false) }
-        // Show the jump button until the user has scrolled down to (or past) that post,
-        // or while a deep jump is still loading the pages in between.
+        // Show the jump button until the target post is already visible on screen, or
+        // while a deep jump is still loading the pages in between. Gated on the LAST
+        // visible item, not the first (issue #255): a short topic that fits entirely on
+        // screen already shows every post — including the unread one — so there's nothing
+        // left to "jump" to, even though the first visible item (the header) is still
+        // above it.
         val showJump by remember(firstUnread) {
             derivedStateOf {
-                firstUnread != null && !markedAllRead &&
-                    (pendingJump || listState.firstVisibleItemIndex < firstUnread)
+                if (firstUnread == null || markedAllRead) return@derivedStateOf false
+                if (pendingJump) return@derivedStateOf true
+                val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+                lastVisible < firstUnread
             }
         }
         // Load the next page as the user nears the end of the thread (issue #202). The
