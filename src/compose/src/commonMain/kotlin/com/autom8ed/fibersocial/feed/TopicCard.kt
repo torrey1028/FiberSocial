@@ -110,10 +110,17 @@ fun TopicCard(
                     }
                 }
                 // Labeled "Last reply" (not just the bare time) so it isn't confused with
-                // the "Started ... " time now shown above (issue #242).
+                // the "Started ... " time now shown above (issue #242). Suppressed when
+                // postCount == 1: Ravelry's replied_at reflects the most recent post,
+                // including the opening one, so a topic with no actual replies yet would
+                // otherwise render "Last reply" for a reply that never happened.
                 val lastReplyRelative = relativeTime(item.lastPostAt)
                 Text(
-                    text = if (lastReplyRelative.isNotBlank()) "Last reply $lastReplyRelative" else "",
+                    text = if (item.postCount > 1 && lastReplyRelative.isNotBlank()) {
+                        "Last reply $lastReplyRelative"
+                    } else {
+                        ""
+                    },
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

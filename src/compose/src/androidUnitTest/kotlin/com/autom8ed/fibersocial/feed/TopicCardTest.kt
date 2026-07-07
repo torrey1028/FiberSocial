@@ -84,6 +84,20 @@ class TopicCardTest {
     }
 
     @Test
+    fun `hides the last-reply label for a topic with no replies yet`() {
+        // Ravelry's replied_at reflects the most recent post including the opening one,
+        // so a fresh topic (postCount == 1) can carry a non-null lastPostAt with no real
+        // reply behind it — the card must not claim a reply happened.
+        compose.setContent {
+            TopicCard(
+                item = item(postCount = 1, lastPostAt = "2020/01/01 00:00:00 +0000"),
+                onClick = {},
+            )
+        }
+        compose.onNodeWithText("Last reply", substring = true).assertDoesNotExist()
+    }
+
+    @Test
     fun `renders the summary's formatting instead of leaking markup`() {
         compose.setContent {
             TopicCard(item = item(bodySummary = "Cast on **all** the *stitches*"), onClick = {})
