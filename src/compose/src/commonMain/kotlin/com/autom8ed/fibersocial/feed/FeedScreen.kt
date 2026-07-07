@@ -50,6 +50,7 @@ import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -121,6 +122,46 @@ import com.autom8ed.fibersocial.ui.UserAvatar
 import kotlinx.coroutines.launch
 import org.jetbrains.compose.resources.painterResource
 import org.jetbrains.compose.resources.stringResource
+
+/**
+ * Full-page loading screen shown while the initial feed (groups) loads (issue #233).
+ * Mirrors the login screen — logo, name, tagline — with a spinner in place of the button,
+ * so the launch experience is a deliberate loading page rather than half-built chrome.
+ */
+@Composable
+internal fun LaunchLoadingScreen() {
+    // The theme sets colors but no background (FiberSocialTheme has no Surface), and this
+    // screen renders before the feed's Scaffold — so it needs its own themed surface, or
+    // it falls through to the raw window background (wrong in both light and dark). #233
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        color = MaterialTheme.colorScheme.background,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(32.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
+            Image(
+                painter = painterResource(appLogoResource()),
+                contentDescription = stringResource(Res.string.app_logo_content_description),
+                modifier = Modifier.size(120.dp),
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(text = "FiberSocial", style = MaterialTheme.typography.displaySmall)
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "A community companion for Ravelry",
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(modifier = Modifier.height(48.dp))
+            CircularProgressIndicator()
+        }
+    }
+}
 
 /**
  * Softly fades [fadeWidth] of a composable's leading and/or trailing edge to transparent
@@ -549,6 +590,14 @@ fun FeedScreen(
         return
     }
 
+    // Initial load: show a full-page loading screen instead of the drawer + empty group
+    // list + a settings page with nothing to act on, so the user can't click around
+    // half-built chrome while groups are still loading (issue #233).
+    if (state is FeedState.Loading) {
+        LaunchLoadingScreen()
+        return
+    }
+
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
 
@@ -618,10 +667,10 @@ fun FeedScreen(
             },
         ) { padding ->
             when (val s = state) {
-                FeedState.Loading -> Box(
-                    modifier = Modifier.fillMaxSize().padding(padding),
-                    contentAlignment = Alignment.Center,
-                ) { CircularProgressIndicator() }
+                // Loading is handled by the full-page LaunchLoadingScreen early-return
+                // above (issue #233), so it never reaches the Scaffold; this arm only
+                // keeps the sealed `when` exhaustive.
+                FeedState.Loading -> Unit
 
                 // Recovery must go through load(), not refresh(): refresh() no-ops
                 // unless the state is Loaded, so from Error it can never leave the
