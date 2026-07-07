@@ -5,6 +5,7 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -81,5 +82,39 @@ class FeedScrollPositionTest {
         compose.waitForIdle()
 
         assertEquals(scrolledIndex, listState.firstVisibleItemIndex)
+    }
+
+    @Test
+    fun `feed scroll position resets to the top when switching groups`() {
+        // The counterpart to the topic-return case: because the hoisted state now survives
+        // the list leaving composition, a group SWITCH (different content) must NOT keep the
+        // old group's offset. FeedScreen keys the hoisted state by the selected group id;
+        // reproduce that keying here and confirm switching groups lands back at the top.
+        val items = (1..40L).map(::feedItem)
+        lateinit var listState: LazyListState
+        var selectedGroupId by mutableStateOf(1L)
+
+        compose.setContent {
+            listState = key(selectedGroupId) { rememberLazyListState() }
+            val itemsState = remember { items }
+            FeedList(
+                items = itemsState,
+                hasMore = false,
+                loadingMore = false,
+                onLoadMore = {},
+                listState = listState,
+                onTopicClick = {},
+            )
+        }
+
+        compose.onNode(hasScrollAction()).performScrollToIndex(20)
+        compose.waitForIdle()
+        assertTrue(listState.firstVisibleItemIndex > 0, "precondition: the list actually scrolled down")
+
+        // Switch to a different group.
+        selectedGroupId = 2L
+        compose.waitForIdle()
+
+        assertEquals(0, listState.firstVisibleItemIndex)
     }
 }

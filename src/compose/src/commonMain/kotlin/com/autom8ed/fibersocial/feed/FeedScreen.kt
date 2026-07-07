@@ -61,6 +61,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -141,7 +142,18 @@ fun FeedScreen(
     // Hoisted above the topic-detail early-return below so the feed's scroll position
     // survives opening a topic and coming back (issue #204): FeedList is removed from
     // composition while a topic is open, so a list state owned by it would reset to top.
-    val feedListState = rememberLazyListState()
+    // Keyed by the selected group so it resets to the top on a group SWITCH (the new
+    // group is different content) while still surviving a topic open/return within the
+    // same group — without the key, switching groups would leave the list at the old
+    // group's stale scroll offset (and could fire a spurious load-more). `key { … }`
+    // keeps rememberLazyListState's own rememberSaveable, so config-change restore still
+    // works; a plain remember(groupId) would drop it.
+    val selectedGroupId = when (val s = state) {
+        is FeedState.Loaded -> s.selectedGroup?.id
+        is FeedState.Refreshing -> s.stale.selectedGroup?.id
+        else -> null
+    }
+    val feedListState = key(selectedGroupId) { rememberLazyListState() }
     var selectedTopic by remember { mutableStateOf<FeedItem?>(null) }
     var selectedEventPermalink by remember { mutableStateOf<String?>(null) }
     var eventsGroup by remember { mutableStateOf<Group?>(null) }
