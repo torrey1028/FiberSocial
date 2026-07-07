@@ -793,7 +793,11 @@ fun FeedScreen(
                 ) {
                     val displayedItems = filterUnread(s.items, showUnreadOnly)
                     if (showUnreadOnly && displayedItems.isEmpty()) {
-                        UnreadFilterEmptyState()
+                        UnreadFilterEmptyState(
+                            hasMore = s.hasMore,
+                            loadingMore = s.loadingMore,
+                            onLoadMore = { viewModel.feed.loadMore() },
+                        )
                     } else {
                         FeedList(
                             items = displayedItems,
@@ -833,7 +837,11 @@ fun FeedScreen(
                 ) {
                     val displayedItems = filterUnread(s.stale.items, showUnreadOnly)
                     if (showUnreadOnly && displayedItems.isEmpty()) {
-                        UnreadFilterEmptyState()
+                        UnreadFilterEmptyState(
+                            hasMore = s.stale.hasMore,
+                            loadingMore = s.stale.loadingMore,
+                            onLoadMore = { viewModel.feed.loadMore() },
+                        )
                     } else {
                         FeedList(
                             items = displayedItems,
@@ -1037,9 +1045,19 @@ internal fun FeedErrorState(
  * nothing to show — every topic currently loaded for this group has already been read.
  * Scrollable (like [FeedErrorState]) so the surrounding [PullToRefreshBox] still has a
  * nested-scrolling child to engage pull-to-refresh on.
+ *
+ * Replacing [FeedList] here means its own scroll-triggered pagination never mounts, so
+ * when [hasMore] is true this offers an explicit "Check more topics" affordance instead
+ * — otherwise a group whose loaded page(s) happen to be fully read would report "No
+ * unread topics" with no way to reach further, unfetched pages that might have some.
  */
 @Composable
-internal fun UnreadFilterEmptyState(modifier: Modifier = Modifier) {
+internal fun UnreadFilterEmptyState(
+    hasMore: Boolean = false,
+    loadingMore: Boolean = false,
+    onLoadMore: () -> Unit = {},
+    modifier: Modifier = Modifier,
+) {
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -1048,12 +1066,20 @@ internal fun UnreadFilterEmptyState(modifier: Modifier = Modifier) {
         verticalArrangement = Arrangement.Center,
     ) {
         Text(
-            text = "No unread topics",
+            text = if (hasMore) "No unread topics in what's loaded so far" else "No unread topics",
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
             modifier = Modifier.padding(horizontal = 32.dp),
         )
+        if (hasMore) {
+            Spacer(modifier = Modifier.height(12.dp))
+            if (loadingMore) {
+                CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+            } else {
+                TextButton(onClick = onLoadMore) { Text("Check more topics") }
+            }
+        }
     }
 }
 
