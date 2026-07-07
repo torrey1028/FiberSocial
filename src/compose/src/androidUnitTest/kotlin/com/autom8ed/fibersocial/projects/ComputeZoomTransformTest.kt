@@ -45,6 +45,17 @@ class ComputeZoomTransformTest {
     }
 
     @Test
+    fun `zooming out re-clamps an existing pan into the smaller bounds`() {
+        // At 4x, (1500, 1200) is a valid max pan (size * (4-1) / 2). Zooming down to 2x must
+        // pull the existing offset back into 2x's tighter (500, 400) bounds — clamping only
+        // the incoming pan, or against the old scale, would leave the image stuck off-center.
+        val (scale, offset) = computeZoomTransform(4f, Offset(1500f, 1200f), zoom = 0.5f, pan = Offset.Zero, size = size)
+        assertEquals(2f, scale)
+        assertEquals(500f, offset.x)
+        assertEquals(400f, offset.y)
+    }
+
+    @Test
     fun `a fit-to-screen image with no zoom stays put`() {
         val (scale, offset) = computeZoomTransform(1f, Offset.Zero, zoom = 1f, pan = Offset(50f, 50f), size = size)
         assertEquals(1f, scale)

@@ -460,12 +460,6 @@ private fun CommentComposer(
 }
 
 /**
- * Full-screen photo viewer: tapping a project photo opens it large over a scrim, with a
- * horizontal pager to swipe through all of the project's photos. Tap a photo (or system
- * back / the close button) to dismiss. Shows the largest available size.
- */
-@OptIn(ExperimentalFoundationApi::class)
-/**
  * Next zoom [scale] (clamped 1x–4x) and pan [offset] for the full-screen photo after a
  * pinch [zoom] and [pan] over a view of [size] (issue #192). Pan is clamped so the image
  * can't be dragged past its edges; zooming back to 1x recenters it.
@@ -488,6 +482,12 @@ internal fun computeZoomTransform(
     return newScale to newOffset
 }
 
+/**
+ * Full-screen photo viewer: tapping a project photo opens it large over a scrim, with a
+ * horizontal pager to swipe through all of the project's photos. Tap a photo (or system
+ * back / the close button) to dismiss. Shows the largest available size.
+ */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun FullScreenPhoto(photos: List<ProjectPhoto>, initialIndex: Int, onDismiss: () -> Unit) {
     if (photos.isEmpty()) return
