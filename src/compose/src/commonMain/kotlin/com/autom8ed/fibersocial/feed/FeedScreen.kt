@@ -580,10 +580,10 @@ fun FeedScreen(
             },
         ) { padding ->
             when (val s = state) {
-                FeedState.Loading -> Box(
-                    modifier = Modifier.fillMaxSize().padding(padding),
-                    contentAlignment = Alignment.Center,
-                ) { CircularProgressIndicator() }
+                // Loading is handled by the full-page LaunchLoadingScreen early-return
+                // above (issue #233), so it never reaches the Scaffold; this arm only
+                // keeps the sealed `when` exhaustive.
+                FeedState.Loading -> Unit
 
                 // Recovery must go through load(), not refresh(): refresh() no-ops
                 // unless the state is Loaded, so from Error it can never leave the
