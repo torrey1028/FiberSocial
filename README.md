@@ -31,6 +31,23 @@ Downloading and installing the link again upgrades the app in place — no need 
 | Android blocks the install | Enable **Install unknown apps** for the app you used to open the `.apk` (see step 3 above), then retry. |
 | App crashes on launch after an update | Uncommon, but if it happens: **Settings > Apps > FiberSocial > Storage > Clear storage**, then log in again. |
 
+## Install (iOS — TestFlight)
+
+The iOS app is distributed through **TestFlight** (Apple's beta-testing app),
+not the App Store. To try it:
+
+1. **Request access** with the sign-up form:
+   **[Sign up to test on iOS](https://forms.gle/CdVHvkKciTG2MLRJ7)** — it
+   collects the Apple ID email your invite is sent to.
+2. Install **[TestFlight](https://apps.apple.com/app/testflight/id899247664)**
+   from the App Store on your iPhone or iPad.
+3. Once you're added you'll get an email with a redeem link — open it, tap
+   **Accept**, then **Install** in TestFlight, and log in with your Ravelry
+   account.
+
+All you need is an iPhone or iPad, a **free Apple ID**, and the TestFlight app —
+no paid developer account. Newer builds show up in TestFlight automatically.
+
 ## Building from source
 
 See [`src/README.md`](src/README.md) for build/test instructions per platform.
