@@ -31,6 +31,53 @@ KMP targets & source sets (both shared modules):
 - `:composeApp`: `commonMain / androidMain / iosMain`; tests in `commonTest`,
   `androidUnitTest` (Robolectric Compose UI), `iosTest`.
 
+## Folder-structure convention (issue #217)
+
+The repo-relative directory tree groups code by **what it is** (shared logic vs
+shared UI) at the top, then by **platform** underneath — never the other way
+round:
+
+```
+src/
+  common/
+    logic/    <- :common module: commonMain, commonTest, jvmMain
+    compose/  <- :composeApp module: commonMain, commonTest
+  platform/
+    android/
+      app/                 <- :app module (Android-only, no KMP)
+      common/androidMain/       <- :common's Android actuals
+      composeApp/androidMain/   <- :composeApp's Android actuals
+      composeApp/androidUnitTest/
+    ios/
+      common/iosMain/          <- :common's iOS actuals
+      composeApp/iosMain/       <- :composeApp's iOS actuals
+      composeApp/iosTest/
+      FiberSocial.xcodeproj/, FiberSocialTests/  <- native iOS project (unchanged)
+```
+
+**Placement rules for new code:**
+- Shared, non-UI Kotlin (models, API calls, parsing, storage interfaces) that
+  both platforms use unchanged → `src/common/logic/commonMain/`.
+- Shared Compose UI (screens, composables) that both platforms render →
+  `src/common/compose/commonMain/`.
+- Kotlin behind `expect`/`actual` that's genuinely Android-only → `src/platform/android/common/androidMain/`
+  (non-UI) or `src/platform/android/composeApp/androidMain/` (UI). Same pattern
+  for iOS under `src/platform/ios/`.
+- Code specific to the `:app` shell (Android application/manifest wiring, not
+  KMP) → `src/platform/android/app/`.
+- **Never add platform-specific code back into `src/common/`** — if it needs an
+  `actual` declaration or a platform API, it belongs under `src/platform/<platform>/`.
+
+Each Gradle module's `build.gradle.kts` lives inside its own `projectDir` (a
+Gradle requirement — see `src/common/logic/build.gradle.kts` /
+`src/common/compose/build.gradle.kts`) and explicitly overrides every source
+set's `kotlin` directory to point at these locations, since none of them match
+Kotlin's `<projectDir>/src/<sourceSetName>/kotlin` convention. Use the additive
+`kotlin.srcDir(...)`, not `kotlin.setSrcDirs(...)` — the latter replaces the
+whole source-dir list and can silently wipe out generated directories other
+plugins register on the same source set (this bit `:composeApp`'s Compose
+Resources `Res` accessor generation once already).
+
 **TRAP:** most `git worktree add` traps, secret handling, and background-build
 rules live in the sibling skills below and in `CLAUDE.md` — read them, don't guess.
 
@@ -40,7 +87,7 @@ This project hand-rolls things a bigger app would pull a library for. Do not go
 looking for the library — it isn't there.
 
 - **No DI framework.** Manual factory functions in
-  `src/common/.../net/RavelryClients.kt` (`ravelryAuthRepository(...)`,
+  `src/common/logic/.../net/RavelryClients.kt` (`ravelryAuthRepository(...)`,
   `ravelryApiClient(...)`), assembled per platform (Android `FeedAndroidViewModel`,
   iOS `app/IosModels.kt`).
 - **No navigation library.** Navigation is hand-rolled `remember { mutableStateOf(...) }`
@@ -56,7 +103,7 @@ looking for the library — it isn't there.
 ## Two headline API truths
 
 1. **Half real JSON API, half HTML scraping.** The single central client
-   `src/common/.../feed/RavelryApiClient.kt` talks to TWO hosts:
+   `src/common/logic/.../feed/RavelryApiClient.kt` talks to TWO hosts:
    `BASE_URL = https://api.ravelry.com` (JSON API, most reads) and
    `WWW_URL = https://www.ravelry.com` (website HTML scraped with Ksoup, plus
    Rails "web-protocol" form POSTs with `_method=put|delete` + scraped
@@ -76,11 +123,11 @@ looking for the library — it isn't there.
 | `src/platform/android/{build.gradle.kts, app/build.gradle.kts}` | Android build + versionCode/versionName derivation |
 | `src/common/logic/build.gradle.kts` | KMP targets, coverage report tasks |
 | `src/common/compose/build.gradle.kts` | Compose MP source sets |
-| `src/common/.../net/RavelryClients.kt` | manual DI factories |
-| `src/common/.../feed/RavelryApiClient.kt` | THE central API client (~1100 lines; JSON + scraping) |
-| `src/common/.../feed/models/` | `@Serializable` domain models (`Topic`, `Post`, `Group`, ...) |
-| `src/common/.../feed/html/` | `PostDocument` + `HtmlPostParser` / `MarkdownPostParser` |
-| `src/common/.../auth/` | OAuth PKCE, `AuthRepository`, token storage |
+| `src/common/logic/.../net/RavelryClients.kt` | manual DI factories |
+| `src/common/logic/.../feed/RavelryApiClient.kt` | THE central API client (~1100 lines; JSON + scraping) |
+| `src/common/logic/.../feed/models/` | `@Serializable` domain models (`Topic`, `Post`, `Group`, ...) |
+| `src/common/logic/.../feed/html/` | `PostDocument` + `HtmlPostParser` / `MarkdownPostParser` |
+| `src/common/logic/.../auth/` | OAuth PKCE, `AuthRepository`, token storage |
 | `src/common/compose/.../feed/FeedScreen.kt` | shared post-login root + hand-rolled nav |
 | `src/common/compose/.../feed/PostBody.kt` | rich renderer for card + full post |
 | `src/platform/android/app/.../MainActivity.kt` | Android entry / post-auth root |

@@ -16,7 +16,7 @@ Key files (repo-relative):
 - `.../feed/html/PreviewInlines.kt` — `previewInlines()` walker
 - `src/common/compose/commonMain/kotlin/com/autom8ed/fibersocial/feed/PostBody.kt` — the rich renderer
 - `.../feed/TopicCard.kt` — feed card; `.../feed/TopicDetailScreen.kt` — full topic
-- `src/common/.../feed/FeedRepository.kt` — unread count
+- `src/common/logic/.../feed/FeedRepository.kt` — unread count
 
 ## Fast verification
 
