@@ -98,7 +98,7 @@ Confirmed live in `getProjects()`: `url.parameters.append("sort", "created_")`. 
 2. **Wrapper DTO** — a `private @Serializable data class FooResponse(...)` at the bottom of `RavelryApiClient`, matching the JSON envelope (Ravelry wraps payloads, e.g. `{"topic": {...}}`, `{"topics": [...], "paginator": {...}}`).
 3. **`suspend fun`** on `RavelryApiClient` — `authenticatedRequest { httpClient.get/post(...) { Bearer header; params or FormDataContent } }` then `lenientJson.decodeFromString<FooResponse>(raw).foo`. Free-text writes → `FormDataContent`. Lists → a `...Page` struct.
 4. **Repository / ViewModel** — delegate from the feature repo (e.g. `FeedRepository`) or call from a `feed/*ViewModel.kt`. No DI framework: clients are assembled by hand in `net/RavelryClients.kt` and the platform models.
-5. **Compose screen** — render in a `:compose` screen (`src/compose/.../feed/`). No navigation library; screens toggle via `mutableStateOf` flags inside `FeedScreen`.
+5. **Compose screen** — render in a `:composeApp` screen (`src/common/compose/.../feed/`). No navigation library; screens toggle via `mutableStateOf` flags inside `FeedScreen`.
 6. **Test** — a `MockEngine` test in `RavelryApiClientTest.kt`. See the testing section.
 
 ## Web-protocol pattern (capabilities with NO JSON API)
