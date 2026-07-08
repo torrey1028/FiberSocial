@@ -52,7 +52,7 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.autom8ed.fibersocial"
+        applicationId = "com.myhobbyislearning.fibersocial"
         minSdk = 26
         targetSdk = 34
         versionCode = releaseTag?.let { (major, minor, patch) -> major * 1_000_000 + minor * 1_000 + patch } ?: 1

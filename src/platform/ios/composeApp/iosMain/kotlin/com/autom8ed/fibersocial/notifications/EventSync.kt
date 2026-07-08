@@ -45,7 +45,7 @@ import platform.Foundation.dateWithTimeIntervalSinceNow
 @OptIn(ExperimentalForeignApi::class)
 object EventSync {
 
-    const val REFRESH_TASK_IDENTIFIER = "com.autom8ed.fibersocial.refresh"
+    const val REFRESH_TASK_IDENTIFIER = "com.myhobbyislearning.fibersocial.refresh"
 
     private val scope: CoroutineScope = MainScope()
     private var inFlight: Job? = null
