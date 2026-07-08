@@ -44,8 +44,8 @@ MODULE_ROOTS = {
         "src/platform/android/common/androidMain/kotlin",
     ],
     ":composeApp": [
-        "src/compose/src/commonMain/kotlin",
-        "src/compose/src/androidMain/kotlin",
+        "src/common/compose/commonMain/kotlin",
+        "src/platform/android/composeApp/androidMain/kotlin",
     ],
     ":app": [
         "src/platform/android/app/src/main/kotlin",

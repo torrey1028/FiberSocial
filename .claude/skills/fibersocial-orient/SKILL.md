@@ -21,7 +21,7 @@ them out of the android dir:
 |---|---|---|
 | `:app` | `src/platform/android/app/` | Android application shell (`MainActivity`) |
 | `:common` | `src/common/logic/` (repathed) | Shared non-UI Kotlin (net, auth, feed API, models, html parsing) |
-| `:composeApp` | `src/compose/` (repathed) | Shared Compose Multiplatform UI |
+| `:composeApp` | `src/common/compose/` (repathed) | Shared Compose Multiplatform UI |
 
 KMP targets & source sets (both shared modules):
 - `:common`: `jvm()`, `androidTarget()`, `iosArm64()`, `iosSimulatorArm64()`;
@@ -50,7 +50,7 @@ looking for the library — it isn't there.
   `MainActivity` (`setContent { ... }`) and iOS (the `IosApp` composable in
   `MainViewController.kt`). The
   shared post-login root both converge on is **`FeedScreen`**
-  (`src/compose/src/commonMain/.../feed/FeedScreen.kt`). Change post-login UI
+  (`src/common/compose/commonMain/.../feed/FeedScreen.kt`). Change post-login UI
   wiring in one platform → check the other.
 
 ## Two headline API truths
@@ -75,16 +75,16 @@ looking for the library — it isn't there.
 | `src/platform/android/settings.gradle.kts` | module→dir repathing; start here to understand layout |
 | `src/platform/android/{build.gradle.kts, app/build.gradle.kts}` | Android build + versionCode/versionName derivation |
 | `src/common/logic/build.gradle.kts` | KMP targets, coverage report tasks |
-| `src/compose/build.gradle.kts` | Compose MP source sets |
+| `src/common/compose/build.gradle.kts` | Compose MP source sets |
 | `src/common/.../net/RavelryClients.kt` | manual DI factories |
 | `src/common/.../feed/RavelryApiClient.kt` | THE central API client (~1100 lines; JSON + scraping) |
 | `src/common/.../feed/models/` | `@Serializable` domain models (`Topic`, `Post`, `Group`, ...) |
 | `src/common/.../feed/html/` | `PostDocument` + `HtmlPostParser` / `MarkdownPostParser` |
 | `src/common/.../auth/` | OAuth PKCE, `AuthRepository`, token storage |
-| `src/compose/.../feed/FeedScreen.kt` | shared post-login root + hand-rolled nav |
-| `src/compose/.../feed/PostBody.kt` | rich renderer for card + full post |
+| `src/common/compose/.../feed/FeedScreen.kt` | shared post-login root + hand-rolled nav |
+| `src/common/compose/.../feed/PostBody.kt` | rich renderer for card + full post |
 | `src/platform/android/app/.../MainActivity.kt` | Android entry / post-auth root |
-| `src/compose/src/iosMain/.../app/MainViewController.kt` | iOS entry / post-auth root |
+| `src/platform/ios/composeApp/iosMain/.../app/MainViewController.kt` | iOS entry / post-auth root |
 | `src/platform/android/{deploy.sh, test.sh}` | device deploy / test entry points |
 | `scripts/compare_coverage.py`, `scripts/release.sh` | coverage gate / release tagging |
 

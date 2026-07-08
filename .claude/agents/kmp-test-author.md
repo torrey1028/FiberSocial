@@ -16,8 +16,8 @@ For the full reference consult the **test-and-coverage** skill; this agent is th
 **Gradle root is `src/platform/android/`, NOT the repo root.** Every `./gradlew` runs from there. Tests live in five roots:
 
 - `src/common/logic/commonTest/` — pure-Kotlin (JVM + K/N), incl. the MockEngine API tests
-- `src/compose/src/androidUnitTest/` — Robolectric Compose UI tests
-- `src/compose/src/iosTest/`, `src/platform/android/app/src/test/`, `src/platform/ios/FiberSocialTests/` (hosted XCTest)
+- `src/platform/android/composeApp/androidUnitTest/` — Robolectric Compose UI tests
+- `src/platform/ios/composeApp/iosTest/`, `src/platform/android/app/src/test/`, `src/platform/ios/FiberSocialTests/` (hosted XCTest)
 
 ## Run the suite — the `bash` invocation
 
@@ -110,7 +110,7 @@ Cover the invariants that matter for this client: the exact endpoint/params hit,
 
 ## Writing a real test — Robolectric Compose UI tests
 
-Compose UI is tested under `src/compose/src/androidUnitTest/` with Robolectric (run by `:composeApp:testDebugUnitTest`). Pattern (see `feed/FeedTopBarTest.kt`):
+Compose UI is tested under `src/platform/android/composeApp/androidUnitTest/` with Robolectric (run by `:composeApp:testDebugUnitTest`). Pattern (see `feed/FeedTopBarTest.kt`):
 
 ```kotlin
 @RunWith(RobolectricTestRunner::class)
