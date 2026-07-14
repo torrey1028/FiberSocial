@@ -12,7 +12,8 @@ import kotlinx.serialization.Serializable
  *   been observed to silently drop image paragraphs that are present here (issue #102).
  *   Also used to pre-fill the post editor.
  * @property bodyHtml HTML content of the post body, rendered server-side from [body].
- * @property createdAt ISO-8601 timestamp when the post was submitted.
+ * @property createdAt Ravelry API timestamp (`"yyyy/MM/dd HH:mm:ss Z"`, e.g.
+ *   `"2026/07/08 17:30:00 -0700"` — see [relativeTime]) when the post was submitted.
  * @property user Author of the post.
  * @property voteTotals Vote-type name (e.g. "love") to total vote count on this post.
  *   Only populated when requested via `include=vote_totals`.
