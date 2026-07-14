@@ -1,18 +1,17 @@
 package com.myhobbyislearning.fibersocial.profile
 
 import com.myhobbyislearning.fibersocial.auth.SessionExpiredException
+import com.myhobbyislearning.fibersocial.auth.SessionExpirySignal
 import com.myhobbyislearning.fibersocial.feed.RavelryApiClient
 import com.myhobbyislearning.fibersocial.feed.models.Group
 import com.myhobbyislearning.fibersocial.projects.ProjectSummary
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
-import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -81,16 +80,13 @@ class UserProfileViewModel(
     private val scope: CoroutineScope,
 ) {
     private val _state = MutableStateFlow<UserProfileState>(UserProfileState.Hidden)
-    private val _sessionExpired = Channel<Unit>(Channel.BUFFERED)
+    private val sessionExpirySignal = SessionExpirySignal()
 
     /** Observable profile page state. */
     val state: StateFlow<UserProfileState> = _state.asStateFlow()
 
-    /**
-     * Emits [Unit] when a [SessionExpiredException] is caught. Each emission is consumed
-     * exactly once — no replay on re-subscription. Collect to navigate to login.
-     */
-    val sessionExpired: Flow<Unit> = _sessionExpired.receiveAsFlow()
+    /** @see SessionExpirySignal.flow */
+    val sessionExpired: Flow<Unit> = sessionExpirySignal.flow
 
     /** A monotonically increasing token; results from a dismissed page may not surface. */
     private var generation = 0
@@ -144,7 +140,7 @@ class UserProfileViewModel(
                 // page's own load will surface the expiry if the session is really gone.
                 if (gen == generation) {
                     _state.value = UserProfileState.Hidden
-                    _sessionExpired.trySend(Unit)
+                    sessionExpirySignal.signal()
                 }
             } catch (e: Exception) {
                 println("FiberSocial: UserProfileViewModel.open($username) error: ${e.message}")
