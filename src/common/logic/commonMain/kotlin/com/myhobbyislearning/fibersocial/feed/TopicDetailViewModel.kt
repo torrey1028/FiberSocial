@@ -354,31 +354,24 @@ class TopicDetailViewModel(
     fun sendReply(topicId: Long, body: String) {
         val trimmed = body.trim()
         if (trimmed.isEmpty() || _replyState.value is ReplyState.Sending) return
-        _replyState.value = ReplyState.Sending
         // A send that outlives its topic (user navigated away mid-flight) must not
         // touch state: the reply would append into whichever topic is now loaded, and
-        // a stale Sent/Error could wipe the next topic's half-typed draft.
-        val generation = topicGeneration
-        scope.launch {
-            try {
-                val post = apiClient.postReply(topicId, trimmed)
-                if (generation != topicGeneration) return@launch
+        // a stale Sent/Error could wipe the next topic's half-typed draft (enforced by
+        // runPostOp's generation guard).
+        runPostOp(
+            logLabel = "sendReply",
+            onInFlight = { _replyState.value = ReplyState.Sending },
+            operation = { apiClient.postReply(topicId, trimmed) },
+            onSuccess = { post ->
                 val current = _state.value
                 if (current is TopicDetailState.Loaded) {
                     _state.value = TopicDetailState.Loaded(current.posts + post)
                 }
                 _replyState.value = ReplyState.Sent
-            } catch (e: SessionExpiredException) {
-                println("FiberSocial: TopicDetailViewModel.sendReply session expired")
-                if (generation == topicGeneration) _replyState.value = ReplyState.Idle
-                _sessionExpired.trySend(Unit)
-            } catch (e: Exception) {
-                println("FiberSocial: TopicDetailViewModel.sendReply error: ${e.message}")
-                if (generation == topicGeneration) {
-                    _replyState.value = ReplyState.Error(e.message ?: "Failed to post reply")
-                }
-            }
-        }
+            },
+            onSessionExpired = { _replyState.value = ReplyState.Idle },
+            onError = { message -> _replyState.value = ReplyState.Error(message ?: "Failed to post reply") },
+        )
     }
 
     /** Monotonic token: a send from a previous topic may not touch the current one's state. */
@@ -413,14 +406,13 @@ class TopicDetailViewModel(
      */
     fun deletePost(post: Post) {
         if (_deleteState.value is DeleteState.Deleting) return
-        _deleteState.value = DeleteState.Deleting(post.id)
         // Same in-flight-outlives-its-topic contract as sendReply: after navigating
         // away, this coroutine may not touch the new topic's thread or dialogs.
-        val generation = topicGeneration
-        scope.launch {
-            try {
-                apiClient.deletePost(post.id)
-                if (generation != topicGeneration) return@launch
+        runPostOp(
+            logLabel = "deletePost",
+            onInFlight = { _deleteState.value = DeleteState.Deleting(post.id) },
+            operation = { apiClient.deletePost(post.id) },
+            onSuccess = {
                 val current = _state.value
                 if (current is TopicDetailState.Loaded) {
                     val wasOpeningPost = current.posts.firstOrNull()?.id == post.id
@@ -428,17 +420,10 @@ class TopicDetailViewModel(
                     if (wasOpeningPost) _topicDeleted.trySend(Unit)
                 }
                 _deleteState.value = DeleteState.Idle
-            } catch (e: SessionExpiredException) {
-                println("FiberSocial: TopicDetailViewModel.deletePost session expired")
-                if (generation == topicGeneration) _deleteState.value = DeleteState.Idle
-                _sessionExpired.trySend(Unit)
-            } catch (e: Exception) {
-                println("FiberSocial: TopicDetailViewModel.deletePost error: ${e.message}")
-                if (generation == topicGeneration) {
-                    _deleteState.value = DeleteState.Error(e.message ?: "Failed to delete post")
-                }
-            }
-        }
+            },
+            onSessionExpired = { _deleteState.value = DeleteState.Idle },
+            onError = { message -> _deleteState.value = DeleteState.Error(message ?: "Failed to delete post") },
+        )
     }
 
     /** Clears a [DeleteState.Error] after the UI has shown it. */
@@ -458,25 +443,17 @@ class TopicDetailViewModel(
     fun editPost(post: Post, newBody: String) {
         val trimmed = newBody.trim()
         if (trimmed.isEmpty() || _editState.value is EditState.Saving) return
-        _editState.value = EditState.Saving(post.id)
-        val generation = topicGeneration
-        scope.launch {
-            try {
-                val updated = apiClient.editPost(post.id, trimmed)
-                if (generation != topicGeneration) return@launch
+        runPostOp(
+            logLabel = "editPost",
+            onInFlight = { _editState.value = EditState.Saving(post.id) },
+            operation = { apiClient.editPost(post.id, trimmed) },
+            onSuccess = { updated ->
                 updatePost(post.id) { it.copy(body = updated.body, bodyHtml = updated.bodyHtml) }
                 _editState.value = EditState.Idle
-            } catch (e: SessionExpiredException) {
-                println("FiberSocial: TopicDetailViewModel.editPost session expired")
-                if (generation == topicGeneration) _editState.value = EditState.Idle
-                _sessionExpired.trySend(Unit)
-            } catch (e: Exception) {
-                println("FiberSocial: TopicDetailViewModel.editPost error: ${e.message}")
-                if (generation == topicGeneration) {
-                    _editState.value = EditState.Error(e.message ?: "Failed to save edit")
-                }
-            }
-        }
+            },
+            onSessionExpired = { _editState.value = EditState.Idle },
+            onError = { message -> _editState.value = EditState.Error(message ?: "Failed to save edit") },
+        )
     }
 
     /** Clears an [EditState.Error] after the UI has shown it. */
@@ -526,6 +503,45 @@ class TopicDetailViewModel(
         val current = _state.value
         if (current is TopicDetailState.Loaded) {
             _state.value = current.copy(posts = current.posts.map { if (it.id == postId) transform(it) else it })
+        }
+    }
+
+    /**
+     * Runs a post-affecting network operation, sharing the launch/generation-guard/
+     * session-expiry contract that [sendReply], [deletePost], and [editPost] each
+     * hand-rolled identically (issue #269).
+     *
+     * [onInFlight] sets the operation's "in flight" state before launching. [operation]
+     * makes the network call. The generation is captured right after [onInFlight] — same
+     * ordering the three call sites already used — so a result landing after the user has
+     * navigated to a different topic ([topicGeneration] having since advanced) is dropped:
+     * neither [onSuccess] nor [onError]/[onSessionExpired] touches state in that case,
+     * matching the original in-flight-outlives-its-topic contract. Session expiry always
+     * signals [sessionExpired] regardless of generation.
+     */
+    private inline fun <R> runPostOp(
+        logLabel: String,
+        onInFlight: () -> Unit,
+        crossinline operation: suspend () -> R,
+        crossinline onSuccess: (R) -> Unit,
+        crossinline onSessionExpired: () -> Unit,
+        crossinline onError: (String?) -> Unit,
+    ) {
+        onInFlight()
+        val generation = topicGeneration
+        scope.launch {
+            try {
+                val result = operation()
+                if (generation != topicGeneration) return@launch
+                onSuccess(result)
+            } catch (e: SessionExpiredException) {
+                println("FiberSocial: TopicDetailViewModel.$logLabel session expired")
+                if (generation == topicGeneration) onSessionExpired()
+                _sessionExpired.trySend(Unit)
+            } catch (e: Exception) {
+                println("FiberSocial: TopicDetailViewModel.$logLabel error: ${e.message}")
+                if (generation == topicGeneration) onError(e.message)
+            }
         }
     }
 }
