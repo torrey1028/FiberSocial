@@ -37,6 +37,23 @@ class RavelryHttpClientTest {
     }
 
     @Test
+    fun `installRavelryDefaults sends an identifying User-Agent`() = runTest {
+        var capturedUserAgent: String? = null
+        val client = HttpClient(MockEngine { request ->
+            capturedUserAgent = request.headers["User-Agent"]
+            respond(content = "{}", status = HttpStatusCode.OK)
+        }) {
+            installRavelryDefaults()
+        }
+        try {
+            client.get("https://example.com")
+            assertEquals(RAVELRY_USER_AGENT, capturedUserAgent)
+        } finally {
+            client.close()
+        }
+    }
+
+    @Test
     fun `ravelryHttpClient returns a usable client`() {
         // Exercises the platform actual (jvm's CIO here); real HTTP calls are covered
         // per-feature against RavelryApiClient/RavelryOAuthClient with a mock engine.
