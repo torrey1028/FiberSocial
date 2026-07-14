@@ -18,8 +18,10 @@ import kotlinx.serialization.Serializable
  *   Deliberately unused for feed classification (issue #77: branching on it silently
  *   hid topics); retained as scrape-contract documentation and for a future
  *   image-preview feature.
- * @property repliedAt ISO-8601 timestamp of the most recent reply.
- * @property createdAt ISO-8601 timestamp when the topic was first posted.
+ * @property repliedAt Ravelry API timestamp (`"yyyy/MM/dd HH:mm:ss Z"`, e.g.
+ *   `"2026/07/08 17:30:00 -0700"` — see [relativeTime]) of the most recent reply.
+ * @property createdAt Ravelry API timestamp (same `"yyyy/MM/dd HH:mm:ss Z"` shape as
+ *   [repliedAt]) when the topic was first posted.
  * @property sticky Whether a moderator has pinned this topic to the top of the forum.
  * @property archived Whether the topic is closed for new replies.
  * @property createdByUser Author of the opening post. Only present in detail responses.

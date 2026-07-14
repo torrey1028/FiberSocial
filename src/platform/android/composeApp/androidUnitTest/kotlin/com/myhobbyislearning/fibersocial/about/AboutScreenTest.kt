@@ -21,7 +21,7 @@ class AboutScreenTest {
     @Test
     fun `shows the non-affiliation statement`() {
         compose.setContent {
-            AboutScreen(onBack = {}, onOpenRepo = {})
+            AboutScreen(onBack = {}, onOpenRepo = {}, onOpenPrivacyPolicy = {})
         }
         compose.onNodeWithText(
             "FiberSocial is an independent, unofficial app for Ravelry. It is not " +
@@ -35,7 +35,7 @@ class AboutScreenTest {
     fun `top-bar back arrow invokes onBack`() {
         var backs = 0
         compose.setContent {
-            AboutScreen(onBack = { backs++ }, onOpenRepo = {})
+            AboutScreen(onBack = { backs++ }, onOpenRepo = {}, onOpenPrivacyPolicy = {})
         }
         compose.onNodeWithContentDescription("Back").performClick()
         compose.runOnIdle { assertEquals(1, backs) }
@@ -45,7 +45,7 @@ class AboutScreenTest {
     fun `system back press invokes onBack`() {
         var backs = 0
         compose.setContent {
-            AboutScreen(onBack = { backs++ }, onOpenRepo = {})
+            AboutScreen(onBack = { backs++ }, onOpenRepo = {}, onOpenPrivacyPolicy = {})
         }
         compose.runOnIdle {
             compose.activity.onBackPressedDispatcher.onBackPressed()
@@ -57,9 +57,19 @@ class AboutScreenTest {
     fun `tapping the repo link invokes onOpenRepo`() {
         var opened = 0
         compose.setContent {
-            AboutScreen(onBack = {}, onOpenRepo = { opened++ })
+            AboutScreen(onBack = {}, onOpenRepo = { opened++ }, onOpenPrivacyPolicy = {})
         }
         compose.onNodeWithText("View source on GitHub").performClick()
+        compose.runOnIdle { assertEquals(1, opened) }
+    }
+
+    @Test
+    fun `tapping the privacy policy link invokes onOpenPrivacyPolicy`() {
+        var opened = 0
+        compose.setContent {
+            AboutScreen(onBack = {}, onOpenRepo = {}, onOpenPrivacyPolicy = { opened++ })
+        }
+        compose.onNodeWithText("Privacy Policy").performClick()
         compose.runOnIdle { assertEquals(1, opened) }
     }
 }
