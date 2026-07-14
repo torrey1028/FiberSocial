@@ -6,7 +6,10 @@ import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
@@ -18,8 +21,11 @@ actual fun WebViewLoginScreen(
     onAuthComplete: (code: String, state: String?, sessionCookie: String) -> Unit,
 ) {
     println("FiberSocial: WebViewLoginScreen authUrl=$authUrl")
+    // Edge-to-edge (mandatory once targetSdk >= 35) draws content behind the system
+    // bars by default; without this, the OAuth page's own header/submit controls can
+    // end up under the status/navigation bar rather than just under app chrome.
     AndroidView(
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing),
         factory = { context ->
             WebView(context).apply {
                 settings.javaScriptEnabled = true
