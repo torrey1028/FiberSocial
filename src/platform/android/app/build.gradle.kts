@@ -47,14 +47,16 @@ val localProps = Properties().also { props ->
 android {
     namespace = "com.myhobbyislearning.fibersocial"
     // 36 required by Coil 3.5; 35+ by the Compose 1.11 artifacts that Compose Multiplatform 1.11 pins.
-    // targetSdk stays 34: compileSdk only raises the API surface we build against,
-    // not the runtime behavior the app opts into.
     compileSdk = 36
 
     defaultConfig {
         applicationId = "com.myhobbyislearning.fibersocial"
         minSdk = 26
-        targetSdk = 34
+        // Matches compileSdk: targeting 36 opts into edge-to-edge enforcement (Android 15+,
+        // no opt-out), handled in MainActivity/SystemBarStyle. Predictive back is NOT opted
+        // into (no android:enableOnBackInvokedCallback, no custom OnBackPressedCallback to
+        // migrate) — this bump only affects edge-to-edge.
+        targetSdk = 36
         versionCode = releaseTag?.let { (major, minor, patch) -> major * 1_000_000 + minor * 1_000 + patch } ?: 1
         versionName = releaseTag?.let { (major, minor, patch) -> "$major.$minor.$patch" } ?: gitVersionName()
         buildConfigField("String", "RAVELRY_CLIENT_ID", "\"${localProps.getProperty("ravelry.client_id", "")}\"")
