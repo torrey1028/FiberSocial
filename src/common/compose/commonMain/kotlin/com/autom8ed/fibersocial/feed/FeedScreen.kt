@@ -101,6 +101,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
+import com.autom8ed.fibersocial.about.AboutScreen
 import com.autom8ed.fibersocial.debug.DebugPanel
 import com.autom8ed.fibersocial.events.EventDetailScreen
 import com.autom8ed.fibersocial.events.EventsScreen
@@ -396,6 +397,9 @@ fun FeedScreen(
     var showSettings by rememberSaveable { mutableStateOf(false) }
     // Declared here (not at the feed chrome below) so the Settings block above can open it (#207).
     var showDebugPanel by remember { mutableStateOf(false) }
+    // Opened from the Settings block below without clearing showSettings, so backing out
+    // of About returns to the still-open Settings screen (issue #289).
+    var showAbout by remember { mutableStateOf(false) }
     var composingTopic by rememberSaveable { mutableStateOf(false) }
     var sendingFeedback by rememberSaveable { mutableStateOf(false) }
 
@@ -407,6 +411,7 @@ fun FeedScreen(
             // the notification tap would visibly do nothing.
             selectedTopic = null
             showSettings = false
+            showAbout = false
             eventsGroup = null
             composingTopic = false
             sendingFeedback = false
@@ -528,6 +533,17 @@ fun FeedScreen(
         return
     }
 
+    // Rendered before settings so "About FiberSocial" (opened from Settings, issue #289)
+    // shows over it; backing out returns to the still-open settings screen.
+    if (showAbout) {
+        val uriHandler = LocalUriHandler.current
+        AboutScreen(
+            onBack = { showAbout = false },
+            onOpenRepo = { uriHandler.openUri("https://github.com/torrey1028/FiberSocial") },
+        )
+        return
+    }
+
     if (showSettings) {
         var pollCadence by remember { mutableStateOf<PollCadence?>(null) }
         // effective: a legacy stored hours value migrates to a cadence bucket rather
@@ -557,6 +573,7 @@ fun FeedScreen(
             } else {
                 null
             },
+            onOpenAbout = { showAbout = true },
         )
         return
     }
