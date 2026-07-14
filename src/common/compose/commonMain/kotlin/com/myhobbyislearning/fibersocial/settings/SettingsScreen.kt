@@ -31,6 +31,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.materialIcon
 import androidx.compose.material.icons.materialPath
@@ -57,6 +58,7 @@ import com.myhobbyislearning.fibersocial.ui.UserAvatar
  * @param themeMode Current theme override; null while loading (row hidden, same
  *   convention as [pollCadence]).
  * @param onThemeModeSelected Invoked with the chosen theme mode.
+ * @param onOpenAbout Opens the "About FiberSocial" disclosure screen (issue #289).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -70,6 +72,7 @@ fun SettingsScreen(
     onThemeModeSelected: (ThemeMode) -> Unit = {},
     // Non-null on debug builds only: shows a "Debug panel" entry (issue #207).
     onOpenDebugPanel: (() -> Unit)? = null,
+    onOpenAbout: () -> Unit = {},
 ) {
     // Sign out is the only other tappable row on this screen and fires on a single tap
     // with no undo (issue #262) — a fat-finger tap wipes the OAuth session and, via the
@@ -186,6 +189,18 @@ fun SettingsScreen(
                 }
                 HorizontalDivider()
             }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onOpenAbout, onClickLabel = "About FiberSocial", role = Role.Button)
+                    .padding(horizontal = 16.dp, vertical = 16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(Icons.Default.Info, contentDescription = null)
+                Spacer(Modifier.width(16.dp))
+                Text(text = "About FiberSocial", style = MaterialTheme.typography.bodyLarge)
+            }
+            HorizontalDivider()
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
