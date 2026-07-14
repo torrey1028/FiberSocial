@@ -153,6 +153,66 @@ class TopicDetailScreenPullToRefreshTest {
     }
 
     @Test
+    fun `jump button reappears when scrolling back up past the furthest point reached`() {
+        // Issue #257 (follow-up to #255/#256): once the user has scrolled deeper than
+        // the original unread marker, that deeper point is the more useful thing to jump
+        // back to. Before this fix, showJump stayed gated on the static original
+        // firstUnreadPostNumber, so scrolling back up from post 200 (after reading past
+        // post 50's original marker) found no way back to 200 — the button just never
+        // reappeared.
+        val posts = (1..300L).map { id ->
+            Post(id = id, bodyHtml = "<p>post $id</p>", user = RavelryUser(username = "a"))
+        }
+        val unreadTopic = topic.copy(postCount = 300, unreadCount = 250, firstUnreadPostNumber = 50)
+        compose.setContent {
+            TopicDetailScreen(
+                topic = unreadTopic,
+                postsState = TopicDetailState.Loaded(posts = posts, hasMore = false),
+                onBack = {},
+                onVote = { _, _ -> },
+            )
+        }
+
+        // Scroll well past the original marker (post 50) down to post 200 — furthestSeen
+        // now tracks 200, and the button correctly hides once it does.
+        compose.onNode(hasScrollAction()).performScrollToNode(hasText("post 200"))
+        compose.waitForIdle()
+        compose.onNodeWithText("Jump to last read").assertDoesNotExist()
+
+        // Scroll back up to post 100 — still past the ORIGINAL marker (50), but well
+        // short of the deepest point actually reached (200). The button must reappear,
+        // not stay hidden just because 100 > 50.
+        compose.onNode(hasScrollAction()).performScrollToNode(hasText("post 100"))
+        compose.waitForIdle()
+        compose.onNodeWithText("Jump to last read").assertIsDisplayed()
+    }
+
+    @Test
+    fun `tapping the reappeared jump button scrolls to the furthest point reached, not the stale original marker`() {
+        val posts = (1..300L).map { id ->
+            Post(id = id, bodyHtml = "<p>post $id</p>", user = RavelryUser(username = "a"))
+        }
+        val unreadTopic = topic.copy(postCount = 300, unreadCount = 250, firstUnreadPostNumber = 50)
+        compose.setContent {
+            TopicDetailScreen(
+                topic = unreadTopic,
+                postsState = TopicDetailState.Loaded(posts = posts, hasMore = false),
+                onBack = {},
+                onVote = { _, _ -> },
+            )
+        }
+
+        compose.onNode(hasScrollAction()).performScrollToNode(hasText("post 200"))
+        compose.waitForIdle()
+        compose.onNode(hasScrollAction()).performScrollToNode(hasText("post 100"))
+        compose.waitForIdle()
+
+        compose.onNodeWithText("Jump to last read").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText("post 200").assertIsDisplayed()
+    }
+
+    @Test
     fun `shows the jump button for a fully-read topic that isn't fully visible, targeting the end`() {
         // On-device review of #255/#256 asked for the same button (not a distinct one)
         // to still offer a way to skip to the bottom of a topic with nothing unread, as

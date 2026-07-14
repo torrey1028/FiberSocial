@@ -259,10 +259,18 @@ fun TopicDetailScreen(
         // number N is list index N.
         val firstUnread = topic.firstUnreadPostNumber
         val jumpTarget = if (firstUnread == null || firstUnread <= 1) topic.postCount else firstUnread
+        // Once the user has scrolled deeper than the original jumpTarget, that deeper point
+        // (furthestSeen, below) becomes the more useful thing to jump back to — otherwise
+        // scrolling back up from post 200 after reading past post 50's original marker finds
+        // no way back to 200 (issue #257). Read directly inside showJump's derivedStateOf
+        // below (not via this val) so its remember(jumpTarget)-cached calculation still
+        // reacts to furthestSeen changing on its own. Safe to use here for the scroll
+        // targets: unlike that calculation, these aren't cached across recompositions.
+        val effectiveJumpTarget = maxOf(jumpTarget, furthestSeen)
         // A deep jump may have to wait for pages to load in before it can scroll there
         // (issue #205); while it does, the button shows a spinner and this stays true.
         var pendingJump by remember(topic.id) { mutableStateOf(false) }
-        // Show the jump button until the ACTUAL jump target is already visible on screen,
+        // Show the jump button until the effective jump target is already visible on screen,
         // or while a deep jump is still loading the pages in between. Gated on jumpTarget,
         // not unconditionally on the topic's very last post (postCount): on a long-running
         // thread (hundreds of posts over months), postCount can sit far beyond the real
@@ -276,7 +284,7 @@ fun TopicDetailScreen(
                 if (markedAllRead) return@derivedStateOf false
                 if (pendingJump) return@derivedStateOf true
                 val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
-                lastVisible < jumpTarget
+                lastVisible < maxOf(jumpTarget, furthestSeen)
             }
         }
         // Load the next page as the user nears the end of the thread (issue #202). The
@@ -315,7 +323,7 @@ fun TopicDetailScreen(
         // compose and parse every one it flies past (janky); a jump should land instantly.
         LaunchedEffect(pendingJump, loaded?.isLoadingMore) {
             if (pendingJump && loaded?.isLoadingMore == false) {
-                listState.scrollToItem(jumpTarget.coerceIn(0, postCount))
+                listState.scrollToItem(effectiveJumpTarget.coerceIn(0, postCount))
                 pendingJump = false
             }
         }
@@ -437,13 +445,13 @@ fun TopicDetailScreen(
                 onClick = {
                     if (pendingJump) return@ExtendedFloatingActionButton
                     val count = loaded?.posts?.size ?: 0
-                    if (count >= jumpTarget || loaded?.hasMore != true) {
+                    if (count >= effectiveJumpTarget || loaded?.hasMore != true) {
                         // Target already loaded (or nothing more to load): scroll now.
-                        jumpScope.launch { listState.animateScrollToItem(jumpTarget.coerceIn(0, count)) }
+                        jumpScope.launch { listState.animateScrollToItem(effectiveJumpTarget.coerceIn(0, count)) }
                     } else {
                         // Target is pages away: load forward, then the effect above scrolls.
                         pendingJump = true
-                        onLoadUntil(jumpTarget)
+                        onLoadUntil(effectiveJumpTarget)
                     }
                 },
                 modifier = Modifier
