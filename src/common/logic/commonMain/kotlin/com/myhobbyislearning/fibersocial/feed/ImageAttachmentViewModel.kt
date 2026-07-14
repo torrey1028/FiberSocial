@@ -2,15 +2,14 @@ package com.myhobbyislearning.fibersocial.feed
 
 import com.myhobbyislearning.fibersocial.auth.ForbiddenException
 import com.myhobbyislearning.fibersocial.auth.SessionExpiredException
+import com.myhobbyislearning.fibersocial.auth.SessionExpirySignal
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 
 /**
@@ -64,17 +63,14 @@ class ImageAttachmentViewModel(
     private val scope: CoroutineScope,
 ) {
     private val _state = MutableStateFlow<ImageAttachmentState>(ImageAttachmentState.Idle)
-    private val _sessionExpired = Channel<Unit>(Channel.BUFFERED)
+    private val sessionExpirySignal = SessionExpirySignal()
     private var uploadJob: Job? = null
 
     /** Observable state of the current attachment upload. */
     val state: StateFlow<ImageAttachmentState> = _state.asStateFlow()
 
-    /**
-     * Emits [Unit] when a [SessionExpiredException] is caught. Each emission is consumed
-     * exactly once — no replay on re-subscription. Collect to navigate to login.
-     */
-    val sessionExpired: Flow<Unit> = _sessionExpired.receiveAsFlow()
+    /** @see SessionExpirySignal.flow */
+    val sessionExpired: Flow<Unit> = sessionExpirySignal.flow
 
     /** Uploads an already-loaded image; see [attach] with a loader for the full contract. */
     fun attach(fileName: String, contentType: String, bytes: ByteArray) =
@@ -115,7 +111,7 @@ class ImageAttachmentViewModel(
         } catch (e: SessionExpiredException) {
             println("FiberSocial: ImageAttachmentViewModel.attach session expired")
             _state.value = ImageAttachmentState.Idle
-            _sessionExpired.trySend(Unit)
+            sessionExpirySignal.signal()
         } catch (e: ForbiddenException) {
             // Attachment hosting is a Ravelry Extras feature; the API answers 403
             // for accounts without the subscription.

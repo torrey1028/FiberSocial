@@ -1,6 +1,7 @@
 package com.myhobbyislearning.fibersocial.events
 
 import com.myhobbyislearning.fibersocial.auth.SessionExpiredException
+import com.myhobbyislearning.fibersocial.auth.SessionExpirySignal
 import com.myhobbyislearning.fibersocial.feed.RavelryApiClient
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -46,7 +47,7 @@ class EventDetailViewModel(
     private val onAttendanceChanged: (() -> Unit)? = null,
 ) {
     private val _state = MutableStateFlow<EventDetailState>(EventDetailState.Loading)
-    private val _sessionExpired = Channel<Unit>(Channel.BUFFERED)
+    private val sessionExpirySignal = SessionExpirySignal()
 
     private val _attendees = MutableStateFlow<List<EventAttendee>?>(null)
 
@@ -60,11 +61,8 @@ class EventDetailViewModel(
      */
     val attendees: StateFlow<List<EventAttendee>?> = _attendees.asStateFlow()
 
-    /**
-     * Emits [Unit] when a [SessionExpiredException] is caught. Each emission is consumed
-     * exactly once — no replay on re-subscription. Collect to navigate to login.
-     */
-    val sessionExpired: Flow<Unit> = _sessionExpired.receiveAsFlow()
+    /** @see SessionExpirySignal.flow */
+    val sessionExpired: Flow<Unit> = sessionExpirySignal.flow
 
     private val _attendanceChanged = Channel<AttendanceChange>(Channel.BUFFERED)
 
@@ -104,7 +102,7 @@ class EventDetailViewModel(
                 }
             } catch (e: SessionExpiredException) {
                 println("FiberSocial: EventDetailViewModel.load session expired")
-                _sessionExpired.trySend(Unit)
+                sessionExpirySignal.signal()
                 EventDetailState.Loading
             } catch (e: Exception) {
                 println("FiberSocial: EventDetailViewModel.load failed: ${e.message}")
@@ -136,7 +134,7 @@ class EventDetailViewModel(
                 apiClient.setEventAttendance(permalink, attending = target, csrfToken = token)
             } catch (e: SessionExpiredException) {
                 println("FiberSocial: EventDetailViewModel.toggleAttendance session expired")
-                _sessionExpired.trySend(Unit)
+                sessionExpirySignal.signal()
                 false
             } catch (e: Exception) {
                 println("FiberSocial: EventDetailViewModel.toggleAttendance error: ${e.message}")
