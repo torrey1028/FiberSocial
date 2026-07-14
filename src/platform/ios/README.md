@@ -80,8 +80,9 @@ Anyone can test with a **free Apple ID** and the **TestFlight app** — no paid
 Developer account required (that's only for whoever uploads). Every build goes
 to App Store Connect first; "internal" vs "external" is chosen there.
 
-Prospective testers sign up via the form:
-<https://forms.gle/CdVHvkKciTG2MLRJ7> — it collects the Apple ID email needed
+Prospective testers sign up via the shared cross-platform form (root
+`README.md`'s **Become a tester** section):
+<https://forms.gle/FrQp4SMwbSVEj76o9> — it collects the Apple ID email needed
 to send the invite.
 
 - **Internal** (no App Review, ≤100): testers must be members of the App Store
