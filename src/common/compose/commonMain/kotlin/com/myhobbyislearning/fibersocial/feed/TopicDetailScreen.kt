@@ -73,7 +73,9 @@ import com.myhobbyislearning.fibersocial.feed.models.Post
 import com.myhobbyislearning.fibersocial.ui.Avatar
 import com.myhobbyislearning.fibersocial.profile.UsernameLink
 import com.myhobbyislearning.fibersocial.ui.DeleteConfirmDialog
+import com.myhobbyislearning.fibersocial.ui.ErrorText
 import com.myhobbyislearning.fibersocial.ui.MessageComposer
+import com.myhobbyislearning.fibersocial.ui.SendingSpinner
 import com.myhobbyislearning.fibersocial.feed.models.RavelryUser
 import com.myhobbyislearning.fibersocial.feed.models.VoteType
 import com.myhobbyislearning.fibersocial.feed.models.hasVoted
@@ -554,12 +556,10 @@ private fun EditBar(
                 .padding(horizontal = 12.dp, vertical = 8.dp),
         ) {
             if (error) {
-                Text(
+                ErrorText(
                     text = (editState as? EditState.Error)?.message
                         ?.ifBlank { "Couldn't save your edit. Try again." }
                         ?: "Couldn't save your edit. Try again.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
                     modifier = Modifier.padding(bottom = 4.dp),
                 )
             }
@@ -574,7 +574,7 @@ private fun EditBar(
                 )
                 Spacer(Modifier.width(4.dp))
                 if (saving) {
-                    CircularProgressIndicator(modifier = Modifier.size(32.dp).padding(4.dp))
+                    SendingSpinner()
                 } else {
                     IconButton(onClick = onClose) {
                         Icon(Icons.Default.Close, contentDescription = "Cancel edit")

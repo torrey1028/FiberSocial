@@ -1,15 +1,14 @@
 package com.myhobbyislearning.fibersocial.feed
 
 import com.myhobbyislearning.fibersocial.auth.SessionExpiredException
+import com.myhobbyislearning.fibersocial.auth.SessionExpirySignal
 import com.myhobbyislearning.fibersocial.feed.models.Topic
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 
 /**
@@ -48,16 +47,13 @@ class NewTopicViewModel(
     private val scope: CoroutineScope,
 ) {
     private val _state = MutableStateFlow<NewTopicState>(NewTopicState.Idle)
-    private val _sessionExpired = Channel<Unit>(Channel.BUFFERED)
+    private val sessionExpirySignal = SessionExpirySignal()
 
     /** Observable state of the current topic creation. */
     val state: StateFlow<NewTopicState> = _state.asStateFlow()
 
-    /**
-     * Emits [Unit] when a [SessionExpiredException] is caught. Each emission is consumed
-     * exactly once — no replay on re-subscription. Collect to navigate to login.
-     */
-    val sessionExpired: Flow<Unit> = _sessionExpired.receiveAsFlow()
+    /** @see SessionExpirySignal.flow */
+    val sessionExpired: Flow<Unit> = sessionExpirySignal.flow
 
     /**
      * Creates a topic titled [title] with [body] as its opening post in forum [forumId].
@@ -82,7 +78,7 @@ class NewTopicViewModel(
             } catch (e: SessionExpiredException) {
                 println("FiberSocial: NewTopicViewModel.create session expired")
                 _state.value = NewTopicState.Idle
-                _sessionExpired.trySend(Unit)
+                sessionExpirySignal.signal()
             } catch (e: Exception) {
                 println("FiberSocial: NewTopicViewModel.create error: ${e.message}")
                 _state.value = NewTopicState.Error(e.message ?: "Failed to create topic")
