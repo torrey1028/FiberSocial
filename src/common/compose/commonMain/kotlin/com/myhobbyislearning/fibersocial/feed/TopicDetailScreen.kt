@@ -33,6 +33,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -40,6 +41,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -325,6 +327,21 @@ fun TopicDetailScreen(
         // load without restarting the snapshot collector.
         val postCount = (displayState as? TopicDetailState.Loaded)?.posts?.size ?: 0
         val postCountState = rememberUpdatedState(postCount)
+        // A deep jump-to-newest may also have to wait for pages to load (mirrors
+        // pendingJump above, but always loads to the true end rather than a specific
+        // post number — see the LaunchedEffect below).
+        var pendingJumpToNewest by remember(topic.id) { mutableStateOf(false) }
+        // "Jump to newest" (issue #309 follow-up) is a distinct action from "jump to last
+        // read": it's always available as a plain "scroll to the end" shortcut regardless
+        // of read state — unlike showJump, NOT gated on markedAllRead, since skipping to
+        // the end is a navigation aid, not a read-tracking one. Shown whenever the true
+        // last post isn't on screen yet, including while further pages remain to load.
+        val showJumpToNewest by remember {
+            derivedStateOf {
+                if (pendingJumpToNewest) return@derivedStateOf true
+                loaded?.hasMore == true || lastVisibleIndex < postCount
+            }
+        }
         LaunchedEffect(listState, topic.id) {
             snapshotFlow { lastVisibleIndex }
                 .collect { lastIndex ->
@@ -349,6 +366,22 @@ fun TopicDetailScreen(
                 pendingJump = false
             }
         }
+        // Mirrors the pendingJump effect above, but for jump-to-newest: onLoadUntil is
+        // called with Int.MAX_VALUE (below) so TopicDetailViewModel.loadUntilPost's own
+        // "while (loaded.hasMore) load another page" loop naturally keeps going until
+        // hasMore is false — i.e. until the true end, whatever post number that turns out
+        // to be — rather than stopping at a specific known target.
+        LaunchedEffect(pendingJumpToNewest, loaded?.isLoadingMore) {
+            if (pendingJumpToNewest && loaded?.isLoadingMore == false) {
+                isJumping = true
+                val target = postCount
+                listState.scrollToItem(target.coerceIn(0, postCount))
+                listState.snapTargetToBottom(target.coerceIn(0, postCount))
+                if (target > furthestSeen) furthestSeen = target
+                isJumping = false
+                pendingJumpToNewest = false
+            }
+        }
         Box(modifier = Modifier.padding(padding)) {
         PullToRefreshBox(
             refreshing = isRefreshing,
@@ -357,7 +390,7 @@ fun TopicDetailScreen(
             LazyColumn(
                 state = listState,
                 modifier = Modifier.fillMaxSize(),
-                // Extra bottom room while the jump FAB floats over the list (issue #255
+                // Extra bottom room while either jump FAB floats over the list (issue #255
                 // follow-up): without it, the FAB visually sits on top of the last couple
                 // of posts, and a scroll gesture starting on that overlapped area doesn't
                 // reach the LazyColumn — it can register as a tap on the FAB instead,
@@ -366,7 +399,7 @@ fun TopicDetailScreen(
                     start = 16.dp,
                     end = 16.dp,
                     top = 12.dp,
-                    bottom = if (showJump) 96.dp else 12.dp,
+                    bottom = if (showJump || showJumpToNewest) 96.dp else 12.dp,
                 ),
                 verticalArrangement = Arrangement.spacedBy(0.dp),
             ) {
@@ -495,6 +528,51 @@ fun TopicDetailScreen(
                     )
                 } else {
                     Text("Jump to last read")
+                }
+            }
+        }
+        // A distinct, smaller, secondary action from "Jump to last read" above (issue
+        // #309 follow-up): always jumps to the true newest post, regardless of read
+        // state. Parked at the opposite corner (bottom-end vs. the main FAB's bottom-
+        // center) specifically so it reads as a lightweight utility control rather than
+        // a second competing primary action — it's visible for the whole time you're
+        // catching up on a long unread thread, so a same-weight second FAB here would
+        // constantly compete with "Jump to last read" instead of quietly complementing it.
+        if (showJumpToNewest) {
+            SmallFloatingActionButton(
+                onClick = {
+                    if (pendingJumpToNewest) return@SmallFloatingActionButton
+                    if (loaded?.hasMore != true) {
+                        // Already fully loaded: scroll now.
+                        jumpScope.launch {
+                            isJumping = true
+                            val target = postCount
+                            listState.animateScrollToItem(target.coerceIn(0, postCount))
+                            listState.snapTargetToBottom(target.coerceIn(0, postCount))
+                            if (target > furthestSeen) furthestSeen = target
+                            isJumping = false
+                        }
+                    } else {
+                        // More pages remain: load everything, then the effect above scrolls.
+                        // MAX_VALUE makes loadUntilPost's own loop run until hasMore is
+                        // false rather than stopping at some specific (not yet known) post
+                        // number — see the LaunchedEffect above.
+                        pendingJumpToNewest = true
+                        onLoadUntil(Int.MAX_VALUE)
+                    }
+                },
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(bottom = 16.dp, end = 16.dp),
+            ) {
+                if (pendingJumpToNewest) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    )
+                } else {
+                    Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Jump to newest")
                 }
             }
         }

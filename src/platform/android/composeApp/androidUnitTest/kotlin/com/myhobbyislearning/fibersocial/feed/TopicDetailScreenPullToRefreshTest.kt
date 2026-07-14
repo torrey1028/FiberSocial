@@ -5,6 +5,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
@@ -242,6 +243,103 @@ class TopicDetailScreenPullToRefreshTest {
         }
 
         compose.runOnIdle { assertEquals(200, markedTo) }
+    }
+
+    @Test
+    fun `shows a separate jump-to-newest control alongside jump-to-last-read on an unread topic`() {
+        // Issue #309 follow-up: "jump to last read" and "jump to newest" are distinct,
+        // both potentially useful regardless of read state — not one button that only
+        // ever means "resume" or only ever means "skip to the end".
+        val posts = (1..300L).map { id ->
+            Post(id = id, bodyHtml = "<p>post $id</p>", user = RavelryUser(username = "a"))
+        }
+        val unreadTopic = topic.copy(postCount = 300, unreadCount = 250, firstUnreadPostNumber = 50)
+        compose.setContent {
+            TopicDetailScreen(
+                topic = unreadTopic,
+                postsState = TopicDetailState.Loaded(posts = posts, hasMore = false),
+                onBack = {},
+                onVote = { _, _ -> },
+            )
+        }
+
+        compose.onNodeWithText("Jump to last read").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Jump to newest").assertIsDisplayed()
+    }
+
+    @Test
+    fun `jump-to-newest is not gated on markedAllRead, unlike jump-to-last-read`() {
+        // "Jump to newest" is a plain navigation shortcut (scroll to the end), not a
+        // read-tracking action — it should still work as a way to skip to the bottom
+        // even after "mark all as read" hides the last-read button.
+        val posts = (1..300L).map { id ->
+            Post(id = id, bodyHtml = "<p>post $id</p>", user = RavelryUser(username = "a"))
+        }
+        val unreadTopic = topic.copy(postCount = 300, unreadCount = 250, firstUnreadPostNumber = 50)
+        compose.setContent {
+            TopicDetailScreen(
+                topic = unreadTopic,
+                postsState = TopicDetailState.Loaded(posts = posts, hasMore = false),
+                onBack = {},
+                onVote = { _, _ -> },
+            )
+        }
+
+        compose.onNodeWithContentDescription("More options").performClick()
+        compose.onNodeWithText("Mark all as read").performClick()
+        compose.waitForIdle()
+
+        compose.onNodeWithText("Jump to last read").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Jump to newest").assertIsDisplayed()
+    }
+
+    @Test
+    fun `tapping jump-to-newest scrolls to the true last post and marks it read`() {
+        val posts = (1..300L).map { id ->
+            Post(id = id, bodyHtml = "<p>post $id</p>", user = RavelryUser(username = "a"))
+        }
+        val unreadTopic = topic.copy(postCount = 300, unreadCount = 250, firstUnreadPostNumber = 50)
+        var markedTo: Int? = null
+        compose.setContent {
+            TopicDetailScreen(
+                topic = unreadTopic,
+                postsState = TopicDetailState.Loaded(posts = posts, hasMore = false),
+                onBack = {},
+                onVote = { _, _ -> },
+                onMarkRead = { markedTo = it },
+            )
+        }
+
+        compose.onNodeWithContentDescription("Jump to newest").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText("post 300").assertIsDisplayed()
+
+        compose.runOnIdle {
+            compose.activity.onBackPressedDispatcher.onBackPressed()
+        }
+        compose.runOnIdle { assertEquals(300, markedTo) }
+    }
+
+    @Test
+    fun `hides jump-to-newest once the true last post is on screen`() {
+        val posts = listOf(
+            Post(id = 1L, bodyHtml = "<p>one</p>", user = RavelryUser(username = "a")),
+            Post(id = 2L, bodyHtml = "<p>two</p>", user = RavelryUser(username = "b")),
+            Post(id = 3L, bodyHtml = "<p>three</p>", user = RavelryUser(username = "c")),
+        )
+        val readTopic = topic.copy(postCount = 3, unreadCount = 0, firstUnreadPostNumber = null)
+        compose.setContent {
+            TopicDetailScreen(
+                topic = readTopic,
+                postsState = TopicDetailState.Loaded(posts = posts, hasMore = false),
+                onBack = {},
+                onVote = { _, _ -> },
+            )
+        }
+
+        compose.onNode(hasScrollAction()).performScrollToNode(hasText("three"))
+        compose.waitForIdle()
+        compose.onNodeWithContentDescription("Jump to newest").assertDoesNotExist()
     }
 
     @Test
