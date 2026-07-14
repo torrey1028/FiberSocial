@@ -43,6 +43,11 @@ import androidx.compose.ui.unit.dp
  * @param onOpenRepo Open the GitHub repo in the platform browser.
  * @param onOpenPrivacyPolicy Open the hosted privacy policy (legal/privacy-policy.html,
  *   published via GitHub Pages) in the platform browser.
+ * @param onReportChildSafetyConcern Open a private, pre-addressed email to report a child
+ *   safety concern. Deliberately separate from "Send feedback" (FeedbackScreen), which posts
+ *   publicly to a Ravelry forum topic — wrong channel for something this sensitive. Satisfies
+ *   Play Console's Child Safety Standards requirement for an in-app reporting path reachable
+ *   without leaving the app; Google's own guidance explicitly allows a support email for this.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -50,6 +55,7 @@ fun AboutScreen(
     onBack: () -> Unit,
     onOpenRepo: () -> Unit,
     onOpenPrivacyPolicy: () -> Unit,
+    onReportChildSafetyConcern: () -> Unit,
 ) {
     BackHandler(onBack = onBack)
     Scaffold(
@@ -127,6 +133,10 @@ fun AboutScreen(
 
             TextButton(onClick = onOpenPrivacyPolicy, contentPadding = PaddingValues(0.dp)) {
                 Text("Privacy Policy")
+            }
+
+            TextButton(onClick = onReportChildSafetyConcern, contentPadding = PaddingValues(0.dp)) {
+                Text("Report a child safety concern")
             }
 
             TextButton(onClick = onOpenRepo, contentPadding = PaddingValues(0.dp)) {
