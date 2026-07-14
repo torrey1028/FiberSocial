@@ -33,6 +33,7 @@ import platform.darwin.NSObject
 actual fun WebViewLoginScreen(
     authUrl: String,
     onAuthComplete: (code: String, state: String?, sessionCookie: String) -> Unit,
+    onBack: () -> Unit,
 ) {
     println("FiberSocial: WebViewLoginScreen authUrl=$authUrl")
     // remember: WKWebView.navigationDelegate is weak; the composition must hold the
@@ -45,6 +46,14 @@ actual fun WebViewLoginScreen(
             }
             WKWebView(frame = CGRectMake(0.0, 0.0, 0.0, 0.0), configuration = configuration).apply {
                 navigationDelegate = delegate
+                // Lets the standard edge-swipe gesture navigate the web flow's own
+                // history — e.g. back out of a "sign up for an account" detour taken
+                // from the login page (issue #308) — mirroring Android's system-back
+                // handling of the same case. iOS has no system-level back button/gesture
+                // equivalent to fall back to once history is exhausted, so unlike
+                // Android's onBack, there's no natural trigger to wire it to here yet;
+                // [onBack] exists for signature parity with the common `expect`.
+                allowsBackForwardNavigationGestures = true
                 println("FiberSocial: WebView loading $authUrl")
                 loadRequest(NSURLRequest(uRL = NSURL(string = authUrl)!!))
             }

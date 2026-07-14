@@ -109,6 +109,7 @@ class MainActivity : ComponentActivity() {
                             showWebView = false
                             authVm.handleAuthCode(code, state, cookie)
                         },
+                        onBack = { showWebView = false },
                     )
                 } else {
                     when (authState) {
