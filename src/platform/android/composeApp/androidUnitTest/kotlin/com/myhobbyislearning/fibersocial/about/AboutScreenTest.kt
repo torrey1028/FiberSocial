@@ -6,6 +6,7 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -21,7 +22,7 @@ class AboutScreenTest {
     @Test
     fun `shows the non-affiliation statement`() {
         compose.setContent {
-            AboutScreen(onBack = {}, onOpenRepo = {}, onOpenPrivacyPolicy = {})
+            AboutScreen(onBack = {}, onOpenRepo = {}, onOpenPrivacyPolicy = {}, onReportChildSafetyConcern = {})
         }
         compose.onNodeWithText(
             "FiberSocial is an independent, unofficial app for Ravelry. It is not " +
@@ -35,7 +36,7 @@ class AboutScreenTest {
     fun `top-bar back arrow invokes onBack`() {
         var backs = 0
         compose.setContent {
-            AboutScreen(onBack = { backs++ }, onOpenRepo = {}, onOpenPrivacyPolicy = {})
+            AboutScreen(onBack = { backs++ }, onOpenRepo = {}, onOpenPrivacyPolicy = {}, onReportChildSafetyConcern = {})
         }
         compose.onNodeWithContentDescription("Back").performClick()
         compose.runOnIdle { assertEquals(1, backs) }
@@ -45,7 +46,7 @@ class AboutScreenTest {
     fun `system back press invokes onBack`() {
         var backs = 0
         compose.setContent {
-            AboutScreen(onBack = { backs++ }, onOpenRepo = {}, onOpenPrivacyPolicy = {})
+            AboutScreen(onBack = { backs++ }, onOpenRepo = {}, onOpenPrivacyPolicy = {}, onReportChildSafetyConcern = {})
         }
         compose.runOnIdle {
             compose.activity.onBackPressedDispatcher.onBackPressed()
@@ -57,9 +58,12 @@ class AboutScreenTest {
     fun `tapping the repo link invokes onOpenRepo`() {
         var opened = 0
         compose.setContent {
-            AboutScreen(onBack = {}, onOpenRepo = { opened++ }, onOpenPrivacyPolicy = {})
+            AboutScreen(onBack = {}, onOpenRepo = { opened++ }, onOpenPrivacyPolicy = {}, onReportChildSafetyConcern = {})
         }
-        compose.onNodeWithText("View source on GitHub").performClick()
+        // Now the last of four links in the scrollable column (issue #289 follow-up added
+        // "Report a child safety concern" above it), so it can be scrolled out of the
+        // Robolectric viewport — scroll it into view before clicking.
+        compose.onNodeWithText("View source on GitHub").performScrollTo().performClick()
         compose.runOnIdle { assertEquals(1, opened) }
     }
 
@@ -67,9 +71,19 @@ class AboutScreenTest {
     fun `tapping the privacy policy link invokes onOpenPrivacyPolicy`() {
         var opened = 0
         compose.setContent {
-            AboutScreen(onBack = {}, onOpenRepo = {}, onOpenPrivacyPolicy = { opened++ })
+            AboutScreen(onBack = {}, onOpenRepo = {}, onOpenPrivacyPolicy = { opened++ }, onReportChildSafetyConcern = {})
         }
         compose.onNodeWithText("Privacy Policy").performClick()
+        compose.runOnIdle { assertEquals(1, opened) }
+    }
+
+    @Test
+    fun `tapping the child safety concern link invokes onReportChildSafetyConcern`() {
+        var opened = 0
+        compose.setContent {
+            AboutScreen(onBack = {}, onOpenRepo = {}, onOpenPrivacyPolicy = {}, onReportChildSafetyConcern = { opened++ })
+        }
+        compose.onNodeWithText("Report a child safety concern").performClick()
         compose.runOnIdle { assertEquals(1, opened) }
     }
 }
