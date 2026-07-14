@@ -20,7 +20,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.CircularProgressIndicator
@@ -109,8 +111,14 @@ fun EventsScreen(
             ) {
                 val events = displayState.events.filter { it.group.id == group.id }
                 if (events.isEmpty()) {
+                    // Scrollable (like FeedScreen's FeedErrorState/UnreadFilterEmptyState) so
+                    // the surrounding PullToRefreshBox still has a nested-scrolling child to
+                    // engage pull-to-refresh on — a plain non-scrolling Box here left the pull
+                    // gesture dead whenever the group has no events yet.
                     Box(
-                        modifier = Modifier.fillMaxSize(),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .verticalScroll(rememberScrollState()),
                         contentAlignment = Alignment.Center,
                     ) {
                         Text(

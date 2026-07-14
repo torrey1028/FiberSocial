@@ -54,4 +54,23 @@ class EventsScreenPullToRefreshTest {
 
         assertEquals(1, refreshCount)
     }
+
+    @Test
+    fun `pulling down on the empty-events state invokes onRefresh`() {
+        var refreshCount = 0
+        compose.setContent {
+            EventsScreen(
+                state = EventsState.Loaded(events = emptyList()),
+                group = group,
+                onBack = {},
+                onEventClick = {},
+                onRefresh = { refreshCount++ },
+            )
+        }
+
+        compose.onNode(hasScrollAction()).performTouchInput { swipeDown() }
+        compose.waitForIdle()
+
+        assertEquals(1, refreshCount)
+    }
 }
