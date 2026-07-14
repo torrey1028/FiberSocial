@@ -48,11 +48,13 @@ data class EventVenue(
 )
 
 /**
- * A Google Maps search URL for this venue, or null when every field is absent/blank.
+ * A Google Maps directions URL to this venue, or null when every field is absent/blank.
  *
- * Uses the universal `google.com/maps/search` URL rather than a `geo:` intent so it
- * works on any platform: Android hands it to the Maps app when installed and falls
- * back to the browser otherwise.
+ * Uses the universal `google.com/maps/dir` URL (destination set, no origin) rather than
+ * a `geo:` intent so it works on any platform: Android hands it to the Maps app when
+ * installed and falls back to the browser otherwise. Unlike a `maps/search` URL, this
+ * opens directions straight to the venue instead of a disambiguation search results
+ * list (issue #281).
  */
 fun EventVenue.mapsUrl(): String? {
     val query = listOfNotNull(name, address, cityState, country)
@@ -60,7 +62,7 @@ fun EventVenue.mapsUrl(): String? {
         .filter { it.isNotEmpty() }
         .joinToString(", ")
     if (query.isEmpty()) return null
-    return "https://www.google.com/maps/search/?api=1&query=${query.encodeURLParameter()}"
+    return "https://www.google.com/maps/dir/?api=1&destination=${query.encodeURLParameter()}"
 }
 
 /**
