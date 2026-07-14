@@ -30,6 +30,17 @@ actual fun WebViewLoginScreen(
             WebView(context).apply {
                 settings.javaScriptEnabled = true
                 settings.domStorageEnabled = true
+                // Ravelry's authorize page renders wider than the screen (more so as the
+                // requested OAuth scope grows), and without these it doesn't scale to fit,
+                // forcing manual horizontal scroll to reach the Authorize button (issue #278).
+                settings.useWideViewPort = true
+                settings.loadWithOverviewMode = true
+                // Lets the user pinch-zoom in on the authorize form themselves instead of
+                // reading it at the fit-to-width size. Controls hidden — the on-screen
+                // +/- buttons look out of place in a login flow; pinch still works without them.
+                settings.setSupportZoom(true)
+                settings.builtInZoomControls = true
+                settings.displayZoomControls = false
                 // Clear cookies so the user must log in fresh — ensures _ravelry_session is set
                 CookieManager.getInstance().removeAllCookies(null)
                 CookieManager.getInstance().flush()
