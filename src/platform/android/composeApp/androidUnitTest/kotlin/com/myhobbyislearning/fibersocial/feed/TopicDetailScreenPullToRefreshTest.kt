@@ -343,6 +343,49 @@ class TopicDetailScreenPullToRefreshTest {
     }
 
     @Test
+    fun `tapping jump-to-newest mid-animation doesn't hijack jump-to-last-read`() {
+        // Regression: both jump controls scroll the same LazyListState and share one
+        // isJumping flag. Once loaded, tapping either FAB animates the scroll
+        // (animateScrollToItem) — a real multi-frame operation, unlike the deep-load
+        // path's instant scrollToItem. Tapping the OTHER FAB mid-animation, before this
+        // PR's isJumping guard, would start a second animateScrollToItem on the same
+        // LazyListState — Compose's shared MutatorMutex cancels whichever is running, so
+        // the second tap would silently hijack the first jump's destination.
+        val posts = (1..300L).map { id ->
+            Post(id = id, bodyHtml = "<p>post $id</p>", user = RavelryUser(username = "a"))
+        }
+        // hasMore = false (fully loaded) so both FABs take the "scroll now"
+        // (animateScrollToItem) branch rather than the deep-load branch.
+        val unreadTopic = topic.copy(postCount = 300, unreadCount = 250, firstUnreadPostNumber = 50)
+        compose.setContent {
+            TopicDetailScreen(
+                topic = unreadTopic,
+                postsState = TopicDetailState.Loaded(posts = posts, hasMore = false),
+                onBack = {},
+                onVote = { _, _ -> },
+            )
+        }
+
+        // Freeze the frame clock so "Jump to last read"'s animateScrollToItem(50) genuinely
+        // suspends mid-flight instead of resolving within a single test-idle pass.
+        compose.mainClock.autoAdvance = false
+        compose.onNodeWithText("Jump to last read").performClick()
+        compose.mainClock.advanceTimeByFrame()
+
+        // Tap "Jump to newest" while the first animation is still in progress.
+        compose.onNodeWithContentDescription("Jump to newest").performClick()
+
+        compose.mainClock.autoAdvance = true
+        compose.waitForIdle()
+
+        // With the isJumping guard, the second tap is ignored while a jump is already in
+        // flight, so "Jump to last read"'s own animation reaches its own target (post 50)
+        // undisturbed — it is NOT hijacked into landing on "Jump to newest"'s target
+        // (post 300) instead.
+        compose.onNodeWithText("post 50").assertIsDisplayed()
+    }
+
+    @Test
     fun `shows the jump button for a fully-read topic that isn't fully visible, targeting the end`() {
         // On-device review of #255/#256 asked for the same button (not a distinct one)
         // to still offer a way to skip to the bottom of a topic with nothing unread, as
