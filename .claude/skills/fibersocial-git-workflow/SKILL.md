@@ -26,6 +26,24 @@ git worktree add ../FiberSocial-<slug> -b <type>/<slug>
 - **TRAP: the primary checkout routinely holds other sessions' uncommitted WIP.** Editing in place entangles their changes into your diff — you cannot cut a clean single-purpose PR, and you may revert their work by accident. Always work in the new worktree.
 - **TRAP: a fresh worktree does NOT get `local.properties` or the release keystore** (both gitignored). Copy them in before building or OAuth fails `invalid_client`. See the build-and-run skill for exactly what to copy and from where.
 
+## When the user says to move on to a new task
+
+Don't leave the current worktree stranded while spinning up yet another one next to
+it — worktrees accumulate fast and are easy to lose track of. Before starting the
+next task, either:
+
+- **Remove it**, once its PR is opened and there's no reason to keep it around:
+  confirm it's clean (`git status --short`), `cd` back to the primary checkout, then
+  `git worktree remove ../FiberSocial-<slug>`. Confirm with `git worktree list`.
+- **Repurpose it**, if the new task is a direct continuation of the same branch/PR
+  (addressing review comments, a same-PR follow-up) — reuse the existing worktree
+  instead of adding another.
+
+Run `git worktree list` periodically to catch orphans. It will also show worktrees
+from other sessions — leave those alone, but flag anything that looks like a
+duplicate of work you're about to do (e.g. a branch name close to yours) before it
+turns into a merge conflict with your own PR.
+
 ## Update an open PR after `main` moved
 
 ```bash

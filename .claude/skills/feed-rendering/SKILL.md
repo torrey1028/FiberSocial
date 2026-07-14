@@ -10,11 +10,11 @@ root is `src/platform/android/`, NOT the repo root** — run every `./gradlew` f
 lives under `src/common/logic/` and `src/common/compose/` (see the fibersocial-build skill).
 
 Key files (repo-relative):
-- `src/common/logic/commonMain/kotlin/com/autom8ed/fibersocial/feed/html/PostDocument.kt` — the model
+- `src/common/logic/commonMain/kotlin/com/myhobbyislearning/fibersocial/feed/html/PostDocument.kt` — the model
 - `.../feed/html/HtmlPostParser.kt` — the single HTML→PostDocument converter
 - `.../feed/html/MarkdownPostParser.kt` — Markdown entry point + `plainText()` walker + `parseBodyDocument`/`parseSummaryDocument`
 - `.../feed/html/PreviewInlines.kt` — `previewInlines()` walker
-- `src/common/compose/commonMain/kotlin/com/autom8ed/fibersocial/feed/PostBody.kt` — the rich renderer
+- `src/common/compose/commonMain/kotlin/com/myhobbyislearning/fibersocial/feed/PostBody.kt` — the rich renderer
 - `.../feed/TopicCard.kt` — feed card; `.../feed/TopicDetailScreen.kt` — full topic
 - `src/common/logic/.../feed/FeedRepository.kt` — unread count
 
@@ -27,7 +27,7 @@ cd src/platform/android
 ./gradlew :common:jvmTest --tests '*PreviewInlinesTest' --tests '*MarkdownPostParserTest' --tests '*HtmlPostParserTest'
 ```
 
-Tests live in `src/common/logic/commonTest/kotlin/com/autom8ed/fibersocial/feed/html/`. For the
+Tests live in `src/common/logic/commonTest/kotlin/com/myhobbyislearning/fibersocial/feed/html/`. For the
 full gate before a PR run `bash common/test.sh` from `src/` (see the fibersocial-testing skill).
 
 ## 1. The model (`PostDocument.kt`)

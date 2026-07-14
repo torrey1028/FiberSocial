@@ -15,7 +15,7 @@ model: inherit
 # ravelry-api-dev
 
 You extend FiberSocial's Ravelry integration. There is exactly **ONE** HTTP client for the
-Ravelry API: `src/common/logic/commonMain/kotlin/com/autom8ed/fibersocial/feed/RavelryApiClient.kt`
+Ravelry API: `src/common/logic/commonMain/kotlin/com/myhobbyislearning/fibersocial/feed/RavelryApiClient.kt`
 (~1100 lines). Every new call lives here. Do not spin up a second client or reach for
 the network anywhere else.
 
@@ -72,7 +72,7 @@ It runs `block`, and:
   as session expiry; the message deliberately omits "403"),
 - on **401** → `tryRefresh()` then retries ONCE; a second 401 → `SessionExpiredException`.
 
-`ForbiddenException` / `SessionExpiredException` live in `com.autom8ed.fibersocial.auth`.
+`ForbiddenException` / `SessionExpiredException` live in `com.myhobbyislearning.fibersocial.auth`.
 It returns the response body as a `String` — you decode it yourself.
 
 **GOTCHA: don't catch-and-swallow these.** 403 vs 401-expiry mean different UX (no-permission
@@ -193,7 +193,7 @@ the path deliberately.
 ## MockEngine test — REQUIRED for every new call
 
 Tests live in
-`src/common/logic/commonTest/kotlin/com/autom8ed/fibersocial/feed/RavelryApiClientTest.kt`.
+`src/common/logic/commonTest/kotlin/com/myhobbyislearning/fibersocial/feed/RavelryApiClientTest.kt`.
 Drive the client with a Ktor `MockEngine` and a `FakeFeedTokenStorage()`:
 
 ```kotlin

@@ -7,9 +7,9 @@ description: Add or modify a Ravelry API call end-to-end following FiberSocial's
 
 There is ONE central client. Every Ravelry call lives on it — do not spin up a new Ktor client or scatter `httpClient.get` around feature code.
 
-- Client: `src/common/logic/commonMain/kotlin/com/autom8ed/fibersocial/feed/RavelryApiClient.kt` (~1100 lines).
-- Domain models: `src/common/logic/commonMain/kotlin/com/autom8ed/fibersocial/feed/models/*.kt`.
-- Tests: `src/common/logic/commonTest/kotlin/com/autom8ed/fibersocial/feed/RavelryApiClientTest.kt` (+ shared fakes in `Fakes.kt`).
+- Client: `src/common/logic/commonMain/kotlin/com/myhobbyislearning/fibersocial/feed/RavelryApiClient.kt` (~1100 lines).
+- Domain models: `src/common/logic/commonMain/kotlin/com/myhobbyislearning/fibersocial/feed/models/*.kt`.
+- Tests: `src/common/logic/commonTest/kotlin/com/myhobbyislearning/fibersocial/feed/RavelryApiClientTest.kt` (+ shared fakes in `Fakes.kt`).
 - All gradle/test commands run from `src/platform/android/`. See the fibersocial-build-and-test skill.
 
 ## Architecture (read before touching anything)

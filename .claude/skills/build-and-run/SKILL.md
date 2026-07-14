@@ -7,7 +7,7 @@ description: Build, install, run, and observe the FiberSocial app on Android and
 
 Build, install, run, and observe FiberSocial (Kotlin Multiplatform: Android + iOS).
 
-**Working directory for all `./gradlew` / `./deploy.sh`:** `src/platform/android/` (the Gradle root is NOT the repo root). App id: `com.autom8ed.fibersocial`.
+**Working directory for all `./gradlew` / `./deploy.sh`:** `src/platform/android/` (the Gradle root is NOT the repo root). App id: `com.myhobbyislearning.fibersocial`.
 
 For starting new work in an isolated worktree, cutting PRs, and never editing the primary checkout, see the **fibersocial-git-workflow** skill. For the test suite + coverage gate, see the **fibersocial-testing** skill.
 
@@ -99,7 +99,7 @@ This is now **self-healed**: `encryptedKeyValueStore` wipes the unreadable `Encr
 **GOTCHA — a build predating that fix still crashes this way.** Manual recovery:
 
 ```bash
-adb shell pm clear com.autom8ed.fibersocial
+adb shell pm clear com.myhobbyislearning.fibersocial
 ```
 
 Root cause (issue #188): auth prefs (`fibersocial_auth`) were in Android cloud auto-backup, but the Tink master key is device-bound, so every restore re-seeds an undecryptable keyset. `deploy.sh` no longer needs a post-install `pm clear` — the self-heal handles the reinstall case.
