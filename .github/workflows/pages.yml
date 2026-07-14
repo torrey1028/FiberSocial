@@ -3,7 +3,7 @@ name: Pages
 on:
   push:
     branches: ["main"]
-    paths: ["legal/privacy-policy.html"]
+    paths: ["legal/*.html"]
   workflow_dispatch:
 
 permissions:
@@ -28,11 +28,16 @@ jobs:
 
       - uses: actions/configure-pages@v5
 
-      # The Pages site is just this one file, served as index.html — there's no
-      # build step because it's already self-contained static HTML.
+      # The Pages site is just the files in legal/, copied as-is — no build step
+      # since they're already self-contained static HTML. privacy-policy.html is
+      # also copied to index.html so the existing root URL (already submitted to
+      # Play Console) keeps working; every other page keeps its own filename
+      # (e.g. child-safety-standards.html), and the pages cross-link by relative
+      # path, so this must stay a flat copy, not a rename.
       - name: Prepare site
         run: |
           mkdir -p _site
+          cp legal/*.html _site/
           cp legal/privacy-policy.html _site/index.html
 
       - uses: actions/upload-pages-artifact@v3
