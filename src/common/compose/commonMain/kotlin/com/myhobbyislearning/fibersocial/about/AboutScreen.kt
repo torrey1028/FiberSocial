@@ -41,12 +41,15 @@ import androidx.compose.ui.unit.dp
  *
  * @param onBack Return to Settings.
  * @param onOpenRepo Open the GitHub repo in the platform browser.
+ * @param onOpenPrivacyPolicy Open the hosted privacy policy (legal/privacy-policy.html,
+ *   published via GitHub Pages) in the platform browser.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AboutScreen(
     onBack: () -> Unit,
     onOpenRepo: () -> Unit,
+    onOpenPrivacyPolicy: () -> Unit,
 ) {
     BackHandler(onBack = onBack)
     Scaffold(
@@ -121,6 +124,10 @@ fun AboutScreen(
             )
 
             HorizontalDivider()
+
+            TextButton(onClick = onOpenPrivacyPolicy, contentPadding = PaddingValues(0.dp)) {
+                Text("Privacy Policy")
+            }
 
             TextButton(onClick = onOpenRepo, contentPadding = PaddingValues(0.dp)) {
                 Text("View source on GitHub")
