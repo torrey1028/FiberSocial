@@ -1,3 +1,5 @@
+@file:OptIn(ExperimentalComposeUiApi::class)
+
 package com.myhobbyislearning.fibersocial.login
 
 import android.net.Uri
@@ -11,7 +13,13 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.backhandler.BackHandler
 import androidx.compose.ui.viewinterop.AndroidView
 import com.myhobbyislearning.fibersocial.auth.RavelryAuthManager
 
@@ -19,8 +27,26 @@ import com.myhobbyislearning.fibersocial.auth.RavelryAuthManager
 actual fun WebViewLoginScreen(
     authUrl: String,
     onAuthComplete: (code: String, state: String?, sessionCookie: String) -> Unit,
+    onBack: () -> Unit,
 ) {
     println("FiberSocial: WebViewLoginScreen authUrl=$authUrl")
+    // Holds the created WebView so BackHandler below can check/drive its own history —
+    // AndroidView's factory runs once the underlying view exists, which BackHandler
+    // (evaluated on every composition) can't reach any other way.
+    var webViewRef by remember { mutableStateOf<WebView?>(null) }
+    // System back navigates the WEB flow's own history first — e.g. backing out of a
+    // "sign up for an account" detour taken from the login page — and only leaves the
+    // screen entirely once there's nowhere further back to go within it. Without this,
+    // nothing here handles back at all, so it falls through to the Activity default and
+    // exits the app outright (issue #308).
+    BackHandler {
+        val webView = webViewRef
+        if (webView != null && webView.canGoBack()) {
+            webView.goBack()
+        } else {
+            onBack()
+        }
+    }
     // Edge-to-edge (mandatory once targetSdk >= 35) draws content behind the system
     // bars by default; without this, the OAuth page's own header/submit controls can
     // end up under the status/navigation bar rather than just under app chrome.
@@ -84,6 +110,7 @@ actual fun WebViewLoginScreen(
                 }
                 println("FiberSocial: WebView loading $authUrl")
                 loadUrl(authUrl)
+                webViewRef = this
             }
         },
     )

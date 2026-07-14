@@ -134,6 +134,7 @@ private fun IosApp(authModel: IosAuthModel, feedModel: IosFeedModel) {
                     showWebView = false
                     authModel.handleAuthCode(code, state, cookie)
                 },
+                onBack = { showWebView = false },
             )
         } else {
             when (authState) {
