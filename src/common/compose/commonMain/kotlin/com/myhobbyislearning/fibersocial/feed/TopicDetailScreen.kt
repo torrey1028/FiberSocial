@@ -272,6 +272,12 @@ fun TopicDetailScreen(
         // A deep jump may have to wait for pages to load in before it can scroll there
         // (issue #205); while it does, the button shows a spinner and this stays true.
         var pendingJump by remember(topic.id) { mutableStateOf(false) }
+        // The index of the last visible item — shared by the jump button's visibility gate,
+        // the load-more trigger, and the furthest-seen high-water mark below, which each
+        // independently recomputed this identically (issue #271).
+        val lastVisibleIndex by remember {
+            derivedStateOf { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0 }
+        }
         // Suppresses the furthestSeen tracker (below) while a programmatic jump is in
         // flight. scrollToItem/animateScrollToItem land the target at the TOP of the
         // viewport, transiently showing posts well past it at the bottom BEFORE
@@ -293,8 +299,7 @@ fun TopicDetailScreen(
             derivedStateOf {
                 if (markedAllRead) return@derivedStateOf false
                 if (pendingJump) return@derivedStateOf true
-                val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
-                lastVisible < maxOf(jumpTarget, furthestSeen)
+                lastVisibleIndex < maxOf(jumpTarget, furthestSeen)
             }
         }
         // Load the next page as the user nears the end of the thread (issue #202). The
@@ -304,9 +309,8 @@ fun TopicDetailScreen(
         val shouldLoadMore by remember(loaded?.hasMore, loaded?.isLoadingMore) {
             derivedStateOf {
                 if (loaded == null || !loaded.hasMore || loaded.isLoadingMore) return@derivedStateOf false
-                val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
                 val total = listState.layoutInfo.totalItemsCount
-                total > 0 && lastVisible >= total - 3
+                total > 0 && lastVisibleIndex >= total - 3
             }
         }
         LaunchedEffect(shouldLoadMore) {
@@ -320,7 +324,7 @@ fun TopicDetailScreen(
         val postCount = (displayState as? TopicDetailState.Loaded)?.posts?.size ?: 0
         val postCountState = rememberUpdatedState(postCount)
         LaunchedEffect(listState, topic.id) {
-            snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0 }
+            snapshotFlow { lastVisibleIndex }
                 .collect { lastIndex ->
                     if (isJumping) return@collect
                     val seen = lastIndex.coerceIn(0, postCountState.value)
