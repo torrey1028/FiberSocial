@@ -5,6 +5,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
@@ -58,6 +59,11 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // targetSdk 35+ enforces edge-to-edge with no opt-out; this call makes that
+        // consistent from minSdk 26 up, instead of only on 35+ devices. Per-screen
+        // system-bar icon contrast is still handled dynamically in SystemBarStyle,
+        // since it depends on the in-app theme choice, not just device config.
+        enableEdgeToEdge()
         EventNotifier(this).ensureChannels()
         requestNotificationPermissionIfNeeded()
         // Only a genuinely new launch carries a fresh notification tap: on recreation
