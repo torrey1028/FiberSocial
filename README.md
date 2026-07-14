@@ -4,43 +4,26 @@ App for community connection/organization for Ravelry users.
 
 [Privacy Policy](https://torrey1028.github.io/FiberSocial/) · unofficial, not affiliated with Ravelry.
 
-## Download & install (Android)
+## Become a tester
 
-The most recent release is always available here:
+FiberSocial is in testing on both Android and iOS platforms. To get access:
 
-**[⬇ Download the latest release APK](https://github.com/torrey1028/FiberSocial/releases/latest/download/app-release.apk)**
+1. **Sign up**: **[Sign up to test FiberSocial](https://forms.gle/FrQp4SMwbSVEj76o9)** — one form works for either iPhone or Android.
+2. Once you're added to the tester list, follow the platform-specific steps below (**Install on Android**, or **Install on iOS**).
 
-Releases are cut deliberately (a maintainer tags a version), so this link points at the newest *released* version rather than the newest commit.
+## Install on Android (Play Store closed test)
 
-This is a direct APK download, not a Play Store listing, so Android will warn you about installing from an unknown source — that's expected.
+1. Sign up above if you haven't already — you need to be added to the tester list before the link below works.
+2. Once you're added, open the listing on your Android device and tap **Become a tester**: **[FiberSocial on Google Play](https://play.google.com/store/apps/details?id=com.myhobbyislearning.fibersocial)**.
+3. Install from the Play Store as normal. Updates arrive through the Play Store automatically from then on.
 
-### Install steps
-
-1. Open the download link above on your Android phone (or download it on a computer and transfer the `.apk` file to the phone).
-2. Tap the downloaded `app-release.apk` file to start installing.
-3. If prompted, allow installs from this source: **Settings > Apps > Special app access > Install unknown apps**, then enable it for the app you used to download the file (e.g. your browser or file manager).
-4. Tap **Install**, then open FiberSocial and log in with your Ravelry account.
-
-### Updating to a newer build
-
-Downloading and installing the link again upgrades the app in place — no need to uninstall first.
-
-### Troubleshooting
-
-| Problem | Fix |
-|---|---|
-| `App not installed` / `INSTALL_FAILED_UPDATE_INCOMPATIBLE` | You likely have a debug build installed from source (signed differently than the release build). Uninstall the existing app first, then install the downloaded APK. |
-| Android blocks the install | Enable **Install unknown apps** for the app you used to open the `.apk` (see step 3 above), then retry. |
-| App crashes on launch after an update | Uncommon, but if it happens: **Settings > Apps > FiberSocial > Storage > Clear storage**, then log in again. |
-
-## Install (iOS — TestFlight)
+## Install on iOS (TestFlight)
 
 The iOS app is distributed through **TestFlight** (Apple's beta-testing app),
 not the App Store. To try it:
 
-1. **Request access** with the sign-up form:
-   **[Sign up to test on iOS](https://forms.gle/CdVHvkKciTG2MLRJ7)** — it
-   collects the Apple ID email your invite is sent to.
+1. Sign up in **Become a tester** above, if you haven't already — it collects
+   the Apple ID email your invite is sent to.
 2. Install **[TestFlight](https://apps.apple.com/app/testflight/id899247664)**
    from the App Store on your iPhone or iPad.
 3. Once you're added you'll get an email with a redeem link — open it, tap
