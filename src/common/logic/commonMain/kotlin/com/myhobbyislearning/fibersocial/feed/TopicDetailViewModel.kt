@@ -1,6 +1,7 @@
 package com.myhobbyislearning.fibersocial.feed
 
 import com.myhobbyislearning.fibersocial.auth.SessionExpiredException
+import com.myhobbyislearning.fibersocial.auth.SessionExpirySignal
 import com.myhobbyislearning.fibersocial.feed.models.Post
 import com.myhobbyislearning.fibersocial.feed.models.VoteType
 import com.myhobbyislearning.fibersocial.feed.models.hasVoted
@@ -126,7 +127,7 @@ class TopicDetailViewModel(
     private val scope: CoroutineScope,
 ) {
     private val _state = MutableStateFlow<TopicDetailState>(TopicDetailState.Loading)
-    private val _sessionExpired = Channel<Unit>(Channel.BUFFERED)
+    private val sessionExpirySignal = SessionExpirySignal()
     private val _topicDeleted = Channel<Unit>(Channel.BUFFERED)
 
     // Plain (non-Compose-state) storage for each topic's scroll position, keyed by topic ID
@@ -162,11 +163,8 @@ class TopicDetailViewModel(
     /** Observable state of the current own-post edit. */
     val editState: StateFlow<EditState> = _editState.asStateFlow()
 
-    /**
-     * Emits [Unit] when a [SessionExpiredException] is caught. Each emission is consumed
-     * exactly once — no replay on re-subscription. Collect to navigate to login.
-     */
-    val sessionExpired: Flow<Unit> = _sessionExpired.receiveAsFlow()
+    /** @see SessionExpirySignal.flow */
+    val sessionExpired: Flow<Unit> = sessionExpirySignal.flow
 
     /**
      * Emits [Unit] when [deletePost] removes the topic's opening post — on Ravelry,
@@ -216,7 +214,7 @@ class TopicDetailViewModel(
                 _state.value = TopicDetailState.Loaded(posts = firstPage.posts, hasMore = firstPage.hasMore)
             } catch (e: SessionExpiredException) {
                 println("FiberSocial: TopicDetailViewModel session expired")
-                _sessionExpired.trySend(Unit)
+                sessionExpirySignal.signal()
                 _state.value = TopicDetailState.Loading
             } catch (e: Exception) {
                 println("FiberSocial: TopicDetailViewModel.load error: ${e.message}")
@@ -256,7 +254,7 @@ class TopicDetailViewModel(
             } catch (e: SessionExpiredException) {
                 println("FiberSocial: TopicDetailViewModel.loadMore session expired")
                 if (generation == topicGeneration) clearLoadingMore()
-                _sessionExpired.trySend(Unit)
+                sessionExpirySignal.signal()
             } catch (e: Exception) {
                 println("FiberSocial: TopicDetailViewModel.loadMore error: ${e.message}")
                 if (generation == topicGeneration) clearLoadingMore()
@@ -298,7 +296,7 @@ class TopicDetailViewModel(
             } catch (e: SessionExpiredException) {
                 println("FiberSocial: TopicDetailViewModel.loadUntilPost session expired")
                 if (generation == topicGeneration) clearLoadingMore()
-                _sessionExpired.trySend(Unit)
+                sessionExpirySignal.signal()
             } catch (e: Exception) {
                 println("FiberSocial: TopicDetailViewModel.loadUntilPost error: ${e.message}")
                 if (generation == topicGeneration) clearLoadingMore()
@@ -336,7 +334,7 @@ class TopicDetailViewModel(
             // detached coroutine, load()'s own catch no longer covers it (matches the
             // session-expiry handling in sendReply/deletePost/editPost).
             println("FiberSocial: markTopicRead($topicId) session expired")
-            _sessionExpired.trySend(Unit)
+            sessionExpirySignal.signal()
         } catch (e: Exception) {
             println("FiberSocial: markTopicRead($topicId) failed: ${e.message}")
         }
@@ -371,7 +369,7 @@ class TopicDetailViewModel(
             } catch (e: SessionExpiredException) {
                 println("FiberSocial: TopicDetailViewModel.sendReply session expired")
                 if (generation == topicGeneration) _replyState.value = ReplyState.Idle
-                _sessionExpired.trySend(Unit)
+                sessionExpirySignal.signal()
             } catch (e: Exception) {
                 println("FiberSocial: TopicDetailViewModel.sendReply error: ${e.message}")
                 if (generation == topicGeneration) {
@@ -431,7 +429,7 @@ class TopicDetailViewModel(
             } catch (e: SessionExpiredException) {
                 println("FiberSocial: TopicDetailViewModel.deletePost session expired")
                 if (generation == topicGeneration) _deleteState.value = DeleteState.Idle
-                _sessionExpired.trySend(Unit)
+                sessionExpirySignal.signal()
             } catch (e: Exception) {
                 println("FiberSocial: TopicDetailViewModel.deletePost error: ${e.message}")
                 if (generation == topicGeneration) {
@@ -469,7 +467,7 @@ class TopicDetailViewModel(
             } catch (e: SessionExpiredException) {
                 println("FiberSocial: TopicDetailViewModel.editPost session expired")
                 if (generation == topicGeneration) _editState.value = EditState.Idle
-                _sessionExpired.trySend(Unit)
+                sessionExpirySignal.signal()
             } catch (e: Exception) {
                 println("FiberSocial: TopicDetailViewModel.editPost error: ${e.message}")
                 if (generation == topicGeneration) {
@@ -507,7 +505,7 @@ class TopicDetailViewModel(
             } catch (e: SessionExpiredException) {
                 println("FiberSocial: TopicDetailViewModel.toggleVote session expired")
                 updatePost(post.id) { optimisticVote(it, type, !wantsVoted) }
-                _sessionExpired.trySend(Unit)
+                sessionExpirySignal.signal()
             } catch (e: Exception) {
                 println("FiberSocial: TopicDetailViewModel.toggleVote error: ${e.message}")
                 updatePost(post.id) { optimisticVote(it, type, !wantsVoted) }

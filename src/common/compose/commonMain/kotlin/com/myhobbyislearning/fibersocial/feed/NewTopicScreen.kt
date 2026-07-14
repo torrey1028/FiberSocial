@@ -10,10 +10,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
@@ -38,6 +36,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.myhobbyislearning.fibersocial.feed.models.Group
 import com.myhobbyislearning.fibersocial.feed.models.Topic
+import com.myhobbyislearning.fibersocial.ui.ErrorText
+import com.myhobbyislearning.fibersocial.ui.SendingSpinner
 
 /**
  * Full-screen composer for starting a new topic in one of the user's groups.
@@ -103,7 +103,7 @@ fun NewTopicScreen(
                 },
                 actions = {
                     if (sending) {
-                        CircularProgressIndicator(modifier = Modifier.size(32.dp).padding(4.dp))
+                        SendingSpinner()
                     } else {
                         TextButton(
                             onClick = { group?.let { onPost(it, title, body, summary) } },
@@ -126,10 +126,8 @@ fun NewTopicScreen(
                 .padding(horizontal = 16.dp, vertical = 8.dp),
         ) {
             if (state is NewTopicState.Error) {
-                Text(
+                ErrorText(
                     text = state.message.ifBlank { "Couldn't create the topic. Try again." },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
                     modifier = Modifier.padding(bottom = 8.dp),
                 )
             }
