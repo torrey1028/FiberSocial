@@ -11,6 +11,8 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
 import io.ktor.serialization.kotlinx.json.json
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 
 /** In-memory [GroupOrderStore]; [stored] exposes what the code under test persisted. */
@@ -22,13 +24,25 @@ class FakeGroupOrderStore(initial: List<Long>? = null) : GroupOrderStore {
     override suspend fun save(order: List<Long>) { stored = order }
 }
 
+/**
+ * In-memory [TokenStorage]. Mutex-guarded (issue #299): Ktor engines — including
+ * [MockEngine] — always dispatch request handling via `withContext(Dispatchers.IO)`
+ * regardless of the calling coroutine's own dispatcher, so a request made from inside
+ * `runTest`'s "virtual time" scope still genuinely executes on a real background
+ * thread. The concurrent-401-refresh tests in RavelryApiClientTest rely on [load]
+ * promptly observing another (real) thread's [save] — a plain unsynchronized `var`
+ * has no such guarantee under the JVM memory model, which is exactly the kind of gap
+ * that reproduces as CI-only flakiness (real thread scheduling) that's near-impossible
+ * to hit locally on a mostly-idle machine.
+ */
 class FakeFeedTokenStorage(
     initial: AuthToken? = AuthToken("test-token", "test-refresh", Long.MAX_VALUE, "sess=test"),
 ) : TokenStorage {
+    private val mutex = Mutex()
     private var stored: AuthToken? = initial
-    override suspend fun save(token: AuthToken) { stored = token }
-    override suspend fun load(): AuthToken? = stored
-    override suspend fun clear() { stored = null }
+    override suspend fun save(token: AuthToken) = mutex.withLock { stored = token }
+    override suspend fun load(): AuthToken? = mutex.withLock { stored }
+    override suspend fun clear() = mutex.withLock { stored = null }
 }
 
 fun routingApiClient(
