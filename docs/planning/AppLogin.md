@@ -78,21 +78,21 @@ src/
   common/
     build.gradle.kts          ← new KMP shared module
     src/
-      commonMain/kotlin/com/autom8ed/
+      commonMain/kotlin/com/myhobbyislearning/
         auth/
           AuthRepository.kt
           AuthViewModel.kt
           RavelryOAuthClient.kt   (Ktor)
           TokenStorage.kt         (interface)
           AuthToken.kt            (data model)
-      androidMain/kotlin/com/autom8ed/
+      androidMain/kotlin/com/myhobbyislearning/
         auth/
           AndroidTokenStorage.kt  (EncryptedSharedPrefs)
-      iosMain/kotlin/com/autom8ed/
+      iosMain/kotlin/com/myhobbyislearning/
         auth/
           IosTokenStorage.kt      (Keychain — future)
   android/
-    app/src/main/kotlin/com/autom8ed/
+    app/src/main/kotlin/com/myhobbyislearning/
       login/
         LoginScreen.kt        ← Compose UI
         BiometricHelper.kt    ← wraps BiometricPrompt

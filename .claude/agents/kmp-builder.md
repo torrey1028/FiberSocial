@@ -42,7 +42,7 @@ Then install + relaunch as separate commands:
 ```bash
 # APK: src/platform/android/app/build/outputs/apk/debug/app-debug.apk
 adb install -r -d app/build/outputs/apk/debug/app-debug.apk
-adb shell am start -n com.autom8ed.fibersocial/.MainActivity
+adb shell am start -n com.myhobbyislearning.fibersocial/.MainActivity
 ```
 
 Or use the deploy script (it builds, detects debug↔release signature mismatch and uninstalls first, then `adb install -r -d`):
@@ -52,7 +52,7 @@ Or use the deploy script (it builds, detects debug↔release signature mismatch 
 ./deploy.sh --release  # release
 ```
 
-App id / package everywhere: `com.autom8ed.fibersocial`.
+App id / package everywhere: `com.myhobbyislearning.fibersocial`.
 
 ## Confirm the device is free FIRST
 
@@ -105,7 +105,7 @@ Required release-signing keys (if building `assembleRelease`): `release.store.fi
 Symptom on launch: Tink `AndroidKeysetManager` errors, e.g. `InvalidProtocolBufferException: Protocol message contained an invalid tag` (typically after an uninstall/reinstall cycle). Current builds **self-heal** — `encryptedKeyValueStore` wipes the unreadable `fibersocial_auth` prefs and recreates them, so the app just asks the user to log in again. Only builds *predating* that fix crash on it; recover manually:
 
 ```bash
-adb shell pm clear com.autom8ed.fibersocial
+adb shell pm clear com.myhobbyislearning.fibersocial
 ```
 
 If you see this, quote the exact Tink/`InvalidProtocolBufferException` line in your report.

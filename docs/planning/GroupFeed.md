@@ -91,7 +91,7 @@ each request (so it always uses the current token without needing to know about 
 src/
   common/
     src/
-      commonMain/kotlin/com/autom8ed/
+      commonMain/kotlin/com/myhobbyislearning/
         feed/
           FeedRepository.kt        ← fetch groups + topics
           FeedViewModel.kt         ← FeedState: Loading / Loaded / Error
@@ -101,7 +101,7 @@ src/
             Topic.kt
             Post.kt
             RavelryUser.kt
-  platform/android/app/src/main/kotlin/com/autom8ed/
+  platform/android/app/src/main/kotlin/com/myhobbyislearning/
     feed/
       FeedScreen.kt                ← scrollable topic list
       FeedAndroidViewModel.kt      ← Android ViewModel wrapper

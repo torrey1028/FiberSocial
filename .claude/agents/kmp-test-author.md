@@ -85,7 +85,7 @@ grep -n 'method name="getUserProfile"' \
 
 ## Writing a real test — MockEngine API tests
 
-The central Ktor `RavelryApiClient` is tested with a `MockEngine` in `src/common/logic/commonTest/kotlin/com/autom8ed/fibersocial/feed/RavelryApiClientTest.kt`. Shared fakes live beside it in `Fakes.kt` — **reuse them, don't hand-roll a client**:
+The central Ktor `RavelryApiClient` is tested with a `MockEngine` in `src/common/logic/commonTest/kotlin/com/myhobbyislearning/fibersocial/feed/RavelryApiClientTest.kt`. Shared fakes live beside it in `Fakes.kt` — **reuse them, don't hand-roll a client**:
 
 - `routingApiClient { path -> jsonString }` — route the response by request path; token storage defaults to `FakeFeedTokenStorage` (a non-expiring `AuthToken` with a session cookie).
 - `routingApiClientCapturing(onRequest = { url -> … }) { path -> json }` — same, but captures each request `Url` so you can assert the endpoint / query params hit (e.g. `assertEquals("/people/yarnie.json", captured?.encodedPath)`).
