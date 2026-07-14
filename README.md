@@ -2,6 +2,8 @@
 
 App for community connection/organization for Ravelry users.
 
+[Privacy Policy](https://torrey1028.github.io/FiberSocial/) · unofficial, not affiliated with Ravelry.
+
 ## Download & install (Android)
 
 The most recent release is always available here:

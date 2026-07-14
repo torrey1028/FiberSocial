@@ -12,7 +12,9 @@ package com.myhobbyislearning.fibersocial.feed.models
  * @property id Ravelry topic ID.
  * @property groupId ID of the [Group] this item belongs to.
  * @property groupName Display name of the group, shown on the card.
- * @property lastPostAt ISO-8601 timestamp of the most recent reply, used for feed sorting.
+ * @property lastPostAt Ravelry API timestamp (`"yyyy/MM/dd HH:mm:ss Z"`, e.g.
+ *   `"2026/07/08 17:30:00 -0700"` — see [relativeTime]) of the most recent reply, used for
+ *   feed sorting.
  * @property author The topic's starter (opening-post author) — who the card attributes to.
  * @property title Topic title.
  * @property bodySummary The author-written topic summary as raw Markdown source. Empty
@@ -27,9 +29,9 @@ package com.myhobbyislearning.fibersocial.feed.models
  * @property firstUnreadPostNumber The 1-based post number to scroll to when opening the
  *   topic (the first unread post = `last_read + 1`), or `null` when nothing is unread.
  * @property sticky Whether a moderator pinned this topic to the top of the forum.
- * @property createdAt ISO-8601 timestamp when the topic was first posted (issue #242), shown on
- *   the card alongside [lastPostAt] so "started" and "last reply" are both visible. Null when the
- *   API omits it.
+ * @property createdAt Ravelry API timestamp (same `"yyyy/MM/dd HH:mm:ss Z"` shape as
+ *   [lastPostAt]) when the topic was first posted (issue #242), shown on the card alongside
+ *   [lastPostAt] so "started" and "last reply" are both visible. Null when the API omits it.
  */
 data class FeedItem(
     val id: Long,

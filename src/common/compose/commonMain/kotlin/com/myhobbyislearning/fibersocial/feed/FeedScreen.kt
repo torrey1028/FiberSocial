@@ -529,6 +529,7 @@ fun FeedScreen(
         AboutScreen(
             onBack = { showAbout = false },
             onOpenRepo = { uriHandler.openUri("https://github.com/torrey1028/FiberSocial") },
+            onOpenPrivacyPolicy = { uriHandler.openUri("https://torrey1028.github.io/FiberSocial/") },
         )
         return
     }

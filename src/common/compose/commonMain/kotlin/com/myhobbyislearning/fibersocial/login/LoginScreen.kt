@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -17,25 +18,34 @@ import com.myhobbyislearning.fibersocial.ui.AppBranding
 
 @Composable
 fun LoginScreen(onLoginClick: () -> Unit, errorMessage: String? = null) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(32.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
+    // The theme sets colors but no background (FiberSocialTheme has no Surface), and this
+    // screen renders before the feed's Scaffold — so it needs its own themed surface, or
+    // it falls through to the raw window background (wrong in both light and dark). Mirrors
+    // LaunchLoadingScreen's fix for the identical trap (#233).
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        color = MaterialTheme.colorScheme.background,
     ) {
-        AppBranding()
-        if (errorMessage != null) {
-            Spacer(modifier = Modifier.height(16.dp))
-            Text(
-                text = errorMessage,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error,
-            )
-        }
-        Spacer(modifier = Modifier.height(48.dp))
-        Button(onClick = onLoginClick) {
-            Text("Log in with Ravelry")
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(32.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
+            AppBranding()
+            if (errorMessage != null) {
+                Spacer(modifier = Modifier.height(16.dp))
+                Text(
+                    text = errorMessage,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+            Spacer(modifier = Modifier.height(48.dp))
+            Button(onClick = onLoginClick) {
+                Text("Log in with Ravelry")
+            }
         }
     }
 }
