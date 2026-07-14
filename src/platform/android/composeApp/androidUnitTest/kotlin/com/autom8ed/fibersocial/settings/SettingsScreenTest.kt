@@ -161,6 +161,17 @@ class SettingsScreenTest {
     }
 
     @Test
+    fun `about row is always shown and invokes its handler`() {
+        var opened = 0
+        compose.setContent {
+            SettingsScreen(user = user, onBack = {}, onSignOut = {}, onOpenAbout = { opened++ })
+        }
+        compose.onNodeWithText("About FiberSocial").assertIsDisplayed()
+        compose.onNodeWithText("About FiberSocial").performClick()
+        compose.runOnIdle { assertEquals(1, opened) }
+    }
+
+    @Test
     fun `debug panel row is hidden when no handler is provided`() {
         compose.setContent {
             SettingsScreen(user = user, onBack = {}, onSignOut = {})
