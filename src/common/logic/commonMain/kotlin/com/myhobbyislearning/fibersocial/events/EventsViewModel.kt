@@ -1,18 +1,17 @@
 package com.myhobbyislearning.fibersocial.events
 
 import com.myhobbyislearning.fibersocial.auth.SessionExpiredException
+import com.myhobbyislearning.fibersocial.auth.SessionExpirySignal
 import com.myhobbyislearning.fibersocial.feed.RavelryApiClient
 import com.myhobbyislearning.fibersocial.feed.models.Group
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 
 /** An upcoming event paired with the group whose page listed it. */
@@ -50,16 +49,13 @@ class EventsViewModel(
     private val scope: CoroutineScope,
 ) {
     private val _state = MutableStateFlow<EventsState>(EventsState.Loading)
-    private val _sessionExpired = Channel<Unit>(Channel.BUFFERED)
+    private val sessionExpirySignal = SessionExpirySignal()
 
     /** Observable events state. */
     val state: StateFlow<EventsState> = _state.asStateFlow()
 
-    /**
-     * Emits [Unit] when a [SessionExpiredException] is caught. Each emission is consumed
-     * exactly once — no replay on re-subscription. Collect to navigate to login.
-     */
-    val sessionExpired: Flow<Unit> = _sessionExpired.receiveAsFlow()
+    /** @see SessionExpirySignal.flow */
+    val sessionExpired: Flow<Unit> = sessionExpirySignal.flow
 
     /**
      * Scrapes upcoming events for every group in [groups], replacing any previous state.
@@ -83,7 +79,7 @@ class EventsViewModel(
                 EventsState.Loaded(events)
             } catch (e: SessionExpiredException) {
                 println("FiberSocial: EventsViewModel.load session expired")
-                _sessionExpired.trySend(Unit)
+                sessionExpirySignal.signal()
                 EventsState.Loading
             } catch (e: Exception) {
                 println("FiberSocial: EventsViewModel.load failed: ${e.message}")

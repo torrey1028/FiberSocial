@@ -1,15 +1,14 @@
 package com.myhobbyislearning.fibersocial.projects
 
 import com.myhobbyislearning.fibersocial.auth.SessionExpiredException
+import com.myhobbyislearning.fibersocial.auth.SessionExpirySignal
 import com.myhobbyislearning.fibersocial.feed.RavelryApiClient
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -110,16 +109,13 @@ class ProjectPhotoPickerViewModel(
     private val scope: CoroutineScope,
 ) {
     private val _state = MutableStateFlow<ProjectPickerState>(ProjectPickerState.Hidden)
-    private val _sessionExpired = Channel<Unit>(Channel.BUFFERED)
+    private val sessionExpirySignal = SessionExpirySignal()
 
     /** Observable dialog state. */
     val state: StateFlow<ProjectPickerState> = _state.asStateFlow()
 
-    /**
-     * Emits [Unit] when a [SessionExpiredException] is caught. Each emission is consumed
-     * exactly once — no replay on re-subscription. Collect to navigate to login.
-     */
-    val sessionExpired: Flow<Unit> = _sessionExpired.receiveAsFlow()
+    /** @see SessionExpirySignal.flow */
+    val sessionExpired: Flow<Unit> = sessionExpirySignal.flow
 
     private var username: String? = null
     private var loadedProjects: List<ProjectSummary> = emptyList()
@@ -152,7 +148,7 @@ class ProjectPhotoPickerViewModel(
                 // dialog must not yank the user to the login screen.
                 if (gen == generation) {
                     _state.value = ProjectPickerState.Hidden
-                    _sessionExpired.trySend(Unit)
+                    sessionExpirySignal.signal()
                 }
             } catch (e: Exception) {
                 println("FiberSocial: ProjectPhotoPicker.open error: ${e.message}")
@@ -183,7 +179,7 @@ class ProjectPhotoPickerViewModel(
                 println("FiberSocial: ProjectPhotoPicker.selectProject session expired")
                 if (gen == generation) {
                     _state.value = ProjectPickerState.Hidden
-                    _sessionExpired.trySend(Unit)
+                    sessionExpirySignal.signal()
                 }
             } catch (e: Exception) {
                 println("FiberSocial: ProjectPhotoPicker.selectProject error: ${e.message}")

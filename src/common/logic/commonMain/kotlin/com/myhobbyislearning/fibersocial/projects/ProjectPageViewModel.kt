@@ -2,15 +2,14 @@ package com.myhobbyislearning.fibersocial.projects
 
 import com.myhobbyislearning.fibersocial.auth.ForbiddenException
 import com.myhobbyislearning.fibersocial.auth.SessionExpiredException
+import com.myhobbyislearning.fibersocial.auth.SessionExpirySignal
 import com.myhobbyislearning.fibersocial.feed.RavelryApiClient
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -146,7 +145,7 @@ class ProjectPageViewModel(
     private val _pattern = MutableStateFlow<PatternInfo?>(null)
     private val _commentsState = MutableStateFlow<ProjectCommentsState>(ProjectCommentsState.Loading)
     private val _postState = MutableStateFlow<CommentPostState>(CommentPostState.Idle)
-    private val _sessionExpired = Channel<Unit>(Channel.BUFFERED)
+    private val sessionExpirySignal = SessionExpirySignal()
 
     /** Observable page state. */
     val state: StateFlow<ProjectPageState> = _state.asStateFlow()
@@ -160,11 +159,8 @@ class ProjectPageViewModel(
     /** Observable state of the current comment submission. */
     val postState: StateFlow<CommentPostState> = _postState.asStateFlow()
 
-    /**
-     * Emits [Unit] when a [SessionExpiredException] is caught. Each emission is consumed
-     * exactly once — no replay on re-subscription. Collect to navigate to login.
-     */
-    val sessionExpired: Flow<Unit> = _sessionExpired.receiveAsFlow()
+    /** @see SessionExpirySignal.flow */
+    val sessionExpired: Flow<Unit> = sessionExpirySignal.flow
 
     /** A monotonically increasing token; results from a dismissed page may not surface. */
     private var generation = 0
@@ -195,7 +191,7 @@ class ProjectPageViewModel(
                 println("FiberSocial: ProjectPageViewModel.open session expired")
                 if (gen == generation) {
                     _state.value = ProjectPageState.Hidden
-                    _sessionExpired.trySend(Unit)
+                    sessionExpirySignal.signal()
                 }
             } catch (e: Exception) {
                 println("FiberSocial: ProjectPageViewModel.open error: ${e.message}")
@@ -231,7 +227,7 @@ class ProjectPageViewModel(
             } catch (e: SessionExpiredException) {
                 if (gen == generation) {
                     _commentsState.value = ProjectCommentsState.Loading
-                    _sessionExpired.trySend(Unit)
+                    sessionExpirySignal.signal()
                 }
             } catch (e: Exception) {
                 println("FiberSocial: ProjectPageViewModel.loadComments($projectId) failed: ${e.message}")
@@ -275,7 +271,7 @@ class ProjectPageViewModel(
                 println("FiberSocial: ProjectPageViewModel.postComment session expired")
                 if (gen == generation) {
                     _postState.value = CommentPostState.Idle
-                    _sessionExpired.trySend(Unit)
+                    sessionExpirySignal.signal()
                 }
             } catch (e: Exception) {
                 println("FiberSocial: ProjectPageViewModel.postComment error: ${e.message}")
@@ -323,7 +319,7 @@ class ProjectPageViewModel(
                 failure = COMMENT_DELETE_FORBIDDEN_MESSAGE
             } catch (e: SessionExpiredException) {
                 println("FiberSocial: ProjectPageViewModel.deleteComment session expired")
-                if (gen == generation) _sessionExpired.trySend(Unit)
+                if (gen == generation) sessionExpirySignal.signal()
             } catch (e: Exception) {
                 println("FiberSocial: ProjectPageViewModel.deleteComment error: ${e.message}")
                 failure = e.message ?: "Couldn't delete the comment"

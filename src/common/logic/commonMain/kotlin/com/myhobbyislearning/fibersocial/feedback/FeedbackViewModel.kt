@@ -2,16 +2,15 @@ package com.myhobbyislearning.fibersocial.feedback
 
 import com.myhobbyislearning.fibersocial.auth.ForbiddenException
 import com.myhobbyislearning.fibersocial.auth.SessionExpiredException
+import com.myhobbyislearning.fibersocial.auth.SessionExpirySignal
 import com.myhobbyislearning.fibersocial.feed.RavelryApiClient
 import com.myhobbyislearning.fibersocial.feed.models.Topic
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 
 /** Ravelry's topic-title length limit; the title is clamped to it as a backstop. */
@@ -60,16 +59,13 @@ class FeedbackViewModel(
     private val scope: CoroutineScope,
 ) {
     private val _state = MutableStateFlow<FeedbackState>(FeedbackState.Idle)
-    private val _sessionExpired = Channel<Unit>(Channel.BUFFERED)
+    private val sessionExpirySignal = SessionExpirySignal()
 
     /** Observable state of the current feedback submission. */
     val state: StateFlow<FeedbackState> = _state.asStateFlow()
 
-    /**
-     * Emits [Unit] when a [SessionExpiredException] is caught. Each emission is consumed
-     * exactly once — no replay on re-subscription. Collect to navigate to login.
-     */
-    val sessionExpired: Flow<Unit> = _sessionExpired.receiveAsFlow()
+    /** @see SessionExpirySignal.flow */
+    val sessionExpired: Flow<Unit> = sessionExpirySignal.flow
 
     /**
      * Posts feedback as a new topic in the support group's forum. [title] is the report's
@@ -96,7 +92,7 @@ class FeedbackViewModel(
             } catch (e: SessionExpiredException) {
                 println("FiberSocial: FeedbackViewModel.send session expired")
                 _state.value = FeedbackState.Idle
-                _sessionExpired.trySend(Unit)
+                sessionExpirySignal.signal()
             } catch (e: ForbiddenException) {
                 println("FiberSocial: FeedbackViewModel.send forbidden — needs group membership")
                 _state.value = FeedbackState.NeedsMembership

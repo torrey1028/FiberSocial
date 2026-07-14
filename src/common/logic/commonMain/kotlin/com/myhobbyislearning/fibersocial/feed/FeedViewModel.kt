@@ -1,16 +1,15 @@
 package com.myhobbyislearning.fibersocial.feed
 
 import com.myhobbyislearning.fibersocial.auth.SessionExpiredException
+import com.myhobbyislearning.fibersocial.auth.SessionExpirySignal
 import com.myhobbyislearning.fibersocial.feed.models.FeedItem
 import com.myhobbyislearning.fibersocial.feed.models.Group
 import com.myhobbyislearning.fibersocial.feed.models.RavelryUser
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 
 /**
@@ -91,16 +90,13 @@ class FeedViewModel(
     private val groupOrderStore: GroupOrderStore,
 ) {
     private val _state = MutableStateFlow<FeedState>(FeedState.Loading)
-    private val _sessionExpired = Channel<Unit>(Channel.BUFFERED)
+    private val sessionExpirySignal = SessionExpirySignal()
 
     /** Observable feed state. */
     val state: StateFlow<FeedState> = _state.asStateFlow()
 
-    /**
-     * Emits [Unit] when a [SessionExpiredException] is caught. Each emission is consumed
-     * exactly once — no replay on re-subscription. Collect to navigate to login.
-     */
-    val sessionExpired: Flow<Unit> = _sessionExpired.receiveAsFlow()
+    /** @see SessionExpirySignal.flow */
+    val sessionExpired: Flow<Unit> = sessionExpirySignal.flow
 
     private val _joinState = MutableStateFlow<JoinState>(JoinState.Idle)
 
@@ -145,7 +141,7 @@ class FeedViewModel(
             } catch (e: SessionExpiredException) {
                 println("FiberSocial: joinSupportGroup session expired")
                 _joinState.value = JoinState.Idle
-                _sessionExpired.trySend(Unit)
+                sessionExpirySignal.signal()
             } catch (e: Exception) {
                 println("FiberSocial: joinSupportGroup error: ${e.message}")
                 _joinState.value = JoinState.Error(e.message ?: "Couldn't join the group")
@@ -170,7 +166,7 @@ class FeedViewModel(
                 _state.value = fetchFeed(selectedGroup = newSelection)
             } catch (e: SessionExpiredException) {
                 println("FiberSocial: leaveGroup session expired")
-                _sessionExpired.trySend(Unit)
+                sessionExpirySignal.signal()
             } catch (e: Exception) {
                 println("FiberSocial: leaveGroup error: ${e.message}")
                 _leaveError.value = e.message ?: "Couldn't leave the group"
@@ -191,7 +187,7 @@ class FeedViewModel(
     }
 
     /** Sets the session-expired signal. Call only from platform debug tooling. */
-    fun forceSessionExpiry() { _sessionExpired.trySend(Unit) }
+    fun forceSessionExpiry() { sessionExpirySignal.signal() }
 
     /** Drops the feed into [FeedState.Error]. Call only from platform debug tooling. */
     fun forceError() {
@@ -292,7 +288,7 @@ class FeedViewModel(
                 )
             } catch (e: SessionExpiredException) {
                 println("FiberSocial: selectGroup session expired")
-                _sessionExpired.trySend(Unit)
+                sessionExpirySignal.signal()
                 current
             } catch (e: Exception) {
                 println("FiberSocial: selectGroup error: ${e.message}")
@@ -326,7 +322,7 @@ class FeedViewModel(
                 )
             } catch (e: SessionExpiredException) {
                 println("FiberSocial: loadMore session expired")
-                _sessionExpired.trySend(Unit)
+                sessionExpirySignal.signal()
                 loading.copy(loadingMore = false)
             } catch (e: Exception) {
                 println("FiberSocial: loadMore error: ${e.message}")
@@ -389,7 +385,7 @@ class FeedViewModel(
         )
     } catch (e: SessionExpiredException) {
         println("FiberSocial: fetchFeed session expired — navigating to login")
-        _sessionExpired.trySend(Unit)
+        sessionExpirySignal.signal()
         FeedState.Loading
     } catch (e: Exception) {
         println("FiberSocial: fetchFeed error: ${e.message}")
