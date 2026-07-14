@@ -9,6 +9,7 @@ yarn-ball-with-needles monogram (brand purple `#7950f2`).
 | `FiberSocialLogo_whitebackground.svg`  | Logo on white — light-context marketing/preview use. |
 | `FiberSocialLogo_darkmode.svg`         | Logo on dark — dark-context use. |
 | `ic_launcher-playstore.png`            | 512×512 Play Store listing icon (lavender `#EEE9FF` background, full square — the Play Store applies its own mask). |
+| `feature-graphic.svg` / `feature-graphic.png` | 1024×500 Play Store feature graphic (store listing banner). The PNG is the upload-ready asset (24-bit, no alpha, rendered via `rsvg-convert`); the SVG is the editable source — re-render with `rsvg-convert -w 1024 -h 500 --format=png feature-graphic.svg -o feature-graphic.png` if the copy or layout changes. |
 
 ## Launcher icon
 
