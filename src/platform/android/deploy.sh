@@ -36,7 +36,7 @@ if [ "$DEVICES" -eq 0 ]; then
     exit 1
 fi
 
-PACKAGE="com.autom8ed.fibersocial"
+PACKAGE="com.myhobbyislearning.fibersocial"
 
 # A debug APK can't update an installed release build (and vice versa): the
 # signatures differ, and on this setup the incompatible install doesn't fail

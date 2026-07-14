@@ -109,7 +109,7 @@ dependencies {
 }
 
 android {
-    namespace = "com.autom8ed.fibersocial.composeapp"
+    namespace = "com.myhobbyislearning.fibersocial.composeapp"
     // 36 required by Coil 3.5; 35+ by the Compose 1.11 artifacts that Compose Multiplatform 1.11 pins.
     compileSdk = 36
     defaultConfig {
@@ -127,7 +127,7 @@ android {
 }
 
 compose.resources {
-    packageOfResClass = "com.autom8ed.fibersocial.composeapp.resources"
+    packageOfResClass = "com.myhobbyislearning.fibersocial.composeapp.resources"
     // Compose's resource-file discovery is hardcoded to <projectDir>/src/<sourceSet>/
     // composeResources — it isn't derived from kotlin.srcDirs at all, so the srcDir
     // overrides above (which fixed this for regular Kotlin sources) don't help here.
