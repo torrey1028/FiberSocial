@@ -9,15 +9,15 @@ App for community connection/organization for Ravelry users.
 FiberSocial is in testing on both Android and iOS platforms. To get access:
 
 1. **Sign up**: **[Sign up to test FiberSocial](https://forms.gle/FrQp4SMwbSVEj76o9)** — one form works for either iPhone or Android.
-2. Once you're added to the tester list, follow the platform-specific steps below (**Join the Android closed test**, or **Install (iOS — TestFlight)**).
+2. Once you're added to the tester list, follow the platform-specific steps below (**Install on Android**, or **Install on iOS**).
 
-## Join the Android closed test (Play Store)
+## Install on Android (Play Store closed test)
 
 1. Sign up above if you haven't already — you need to be added to the tester list before the link below works.
 2. Once you're added, open the listing on your Android device and tap **Become a tester**: **[FiberSocial on Google Play](https://play.google.com/store/apps/details?id=com.myhobbyislearning.fibersocial)**.
 3. Install from the Play Store as normal. Updates arrive through the Play Store automatically from then on.
 
-## Install (iOS — TestFlight)
+## Install on iOS (TestFlight)
 
 The iOS app is distributed through **TestFlight** (Apple's beta-testing app),
 not the App Store. To try it:
