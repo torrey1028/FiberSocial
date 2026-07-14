@@ -1,13 +1,11 @@
 package com.myhobbyislearning.fibersocial.login
 
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -16,11 +14,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import com.myhobbyislearning.fibersocial.composeapp.resources.Res
-import com.myhobbyislearning.fibersocial.composeapp.resources.app_logo_content_description
-import com.myhobbyislearning.fibersocial.ui.appLogoResource
-import org.jetbrains.compose.resources.painterResource
-import org.jetbrains.compose.resources.stringResource
+import com.myhobbyislearning.fibersocial.ui.AppBranding
 
 @Composable
 fun LoginScreen(onLoginClick: () -> Unit, errorMessage: String? = null) {
@@ -39,22 +33,7 @@ fun LoginScreen(onLoginClick: () -> Unit, errorMessage: String? = null) {
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
         ) {
-            Image(
-                painter = painterResource(appLogoResource()),
-                contentDescription = stringResource(Res.string.app_logo_content_description),
-                modifier = Modifier.size(120.dp),
-            )
-            Spacer(modifier = Modifier.height(16.dp))
-            Text(
-                text = "FiberSocial",
-                style = MaterialTheme.typography.displaySmall,
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = "A community companion for Ravelry",
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            AppBranding()
             if (errorMessage != null) {
                 Spacer(modifier = Modifier.height(16.dp))
                 Text(

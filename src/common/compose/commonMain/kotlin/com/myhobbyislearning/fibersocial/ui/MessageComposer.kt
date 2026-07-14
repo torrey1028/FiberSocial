@@ -50,12 +50,7 @@ fun MessageComposer(
 ) {
     Column(modifier) {
         errorTexts.forEach { error ->
-            Text(
-                text = error,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error,
-                modifier = Modifier.padding(bottom = 4.dp),
-            )
+            ErrorText(error, modifier = Modifier.padding(bottom = 4.dp))
         }
         Row(verticalAlignment = Alignment.Bottom) {
             leading?.invoke()
@@ -69,7 +64,7 @@ fun MessageComposer(
             )
             Spacer(Modifier.width(8.dp))
             if (sending) {
-                CircularProgressIndicator(modifier = Modifier.size(32.dp).padding(4.dp))
+                SendingSpinner()
             } else {
                 IconButton(onClick = onSend, enabled = sendEnabled) {
                     Icon(Icons.AutoMirrored.Filled.Send, contentDescription = sendContentDescription)
@@ -77,4 +72,31 @@ fun MessageComposer(
             }
         }
     }
+}
+
+/**
+ * Standard styling for an inline form/composer error line (issue #270) — used above
+ * [MessageComposer], [com.myhobbyislearning.fibersocial.feed.NewTopicScreen]'s error, and
+ * the post edit bar's error, so failures read identically everywhere. Callers still supply
+ * their own spacing via [modifier]; only the text style and color are shared.
+ */
+@Composable
+fun ErrorText(text: String, modifier: Modifier = Modifier) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.error,
+        modifier = modifier,
+    )
+}
+
+/**
+ * The compact spinner shown in place of a send/confirm control while a request is in
+ * flight (issue #270) — used by [MessageComposer], [com.myhobbyislearning.fibersocial.feed.NewTopicScreen]'s
+ * post button, and the post edit bar's save button, so the "sending" affordance is sized
+ * and spaced identically everywhere.
+ */
+@Composable
+fun SendingSpinner(modifier: Modifier = Modifier) {
+    CircularProgressIndicator(modifier = modifier.size(32.dp).padding(4.dp))
 }

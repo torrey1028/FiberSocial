@@ -127,6 +127,7 @@ import com.myhobbyislearning.fibersocial.feedback.FeedbackScreen
 import com.myhobbyislearning.fibersocial.feedback.SupportGroup
 import com.myhobbyislearning.fibersocial.settings.SettingsScreen
 import com.myhobbyislearning.fibersocial.settings.ThemeMode
+import com.myhobbyislearning.fibersocial.ui.AppBranding
 import com.myhobbyislearning.fibersocial.ui.GroupBadge
 import com.myhobbyislearning.fibersocial.ui.PullToRefreshBox
 import com.myhobbyislearning.fibersocial.ui.appLogoResource
@@ -156,19 +157,7 @@ internal fun LaunchLoadingScreen() {
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
         ) {
-            Image(
-                painter = painterResource(appLogoResource()),
-                contentDescription = stringResource(Res.string.app_logo_content_description),
-                modifier = Modifier.size(120.dp),
-            )
-            Spacer(modifier = Modifier.height(16.dp))
-            Text(text = "FiberSocial", style = MaterialTheme.typography.displaySmall)
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = "A community companion for Ravelry",
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            AppBranding()
             Spacer(modifier = Modifier.height(48.dp))
             CircularProgressIndicator()
         }
