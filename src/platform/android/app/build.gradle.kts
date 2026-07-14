@@ -45,7 +45,7 @@ val localProps = Properties().also { props ->
 }
 
 android {
-    namespace = "com.autom8ed.fibersocial"
+    namespace = "com.myhobbyislearning.fibersocial"
     // 36 required by Coil 3.5; 35+ by the Compose 1.11 artifacts that Compose Multiplatform 1.11 pins.
     compileSdk = 36
 

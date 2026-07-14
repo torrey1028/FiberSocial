@@ -26,8 +26,8 @@ Read the changed files in full where a finding needs surrounding context — the
 
 ### (a) PostDocument two-walker sync invariant — HIGHEST RISK
 There are TWO independent flatteners that walk the same `PostDocument` tree and MUST collapse every node identically:
-- `fun PostDocument.previewInlines(maxLength=200)` in `src/common/logic/commonMain/kotlin/com/autom8ed/fibersocial/feed/html/PreviewInlines.kt`
-- `fun plainText(markdown)` (`blockPlainText`/`inlinePlainText`) in `src/common/logic/commonMain/kotlin/com/autom8ed/fibersocial/feed/html/MarkdownPostParser.kt`
+- `fun PostDocument.previewInlines(maxLength=200)` in `src/common/logic/commonMain/kotlin/com/myhobbyislearning/fibersocial/feed/html/PreviewInlines.kt`
+- `fun plainText(markdown)` (`blockPlainText`/`inlinePlainText`) in `src/common/logic/commonMain/kotlin/com/myhobbyislearning/fibersocial/feed/html/MarkdownPostParser.kt`
 
 **GOTCHA: `sealed` types force both `when`s to compile when a new `PostBlock`/`Inline` variant is added, but a *policy* change (how a node collapses — block separator, `HardBreak`→space, links→text, inline-emoji→alt, full photos→dropped) does NOT compile-break the other walker.** If the diff touches one walker's flatten policy, or adds an `Inline`/`PostBlock` variant handled in only one, that is a bug. Verify the mirror by reading BOTH files. Flag any edit to one walker with no matching edit to the other, and confirm the tests (`PreviewInlinesTest.kt`, `MarkdownPostParserTest.kt`) cover the new/changed policy. See the `feed-rendering` skill.
 
@@ -85,7 +85,7 @@ git diff origin/main...HEAD | grep -nE '403|Forbidden|SessionExpired'
 Flag any new `403` branch that refreshes the token, throws `SessionExpiredException`, or routes the user to re-login. Also flag a user-facing 403 message that says "403" (the real message deliberately omits the code). Web-protocol/scraping actions detect session expiry by redirect inspection, not by status code — don't confuse the two.
 
 ### (g) New API call with no MockEngine test / coverage-gate trip
-Every new `suspend fun` on `RavelryApiClient` needs a Ktor `MockEngine` test in `src/common/logic/commonTest/kotlin/com/autom8ed/fibersocial/feed/RavelryApiClientTest.kt` (see also `RavelryClientsTest.kt`). New untested logic will also trip the coverage gate.
+Every new `suspend fun` on `RavelryApiClient` needs a Ktor `MockEngine` test in `src/common/logic/commonTest/kotlin/com/myhobbyislearning/fibersocial/feed/RavelryApiClientTest.kt` (see also `RavelryClientsTest.kt`). New untested logic will also trip the coverage gate.
 
 ```bash
 cd /home/betorr/FiberSocial

@@ -6,7 +6,7 @@ description: Entry-point map of the FiberSocial Kotlin Multiplatform (Android+iO
 # FiberSocial — orientation & router
 
 Kotlin Multiplatform (Android + iOS) Ravelry client. Package root everywhere:
-`com.autom8ed.fibersocial`. App id: `com.autom8ed.fibersocial`. GitHub repo:
+`com.myhobbyislearning.fibersocial`. App id: `com.myhobbyislearning.fibersocial`. GitHub repo:
 `torrey1028/FiberSocial`. No npm / Node / TypeScript. No version catalog.
 
 ## The one structural fact that trips everyone
