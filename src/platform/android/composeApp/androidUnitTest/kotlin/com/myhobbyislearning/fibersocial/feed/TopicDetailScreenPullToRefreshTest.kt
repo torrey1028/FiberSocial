@@ -213,6 +213,38 @@ class TopicDetailScreenPullToRefreshTest {
     }
 
     @Test
+    fun `jumping to a target does not advance the read marker past it`() {
+        // Regression for a bug found on-device: scrollToItem/animateScrollToItem land the
+        // target at the TOP of the viewport by default, pulling a screenful of not-yet-read
+        // posts into view below it. furthestSeen tracks the LAST visible item, so those
+        // freshly-visible-but-unread posts got silently counted as "seen" too — the reported
+        // read marker on leaving the thread landed past where the user actually jumped to,
+        // and repeated jumps would creep further ahead each time.
+        val posts = (1..300L).map { id ->
+            Post(id = id, bodyHtml = "<p>post $id</p>", user = RavelryUser(username = "a"))
+        }
+        val unreadTopic = topic.copy(postCount = 300, unreadCount = 100, firstUnreadPostNumber = 200)
+        var markedTo: Int? = null
+        compose.setContent {
+            TopicDetailScreen(
+                topic = unreadTopic,
+                postsState = TopicDetailState.Loaded(posts = posts, hasMore = false),
+                onBack = {},
+                onVote = { _, _ -> },
+                onMarkRead = { markedTo = it },
+            )
+        }
+
+        compose.onNodeWithText("Jump to last read").performClick()
+        compose.waitForIdle()
+        compose.runOnIdle {
+            compose.activity.onBackPressedDispatcher.onBackPressed()
+        }
+
+        compose.runOnIdle { assertEquals(200, markedTo) }
+    }
+
+    @Test
     fun `shows the jump button for a fully-read topic that isn't fully visible, targeting the end`() {
         // On-device review of #255/#256 asked for the same button (not a distinct one)
         // to still offer a way to skip to the bottom of a topic with nothing unread, as
