@@ -19,7 +19,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -261,6 +263,14 @@ fun TopicDetailScreen(
         // number N is list index N.
         val firstUnread = topic.firstUnreadPostNumber
         val jumpTarget = if (firstUnread == null || firstUnread <= 1) topic.postCount else firstUnread
+        // Once the user has scrolled deeper than the original jumpTarget, that deeper point
+        // (furthestSeen, below) becomes the more useful thing to jump back to — otherwise
+        // scrolling back up from post 200 after reading past post 50's original marker finds
+        // no way back to 200 (issue #257). Read directly inside showJump's derivedStateOf
+        // below (not via this val) so its remember(jumpTarget)-cached calculation still
+        // reacts to furthestSeen changing on its own. Safe to use here for the scroll
+        // targets: unlike that calculation, these aren't cached across recompositions.
+        val effectiveJumpTarget = maxOf(jumpTarget, furthestSeen)
         // A deep jump may have to wait for pages to load in before it can scroll there
         // (issue #205); while it does, the button shows a spinner and this stays true.
         var pendingJump by remember(topic.id) { mutableStateOf(false) }
@@ -270,7 +280,15 @@ fun TopicDetailScreen(
         val lastVisibleIndex by remember {
             derivedStateOf { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0 }
         }
-        // Show the jump button until the ACTUAL jump target is already visible on screen,
+        // Suppresses the furthestSeen tracker (below) while a programmatic jump is in
+        // flight. scrollToItem/animateScrollToItem land the target at the TOP of the
+        // viewport, transiently showing posts well past it at the bottom BEFORE
+        // snapTargetToBottom corrects it — and furthestSeen is a high-water mark, so even
+        // that one transient frame would latch it past the target permanently, immune to
+        // the correction that follows (issue #257 follow-up, found on-device). The jump's
+        // own completion explicitly sets furthestSeen once landed (see below) instead.
+        var isJumping by remember(topic.id) { mutableStateOf(false) }
+        // Show the jump button until the effective jump target is already visible on screen,
         // or while a deep jump is still loading the pages in between. Gated on jumpTarget,
         // not unconditionally on the topic's very last post (postCount): on a long-running
         // thread (hundreds of posts over months), postCount can sit far beyond the real
@@ -283,7 +301,7 @@ fun TopicDetailScreen(
             derivedStateOf {
                 if (markedAllRead) return@derivedStateOf false
                 if (pendingJump) return@derivedStateOf true
-                lastVisibleIndex < jumpTarget
+                lastVisibleIndex < maxOf(jumpTarget, furthestSeen)
             }
         }
         // Load the next page as the user nears the end of the thread (issue #202). The
@@ -310,6 +328,7 @@ fun TopicDetailScreen(
         LaunchedEffect(listState, topic.id) {
             snapshotFlow { lastVisibleIndex }
                 .collect { lastIndex ->
+                    if (isJumping) return@collect
                     val seen = lastIndex.coerceIn(0, postCountState.value)
                     if (seen > furthestSeen) furthestSeen = seen
                 }
@@ -321,7 +340,12 @@ fun TopicDetailScreen(
         // compose and parse every one it flies past (janky); a jump should land instantly.
         LaunchedEffect(pendingJump, loaded?.isLoadingMore) {
             if (pendingJump && loaded?.isLoadingMore == false) {
-                listState.scrollToItem(jumpTarget.coerceIn(0, postCount))
+                isJumping = true
+                val target = effectiveJumpTarget.coerceIn(0, postCount)
+                listState.scrollToItem(target)
+                listState.snapTargetToBottom(target)
+                if (target > furthestSeen) furthestSeen = target
+                isJumping = false
                 pendingJump = false
             }
         }
@@ -443,13 +467,20 @@ fun TopicDetailScreen(
                 onClick = {
                     if (pendingJump) return@ExtendedFloatingActionButton
                     val count = loaded?.posts?.size ?: 0
-                    if (count >= jumpTarget || loaded?.hasMore != true) {
+                    if (count >= effectiveJumpTarget || loaded?.hasMore != true) {
                         // Target already loaded (or nothing more to load): scroll now.
-                        jumpScope.launch { listState.animateScrollToItem(jumpTarget.coerceIn(0, count)) }
+                        jumpScope.launch {
+                            isJumping = true
+                            val target = effectiveJumpTarget.coerceIn(0, count)
+                            listState.animateScrollToItem(target)
+                            listState.snapTargetToBottom(target)
+                            if (target > furthestSeen) furthestSeen = target
+                            isJumping = false
+                        }
                     } else {
                         // Target is pages away: load forward, then the effect above scrolls.
                         pendingJump = true
-                        onLoadUntil(jumpTarget)
+                        onLoadUntil(effectiveJumpTarget)
                     }
                 },
                 modifier = Modifier
@@ -469,6 +500,37 @@ fun TopicDetailScreen(
         }
         }
     }
+}
+
+/**
+ * Nudges the list so [index] sits at the BOTTOM of the viewport, correcting a scroll that
+ * already landed [index] at the top (`scrollToItem`/`animateScrollToItem`'s default).
+ *
+ * Landing the jump target at the top pulls a whole extra screenful of posts the user hasn't
+ * actually read into view below it. [furthestSeen] tracks the LAST visible item, so those
+ * freshly-visible-but-unread posts immediately count as "seen" too — advancing the read
+ * marker past where the user actually left off, and making repeated jumps creep further and
+ * further ahead each time (issue #257 follow-up, found on-device). Anchoring the target to
+ * the bottom instead means nothing past it is visible until the user actually scrolls there.
+ *
+ * No-ops if [index] isn't currently laid out (shouldn't happen right after scrolling to it,
+ * but layout info can theoretically lag a frame) or doesn't need to move (already at/above
+ * the bottom edge — e.g. a target near the very end of a short thread).
+ */
+private suspend fun LazyListState.snapTargetToBottom(index: Int) {
+    val info = layoutInfo
+    val item = info.visibleItemsInfo.find { it.index == index } ?: return
+    // viewportEndOffset is the physical viewport's bottom edge — NOT reduced by
+    // afterContentPadding, which only extends how far you can overscroll past the true
+    // last item and has no bearing on a middle item's alignment. Subtracting it here would
+    // align to a boundary that itself moves once the jump button's own reserved bottom
+    // padding shrinks back down after showJump flips off below, reintroducing drift.
+    val viewportEnd = info.viewportEndOffset
+    // Positive when the item's bottom is above the viewport's bottom edge (the common case
+    // right after landing it at the TOP) — closing that gap means bringing EARLIER items
+    // into view above it, i.e. scrolling backward, hence the negated delta.
+    val gap = viewportEnd - (item.offset + item.size)
+    if (gap > 0) scrollBy(-gap.toFloat())
 }
 
 @Composable
