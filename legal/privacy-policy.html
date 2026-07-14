@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FiberSocial Privacy Policy</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #ffffff;
+    --fg: #1a1a1a;
+    --muted: #5b6270;
+    --border: #e2e5ea;
+    --accent: #7c5cff;
+    --card: #f6f7f9;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14151a;
+      --fg: #eceef2;
+      --muted: #9aa1b0;
+      --border: #2a2c34;
+      --accent: #a996ff;
+      --card: #1c1e26;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.6;
+  }
+  main {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 3rem 1.25rem 5rem;
+  }
+  h1 {
+    font-size: 1.75rem;
+    margin-bottom: 0.25rem;
+  }
+  .meta {
+    color: var(--muted);
+    font-size: 0.9rem;
+    margin-bottom: 2rem;
+  }
+  h2 {
+    font-size: 1.15rem;
+    margin-top: 2.25rem;
+    margin-bottom: 0.75rem;
+    padding-bottom: 0.4rem;
+    border-bottom: 1px solid var(--border);
+  }
+  p, li { color: var(--fg); }
+  ul { padding-left: 1.25rem; }
+  li { margin-bottom: 0.5rem; }
+  a { color: var(--accent); }
+  .callout {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1rem 1.25rem;
+    margin: 1.25rem 0;
+    font-size: 0.95rem;
+  }
+  code {
+    background: var(--card);
+    padding: 0.1rem 0.35rem;
+    border-radius: 4px;
+    font-size: 0.9em;
+  }
+  footer {
+    margin-top: 3rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 0.85rem;
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>FiberSocial Privacy Policy</h1>
+  <p class="meta">Effective July 14, 2026</p>
+
+  <div class="callout">
+    FiberSocial is an independent, unofficial app for <a href="https://www.ravelry.com/">Ravelry</a>.
+    It is not created by, operated by, affiliated with, or endorsed by Ravelry — it's a
+    third-party client built by an outside developer using Ravelry's public API and website.
+    "Ravelry" belongs to its own owners.
+  </div>
+
+  <h2>Who provides this app</h2>
+  <p>
+    FiberSocial is developed and maintained independently, with source code published at
+    <a href="https://github.com/torrey1028/FiberSocial">github.com/torrey1028/FiberSocial</a>.
+    Contact: <a href="mailto:torrey1028@gmail.com">torrey1028@gmail.com</a>.
+  </p>
+
+  <h2>How the app talks to Ravelry</h2>
+  <p>
+    FiberSocial talks directly to Ravelry using your own Ravelry account — there is no
+    FiberSocial server in between. Most requests use an OAuth token for Ravelry's API; a
+    handful of actions Ravelry's API doesn't expose (like event pages) instead reuse your
+    Ravelry website session, the same way your browser would. Every request goes straight
+    from your device to Ravelry's servers, authenticated as you.
+  </p>
+
+  <h2>What's stored on your device</h2>
+  <ul>
+    <li>
+      Your OAuth token and Ravelry session are stored in encrypted, on-device storage
+      (Android's <code>EncryptedSharedPreferences</code>, or the iOS Keychain), so you don't
+      have to log in every time.
+    </li>
+    <li>
+      App preferences — theme, group order, and notification settings — are kept in ordinary
+      on-device settings storage.
+    </li>
+    <li>
+      To detect new events and remind you about the ones you're attending, the app keeps a
+      small local record of event permalinks and reminder times on your device. It's used
+      only to avoid re-notifying you and to schedule reminders, and never leaves your device.
+    </li>
+  </ul>
+
+  <h2>What FiberSocial does not do</h2>
+  <ul>
+    <li>There is no FiberSocial-operated server. Nothing you do in the app is sent to the
+      developer.</li>
+    <li>The app has no analytics or tracking SDKs, and doesn't share data with any third
+      party other than Ravelry itself — the service you're already directly authenticated
+      with.</li>
+    <li>The app does not access your contacts, camera, microphone, or location.</li>
+  </ul>
+
+  <h2>Your content and account</h2>
+  <p>
+    Anything you post, favorite, or otherwise create through FiberSocial (forum replies,
+    votes, event RSVPs, etc.) is stored by Ravelry on your Ravelry account, exactly as if
+    you'd done it on ravelry.com — FiberSocial is only a window into that account. Ravelry's
+    own handling of your account data is governed by
+    <a href="https://www.ravelry.com/about/privacy">Ravelry's Privacy Policy</a>, not this one.
+  </p>
+
+  <h2>Data retention and deletion</h2>
+  <p>
+    Signing out clears your stored OAuth token and session from the device. Uninstalling the
+    app removes all local app data, including the encrypted credentials, preferences, and the
+    local event/reminder record described above. Because FiberSocial has no server, there is
+    no remote copy of any app data to separately delete — deleting the local data on your
+    device is complete. To delete your underlying Ravelry account or its content, use
+    Ravelry's own account tools.
+  </p>
+
+  <h2>Children's privacy</h2>
+  <p>
+    FiberSocial is not directed at children and does not knowingly collect data from children
+    under 13. Access to the app requires an existing Ravelry account, which is subject to
+    Ravelry's own eligibility terms.
+  </p>
+
+  <h2>Changes to this policy</h2>
+  <p>
+    If this policy changes, the updated version will be published at this same URL with a
+    new effective date above.
+  </p>
+
+  <footer>
+    FiberSocial · <a href="https://github.com/torrey1028/FiberSocial">Source on GitHub</a>
+  </footer>
+</main>
+</body>
+</html>
