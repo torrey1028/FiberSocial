@@ -74,6 +74,10 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
+            // Signs both ./gradlew assembleRelease (APK) and bundleRelease (the .aab Play
+            // requires) — the Android application plugin wires bundleRelease to whatever
+            // signingConfig is set on this buildType automatically, no separate bundle{}
+            // signing config needed.
             releaseSigningConfig?.let { signingConfig = it }
         }
     }

@@ -106,9 +106,13 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Build signed release APK
+      # Both tasks share the same release signingConfig (see app/build.gradle.kts) and
+      # most of the same compile/resource work, so building them in one Gradle
+      # invocation avoids a second cold JVM/config pass. The AAB is what Play Console
+      # requires for store submissions; the APK stays the direct-download artifact.
+      - name: Build signed release APK and AAB
         working-directory: src/platform/android
-        run: ./gradlew assembleRelease
+        run: ./gradlew assembleRelease bundleRelease
 
       # $GITHUB_REF_NAME is the tag name (e.g. v1.2.0) for a tag-push event.
       # --generate-notes pulls auto-generated release notes from merged PRs
@@ -119,6 +123,7 @@ jobs:
         run: |
           gh release create "$GITHUB_REF_NAME" \
             src/platform/android/app/build/outputs/apk/release/app-release.apk \
+            src/platform/android/app/build/outputs/bundle/release/app-release.aab \
             --repo "$GITHUB_REPOSITORY" \
             --title "$GITHUB_REF_NAME" \
             --generate-notes \
