@@ -40,8 +40,21 @@ so the Kotlin side rebuilds automatically on every Xcode build.
 
 ## TestFlight & signing
 
-Simulator builds need no signing. For a device or TestFlight build you need an
-Apple Developer Program membership ($99/yr):
+**Tagged releases upload to TestFlight automatically** — pushing a
+`vMAJOR.MINOR.PATCH` tag via `scripts/release.sh` (see the root `CLAUDE.md`'s
+"Versioning & cutting a release") fires the `ios-release` job in
+`.github/workflows/release.yml` alongside the Android release job, archiving
+and uploading a signed build with no local Xcode step. That job needs the
+`IOS_*` repo secrets and the `APPLE_TEAM_ID` repo variable documented in
+`CLAUDE.md`'s "Secrets" section to be configured first; it can also be
+dry-run via the workflow's `workflow_dispatch` trigger without cutting a real
+tag.
+
+The rest of this section covers doing the same thing manually from Xcode —
+useful for an ad-hoc build outside the tag/CI flow, or for the one-time setup
+CI's signing secrets are exported from. Simulator builds need no signing; a
+device or manual TestFlight build needs an Apple Developer Program membership
+($99/yr):
 
 1. In Xcode: project → FiberSocial target → Signing & Capabilities → check
    "Automatically manage signing" and pick your Team. (The Background Modes

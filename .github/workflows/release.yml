@@ -3,9 +3,17 @@ name: Release
 on:
   push:
     tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+  # Lets the iOS signing/upload pipeline be dry-run tested without cutting a
+  # real version tag (and without touching the Android job, which only
+  # listens for tag pushes).
+  workflow_dispatch:
 
 jobs:
   release:
+    # workflow_dispatch exists only to dry-run the iOS job below; this job has
+    # nothing to dry-run (there's no tag to build from), so it'd just fail the
+    # "tag resolves unambiguously" check below on every manual run. Skip it.
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     # Serialize release runs (each tag is a distinct ref, so a per-ref group
     # wouldn't help): two tags pushed close together would otherwise race, and
@@ -128,3 +136,218 @@ jobs:
             --title "$GITHUB_REF_NAME" \
             --generate-notes \
             --latest
+
+  ios-release:
+    runs-on: macos-15
+    # Independent of the Android job's `release` group: the two platforms
+    # build on entirely different runners/toolchains and one being slow
+    # shouldn't hold up the other.
+    concurrency:
+      group: ios-release
+      cancel-in-progress: false
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Same check the Android job runs, adjusted for workflow_dispatch: a
+      # dry-run has no tag to validate against, so it skips straight to the
+      # sentinel version below instead.
+      - name: Verify tag is on main and resolves unambiguously
+        if: github.event_name == 'push'
+        run: |
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::Tag $GITHUB_REF_NAME points at $GITHUB_SHA, which is not on origin/main. Cut release tags from main via scripts/release.sh."
+            exit 1
+          fi
+          described="$(git describe --tags --exact-match --match 'v[0-9]*.[0-9]*.[0-9]*' 2>/dev/null || true)"
+          if [ "$described" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::git describe resolves this commit to '${described:-<nothing>}' but the pushed tag is '$GITHUB_REF_NAME', so the archived build's version would not match the release. Delete the conflicting tag(s) on this commit and re-push."
+            exit 1
+          fi
+
+      # Mirrors app/build.gradle.kts's versionCode packing (MAJOR*1_000_000 +
+      # MINOR*1_000 + PATCH) so both platforms' release-over-release build
+      # numbers stay in the same scheme. workflow_dispatch dry runs get a
+      # sentinel marketing version that can never collide with a real
+      # vMAJOR.MINOR.PATCH tag: scripts/release.sh explicitly rejects 0.0.0
+      # (it's the one version that can never be a real release), with the
+      # run number as the build number so repeated dry runs still satisfy
+      # TestFlight's strictly-increasing build-number-per-version rule.
+      - name: Determine release version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            if [[ ! "$GITHUB_REF_NAME" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+              echo "::error::Tag '$GITHUB_REF_NAME' doesn't match vMAJOR.MINOR.PATCH"
+              exit 1
+            fi
+            major="${BASH_REMATCH[1]}"
+            minor="${BASH_REMATCH[2]}"
+            patch="${BASH_REMATCH[3]}"
+            echo "marketing_version=$major.$minor.$patch" >> "$GITHUB_OUTPUT"
+            echo "build_number=$((major * 1000000 + minor * 1000 + patch))" >> "$GITHUB_OUTPUT"
+          else
+            echo "marketing_version=0.0.0" >> "$GITHUB_OUTPUT"
+            echo "build_number=$GITHUB_RUN_NUMBER" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Compose Multiplatform 1.11's ui-uikit links against iOS 26 SDK symbols;
+      # see the twin comment in tests.yml's common-ios-tests job.
+      - name: Select Xcode 26
+        run: |
+          sudo xcode-select -s "$(ls -d /Applications/Xcode_26*.app | sort -V | tail -1)"
+          xcodebuild -version
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: "temurin"
+
+      # The build applies AGP even for the composeApp framework build, and
+      # macOS runner images don't ship an Android SDK — see the twin comment
+      # in tests.yml's common-ios-tests job.
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: "platforms;android-34 platforms;android-36"
+
+      # Fails loudly rather than quietly shipping a build that can't sign or
+      # upload — same rationale as the Android job's secret check above.
+      - name: Verify iOS release secrets are configured
+        env:
+          IOS_DIST_CERTIFICATE_BASE64: ${{ secrets.IOS_DIST_CERTIFICATE_BASE64 }}
+          IOS_DIST_CERTIFICATE_PASSWORD: ${{ secrets.IOS_DIST_CERTIFICATE_PASSWORD }}
+          IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+          IOS_ASC_API_KEY_BASE64: ${{ secrets.IOS_ASC_API_KEY_BASE64 }}
+          IOS_ASC_KEY_ID: ${{ secrets.IOS_ASC_KEY_ID }}
+          IOS_ASC_ISSUER_ID: ${{ secrets.IOS_ASC_ISSUER_ID }}
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+          RAVELRY_CLIENT_ID: ${{ secrets.RAVELRY_CLIENT_ID }}
+          RAVELRY_CLIENT_SECRET: ${{ secrets.RAVELRY_CLIENT_SECRET }}
+        run: |
+          missing=""
+          [ -z "$IOS_DIST_CERTIFICATE_BASE64" ] && missing="$missing IOS_DIST_CERTIFICATE_BASE64"
+          [ -z "$IOS_DIST_CERTIFICATE_PASSWORD" ] && missing="$missing IOS_DIST_CERTIFICATE_PASSWORD"
+          [ -z "$IOS_PROVISIONING_PROFILE_BASE64" ] && missing="$missing IOS_PROVISIONING_PROFILE_BASE64"
+          [ -z "$IOS_ASC_API_KEY_BASE64" ] && missing="$missing IOS_ASC_API_KEY_BASE64"
+          [ -z "$IOS_ASC_KEY_ID" ] && missing="$missing IOS_ASC_KEY_ID"
+          [ -z "$IOS_ASC_ISSUER_ID" ] && missing="$missing IOS_ASC_ISSUER_ID"
+          [ -z "$APPLE_TEAM_ID" ] && missing="$missing APPLE_TEAM_ID(variable)"
+          [ -z "$RAVELRY_CLIENT_ID" ] && missing="$missing RAVELRY_CLIENT_ID"
+          [ -z "$RAVELRY_CLIENT_SECRET" ] && missing="$missing RAVELRY_CLIENT_SECRET"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing required repo secret(s)/variable(s):$missing. Add them at Settings > Secrets and variables > Actions before pushing a release tag."
+            exit 1
+          fi
+
+      # Same pattern as local.properties elsewhere: secrets go through env +
+      # printf %s, never ${{ }} inside the script, so a secret containing
+      # quotes/$/backslashes can't corrupt the written file.
+      - name: Write Config.local.xcconfig
+        env:
+          RAVELRY_CLIENT_ID: ${{ secrets.RAVELRY_CLIENT_ID }}
+          RAVELRY_CLIENT_SECRET: ${{ secrets.RAVELRY_CLIENT_SECRET }}
+        run: |
+          {
+            printf 'RAVELRY_CLIENT_ID = %s\n' "$RAVELRY_CLIENT_ID"
+            printf 'RAVELRY_CLIENT_SECRET = %s\n' "$RAVELRY_CLIENT_SECRET"
+          } > src/platform/ios/Config.local.xcconfig
+
+      # A temporary keychain scoped to this job, not the runner's login
+      # keychain, so nothing signing-related persists past the job. The
+      # keychain password itself needs no secret — it only has to survive
+      # this one job.
+      - name: Import distribution certificate
+        env:
+          IOS_DIST_CERTIFICATE_BASE64: ${{ secrets.IOS_DIST_CERTIFICATE_BASE64 }}
+          IOS_DIST_CERTIFICATE_PASSWORD: ${{ secrets.IOS_DIST_CERTIFICATE_PASSWORD }}
+        run: |
+          KEYCHAIN_PW="$(openssl rand -base64 24)"
+          KEYCHAIN_PATH="$RUNNER_TEMP/ci-signing.keychain-db"
+          echo "$IOS_DIST_CERTIFICATE_BASE64" | base64 -d > "$RUNNER_TEMP/dist_cert.p12"
+          security create-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN_PATH"
+          security import "$RUNNER_TEMP/dist_cert.p12" -k "$KEYCHAIN_PATH" -P "$IOS_DIST_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PW" "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | tr -d '"')
+
+      - name: Install provisioning profile
+        env:
+          IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+        run: |
+          PROFILE_PATH="$RUNNER_TEMP/profile.mobileprovision"
+          echo "$IOS_PROVISIONING_PROFILE_BASE64" | base64 -d > "$PROFILE_PATH"
+          PROFILE_UUID="$(security cms -D -i "$PROFILE_PATH" | plutil -extract UUID raw -o - -)"
+          mkdir -p ~/Library/MobileDevice/"Provisioning Profiles"
+          cp "$PROFILE_PATH" ~/Library/MobileDevice/"Provisioning Profiles"/"$PROFILE_UUID".mobileprovision
+          echo "profile_uuid=$PROFILE_UUID" >> "$GITHUB_OUTPUT"
+        id: profile
+
+      # Signing/version settings are passed as command-line build setting
+      # overrides rather than committed to project.pbxproj, which stays
+      # team-agnostic for other contributors' local automatic-signing builds.
+      - name: Archive
+        env:
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+        run: |
+          xcodebuild -project src/platform/ios/FiberSocial.xcodeproj -scheme FiberSocial \
+            -configuration Release -archivePath "$RUNNER_TEMP/FiberSocial.xcarchive" \
+            -destination 'generic/platform=iOS' \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="Apple Distribution" \
+            DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
+            PROVISIONING_PROFILE="${{ steps.profile.outputs.profile_uuid }}" \
+            MARKETING_VERSION="${{ steps.version.outputs.marketing_version }}" \
+            CURRENT_PROJECT_VERSION="${{ steps.version.outputs.build_number }}" \
+            archive
+
+      # destination: upload (Xcode 13+) makes -exportArchive upload straight
+      # to App Store Connect in the same step — no separate altool/notarytool
+      # call needed.
+      - name: Write exportOptions.plist
+        env:
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+        run: |
+          cat > "$RUNNER_TEMP/exportOptions.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key>
+            <string>app-store-connect</string>
+            <key>teamID</key>
+            <string>$APPLE_TEAM_ID</string>
+            <key>signingStyle</key>
+            <string>manual</string>
+            <key>destination</key>
+            <string>upload</string>
+            <key>provisioningProfiles</key>
+            <dict>
+              <key>com.myhobbyislearning.fibersocial</key>
+              <string>${{ steps.profile.outputs.profile_uuid }}</string>
+            </dict>
+          </dict>
+          </plist>
+          PLIST
+
+      # Authenticating with an App Store Connect API key (rather than an
+      # Apple ID) avoids interactive 2FA entirely, which is what makes this
+      # step possible non-interactively in CI.
+      - name: Export archive and upload to App Store Connect
+        env:
+          IOS_ASC_API_KEY_BASE64: ${{ secrets.IOS_ASC_API_KEY_BASE64 }}
+          IOS_ASC_KEY_ID: ${{ secrets.IOS_ASC_KEY_ID }}
+          IOS_ASC_ISSUER_ID: ${{ secrets.IOS_ASC_ISSUER_ID }}
+        run: |
+          echo "$IOS_ASC_API_KEY_BASE64" | base64 -d > "$RUNNER_TEMP/AuthKey.p8"
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/FiberSocial.xcarchive" \
+            -exportPath "$RUNNER_TEMP/export" \
+            -exportOptionsPlist "$RUNNER_TEMP/exportOptions.plist" \
+            -authenticationKeyPath "$RUNNER_TEMP/AuthKey.p8" \
+            -authenticationKeyID "$IOS_ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$IOS_ASC_ISSUER_ID"
