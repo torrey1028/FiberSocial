@@ -4,6 +4,10 @@ App for community connection/organization for Ravelry users.
 
 [Privacy Policy](https://torrey1028.github.io/FiberSocial/) · unofficial, not affiliated with Ravelry.
 
+## Support
+
+Need help, found a bug, or have a question? Email **[myhobbyislearning@gmail.com](mailto:myhobbyislearning@gmail.com)**.
+
 ## Become a tester
 
 FiberSocial is in testing on both Android and iOS platforms. To get access:
