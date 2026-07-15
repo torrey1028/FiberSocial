@@ -6,6 +6,15 @@ import kotlin.test.assertNull
 
 class EventVenueTest {
 
+    // mapsUrl()'s query-joining/encoding is the platform-independent part this test
+    // suite actually targets; the URL template itself is per-platform (issue #328 —
+    // google.com/maps/dir on Android/jvm, maps.apple.com on iOS). Building the expected
+    // value through mapsAppUrl() rather than hardcoding one platform's literal keeps
+    // these assertions correct under every target's actual, including
+    // iosSimulatorArm64Test — hardcoding the Android/jvm literal here previously broke
+    // silently on iOS (mapsUrl() legitimately returns a different, still-correct, URL
+    // there).
+
     @Test
     fun `mapsUrl joins all venue parts into an encoded directions destination`() {
         val venue = EventVenue(
@@ -15,9 +24,7 @@ class EventVenueTest {
             country = "United States",
         )
         assertEquals(
-            "https://www.google.com/maps/dir/?api=1&destination=" +
-                "Chainline%20Brewing%2C%20503%206th%20St%20S%2C%20" +
-                "Kirkland%2C%20Washington%2C%20United%20States",
+            mapsAppUrl("Chainline%20Brewing%2C%20503%206th%20St%20S%2C%20Kirkland%2C%20Washington%2C%20United%20States"),
             venue.mapsUrl(),
         )
     }
@@ -26,7 +33,7 @@ class EventVenueTest {
     fun `mapsUrl skips absent and blank parts`() {
         val venue = EventVenue(name = null, address = "  ", cityState = "Kirkland, Washington")
         assertEquals(
-            "https://www.google.com/maps/dir/?api=1&destination=Kirkland%2C%20Washington",
+            mapsAppUrl("Kirkland%2C%20Washington"),
             venue.mapsUrl(),
         )
     }
@@ -41,7 +48,7 @@ class EventVenueTest {
     fun `mapsUrl encodes characters that would break the query`() {
         val venue = EventVenue(name = "Yarn & Tea", address = "1 Main St #2")
         assertEquals(
-            "https://www.google.com/maps/dir/?api=1&destination=Yarn%20%26%20Tea%2C%201%20Main%20St%20%232",
+            mapsAppUrl("Yarn%20%26%20Tea%2C%201%20Main%20St%20%232"),
             venue.mapsUrl(),
         )
     }
