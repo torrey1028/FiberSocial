@@ -3,7 +3,7 @@ name: Pages
 on:
   push:
     branches: ["main"]
-    paths: ["legal/*.html"]
+    paths: ["legal/*.html", "legal/favicon.png"]
   workflow_dispatch:
 
 permissions:
@@ -39,6 +39,7 @@ jobs:
           mkdir -p _site
           cp legal/*.html _site/
           cp legal/privacy-policy.html _site/index.html
+          cp legal/favicon.png _site/
 
       - uses: actions/upload-pages-artifact@v3
         with:
