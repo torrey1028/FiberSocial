@@ -33,13 +33,14 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -66,6 +67,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import com.myhobbyislearning.fibersocial.feed.html.parseBodyDocument
@@ -325,6 +328,27 @@ fun TopicDetailScreen(
         // load without restarting the snapshot collector.
         val postCount = (displayState as? TopicDetailState.Loaded)?.posts?.size ?: 0
         val postCountState = rememberUpdatedState(postCount)
+        // A deep jump-to-newest may also have to wait for pages to load (mirrors
+        // pendingJump above, but always loads to the true end rather than a specific
+        // post number — see the LaunchedEffect below).
+        var pendingJumpToNewest by remember(topic.id) { mutableStateOf(false) }
+        // "Jump to newest" (issue #309 follow-up) is a distinct action from "jump to last
+        // read": it's always available as a plain "scroll to the end" shortcut regardless
+        // of read state — unlike showJump, NOT gated on markedAllRead, since skipping to
+        // the end is a navigation aid, not a read-tracking one. Shown whenever the true
+        // last post isn't on screen yet, including while further pages remain to load.
+        // Keyed on loaded?.hasMore and postCount (mirrors shouldLoadMore below): both are
+        // plain vals derived from displayState, not genuine State reads, so a key-less
+        // remember would freeze this derivedStateOf's closure on whatever they were on the
+        // FIRST composition — typically Loading, i.e. loaded=null/postCount=0 — and never
+        // see the topic actually finish loading (found on-device: the button never
+        // appeared at all).
+        val showJumpToNewest by remember(loaded?.hasMore, postCount) {
+            derivedStateOf {
+                if (pendingJumpToNewest) return@derivedStateOf true
+                loaded?.hasMore == true || lastVisibleIndex < postCount
+            }
+        }
         LaunchedEffect(listState, topic.id) {
             snapshotFlow { lastVisibleIndex }
                 .collect { lastIndex ->
@@ -341,12 +365,110 @@ fun TopicDetailScreen(
         LaunchedEffect(pendingJump, loaded?.isLoadingMore) {
             if (pendingJump && loaded?.isLoadingMore == false) {
                 isJumping = true
-                val target = effectiveJumpTarget.coerceIn(0, postCount)
-                listState.scrollToItem(target)
-                listState.snapTargetToBottom(target)
-                if (target > furthestSeen) furthestSeen = target
-                isJumping = false
-                pendingJump = false
+                // try/finally: if this jump's scroll is cancelled by a competing one (see
+                // the mutual isJumping guards on both FABs' onClick below — a jump started
+                // while another is still resolving from a deep load is the case this
+                // protects against), isJumping/pendingJump must still reset. Compose's
+                // scroll APIs share one MutatorMutex per LazyListState, so a second
+                // concurrent scroll call cancels the first — without this, the cancelled
+                // coroutine would skip past these resets, permanently stuck, silently
+                // freezing the furthest-seen tracker below for the rest of the session.
+                try {
+                    val target = effectiveJumpTarget.coerceIn(0, postCount)
+                    listState.scrollToItem(target)
+                    listState.snapTargetToBottom(target)
+                    if (target > furthestSeen) furthestSeen = target
+                } finally {
+                    isJumping = false
+                    pendingJump = false
+                }
+            }
+        }
+        // Mirrors the pendingJump effect above, but for jump-to-newest: onLoadUntil is
+        // called with Int.MAX_VALUE (below) so TopicDetailViewModel.loadUntilPost's own
+        // "while (loaded.hasMore) load another page" loop naturally keeps going until
+        // hasMore is false — i.e. until the true end, whatever post number that turns out
+        // to be — rather than stopping at a specific known target.
+        LaunchedEffect(pendingJumpToNewest, loaded?.isLoadingMore) {
+            if (pendingJumpToNewest && loaded?.isLoadingMore == false) {
+                isJumping = true
+                // See the twin comment on the pendingJump effect above: try/finally
+                // guarantees isJumping/pendingJumpToNewest reset even if this jump's
+                // scroll gets cancelled by the OTHER jump control's scroll racing it on
+                // the same LazyListState.
+                try {
+                    val target = postCount
+                    listState.scrollToItem(target.coerceIn(0, postCount))
+                    listState.snapTargetToBottom(target.coerceIn(0, postCount))
+                    if (target > furthestSeen) furthestSeen = target
+                } finally {
+                    isJumping = false
+                    pendingJumpToNewest = false
+                }
+            }
+        }
+        // Whether the FAB below is showing its two-way chooser (issue #309 follow-up:
+        // "last read" and "newest" are distinct destinations, both potentially useful
+        // regardless of read state — rather than two separately-floating buttons, which
+        // read as competing/cluttered since "newest" differs from "last read" for the
+        // WHOLE time you're catching up on a thread, not just occasionally, a single
+        // entry point that expands into a choice keeps only one control on screen at once).
+        var jumpMenuExpanded by remember(topic.id) { mutableStateOf(false) }
+        val jumpToLastRead: () -> Unit = {
+            // isJumping also guards against the OTHER destination (jump-to-newest) being
+            // mid-scroll — both share one LazyListState, so starting a second scroll here
+            // would cancel it via Compose's MutatorMutex rather than queue politely, which
+            // (absent this guard) is exactly what leaves the cancelled coroutine's
+            // isJumping/pending flag stuck permanently true.
+            if (!pendingJump && !isJumping) {
+                val count = loaded?.posts?.size ?: 0
+                if (count >= effectiveJumpTarget || loaded?.hasMore != true) {
+                    // Target already loaded (or nothing more to load): scroll now.
+                    jumpScope.launch {
+                        isJumping = true
+                        // try/finally: if this jump's scroll is cancelled by a competing
+                        // one, isJumping must still reset — see the LaunchedEffect
+                        // versions of this same guard above for the full reasoning.
+                        try {
+                            val target = effectiveJumpTarget.coerceIn(0, count)
+                            listState.animateScrollToItem(target)
+                            listState.snapTargetToBottom(target)
+                            if (target > furthestSeen) furthestSeen = target
+                        } finally {
+                            isJumping = false
+                        }
+                    }
+                } else {
+                    // Target is pages away: load forward, then the effect above scrolls.
+                    pendingJump = true
+                    onLoadUntil(effectiveJumpTarget)
+                }
+            }
+        }
+        val jumpToNewest: () -> Unit = {
+            // See the twin comment on jumpToLastRead above: isJumping guards against
+            // racing that destination's own in-flight scroll on the same LazyListState.
+            if (!pendingJumpToNewest && !isJumping) {
+                if (loaded?.hasMore != true) {
+                    // Already fully loaded: scroll now.
+                    jumpScope.launch {
+                        isJumping = true
+                        try {
+                            val target = postCount
+                            listState.animateScrollToItem(target.coerceIn(0, postCount))
+                            listState.snapTargetToBottom(target.coerceIn(0, postCount))
+                            if (target > furthestSeen) furthestSeen = target
+                        } finally {
+                            isJumping = false
+                        }
+                    }
+                } else {
+                    // More pages remain: load everything, then the effect above scrolls.
+                    // MAX_VALUE makes loadUntilPost's own loop run until hasMore is false
+                    // rather than stopping at some specific (not yet known) post number.
+                    pendingJumpToNewest = true
+                    onLoadUntil(Int.MAX_VALUE)
+                }
             }
         }
         Box(modifier = Modifier.padding(padding)) {
@@ -357,7 +479,7 @@ fun TopicDetailScreen(
             LazyColumn(
                 state = listState,
                 modifier = Modifier.fillMaxSize(),
-                // Extra bottom room while the jump FAB floats over the list (issue #255
+                // Extra bottom room while either jump FAB floats over the list (issue #255
                 // follow-up): without it, the FAB visually sits on top of the last couple
                 // of posts, and a scroll gesture starting on that overlapped area doesn't
                 // reach the LazyColumn — it can register as a tap on the FAB instead,
@@ -366,7 +488,7 @@ fun TopicDetailScreen(
                     start = 16.dp,
                     end = 16.dp,
                     top = 12.dp,
-                    bottom = if (showJump) 96.dp else 12.dp,
+                    bottom = if (showJump || showJumpToNewest) 96.dp else 12.dp,
                 ),
                 verticalArrangement = Arrangement.spacedBy(0.dp),
             ) {
@@ -462,39 +584,73 @@ fun TopicDetailScreen(
                 }
             }
         }
-        if (showJump) {
-            ExtendedFloatingActionButton(
-                onClick = {
-                    if (pendingJump) return@ExtendedFloatingActionButton
-                    val count = loaded?.posts?.size ?: 0
-                    if (count >= effectiveJumpTarget || loaded?.hasMore != true) {
-                        // Target already loaded (or nothing more to load): scroll now.
-                        jumpScope.launch {
-                            isJumping = true
-                            val target = effectiveJumpTarget.coerceIn(0, count)
-                            listState.animateScrollToItem(target)
-                            listState.snapTargetToBottom(target)
-                            if (target > furthestSeen) furthestSeen = target
-                            isJumping = false
-                        }
-                    } else {
-                        // Target is pages away: load forward, then the effect above scrolls.
-                        pendingJump = true
-                        onLoadUntil(effectiveJumpTarget)
-                    }
-                },
+        // Single entry point for both jump destinations (issue #309 follow-up): tapping it
+        // opens a chooser rather than jumping directly, so only one control ever floats
+        // over the list — "last read" and "newest" only ever differ for the WHOLE time
+        // you're catching up on a thread, not occasionally, so two simultaneously-visible
+        // buttons read as permanently cluttered/competing rather than clarifying anything.
+        if (showJump || showJumpToNewest) {
+            Box(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .padding(bottom = 16.dp),
             ) {
-                if (pendingJump) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(20.dp),
-                        strokeWidth = 2.dp,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                    )
-                } else {
-                    Text("Jump to last read")
+                // isJumping is included (not just the two pending flags) so the menu can't
+                // be reopened while either destination's "scroll now" branch is still
+                // animating — that branch never sets pendingJump/pendingJumpToNewest, only
+                // isJumping, so without this a second tap mid-animation could still race
+                // the first jump's scroll on the same LazyListState.
+                val pending = pendingJump || pendingJumpToNewest || isJumping
+                FloatingActionButton(
+                    onClick = { if (!pending) jumpMenuExpanded = true },
+                    // The spinner shown while pending has no contentDescription of its own
+                    // (it's not a distinct action, just a busy state of this one button),
+                    // so a stable tag is what lets a test find/tap this FAB reliably
+                    // regardless of which of the two states it's currently rendering.
+                    modifier = Modifier.testTag("JumpFab"),
+                ) {
+                    if (pending) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        )
+                    } else {
+                        Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Jump")
+                    }
+                }
+                DropdownMenu(
+                    expanded = jumpMenuExpanded,
+                    onDismissRequest = { jumpMenuExpanded = false },
+                    // DropdownMenu's default position starts flush with its anchor's LEFT
+                    // edge and grows rightward, so anchored to the (56.dp-wide) FAB alone
+                    // it renders well off to the right of it rather than centered. Nudges
+                    // it left by roughly (typical menu width − FAB width) / 2 so it reads
+                    // as centered under the arrow instead. Static/approximate rather than
+                    // measured — the two menu items are fixed, known strings, not
+                    // arbitrary-length content, so a tuned constant is a reasonable
+                    // trade-off against the complexity of measuring the popup's actual
+                    // rendered width. Re-tune if the item labels ever change meaningfully.
+                    offset = DpOffset(x = (-40).dp, y = 0.dp),
+                ) {
+                    if (showJump) {
+                        DropdownMenuItem(
+                            text = { Text("Jump to last read") },
+                            onClick = {
+                                jumpMenuExpanded = false
+                                jumpToLastRead()
+                            },
+                        )
+                    }
+                    if (showJumpToNewest) {
+                        DropdownMenuItem(
+                            text = { Text("Jump to newest") },
+                            onClick = {
+                                jumpMenuExpanded = false
+                                jumpToNewest()
+                            },
+                        )
+                    }
                 }
             }
         }
