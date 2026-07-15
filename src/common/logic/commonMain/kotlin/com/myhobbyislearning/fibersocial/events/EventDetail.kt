@@ -48,13 +48,10 @@ data class EventVenue(
 )
 
 /**
- * A Google Maps directions URL to this venue, or null when every field is absent/blank.
- *
- * Uses the universal `google.com/maps/dir` URL (destination set, no origin) rather than
- * a `geo:` intent so it works on any platform: Android hands it to the Maps app when
- * installed and falls back to the browser otherwise. Unlike a `maps/search` URL, this
- * opens directions straight to the venue instead of a disambiguation search results
- * list (issue #281).
+ * A directions URL to this venue in the platform's native maps app, or null when every
+ * field is absent/blank. The query itself is built once here; [mapsAppUrl] supplies the
+ * platform-specific URL template (issue #281 wanted directions straight to the venue,
+ * not a disambiguation search-results list — that's still true per-platform).
  */
 fun EventVenue.mapsUrl(): String? {
     val query = listOfNotNull(name, address, cityState, country)
@@ -62,8 +59,18 @@ fun EventVenue.mapsUrl(): String? {
         .filter { it.isNotEmpty() }
         .joinToString(", ")
     if (query.isEmpty()) return null
-    return "https://www.google.com/maps/dir/?api=1&destination=${query.encodeURLParameter()}"
+    return mapsAppUrl(query.encodeURLParameter())
 }
+
+/**
+ * Platform-specific directions-URL template for [encodedQuery] (already URL-encoded).
+ * Android uses the universal `google.com/maps/dir` link — no assumption that Google Maps
+ * is installed, since it falls back to the Maps website in a browser when it isn't. iOS
+ * uses the `maps.apple.com` universal link instead of assuming Google Maps is installed
+ * there too: Apple Maps is guaranteed present on every iOS device, so that link always
+ * opens the native app rather than falling back to a browser.
+ */
+expect fun mapsAppUrl(encodedQuery: String): String
 
 /**
  * A forum topic associated with an event.
