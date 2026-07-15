@@ -9,6 +9,7 @@ import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
@@ -407,15 +408,50 @@ class TopicDetailScreenPullToRefreshTest {
         compose.onNodeWithText("Jump to newest").assertIsDisplayed()
     }
 
-    // Note: a regression test for "tapping the FAB again mid-animation must not reopen
-    // the menu" (the isJumping-guards-reopening fix below) was attempted here but
-    // dropped — Robolectric's MainTestClock didn't give reliable enough control over
-    // animateScrollToItem's actual in-flight window to freeze it deterministically
-    // (the animation resolved within 1-2 frame advances regardless of scroll distance
-    // tried). The guard itself is still correct and applied (see `pending` in the FAB's
-    // onClick below and the isJumping checks in jumpToLastRead/jumpToNewest) — verified
-    // by code inspection to mirror the same fix already reviewed and merged against this
-    // screen's prior two-separate-FAB design (via /review-all-prs).
+    @Test
+    fun `tapping the jump FAB again mid-jump does not reopen the menu`() {
+        // Regression: the FAB's own `pending` guard (pendingJump || pendingJumpToNewest ||
+        // isJumping) must block reopening the chooser while a jump from EITHER destination
+        // is still resolving — the two menu items each close the menu immediately on tap
+        // (jumpMenuExpanded = false) before starting their own jump, so there's no way to
+        // have both items open/tappable at once; the FAB reopening mid-jump is the only
+        // remaining path back to a second jump attempt, and this is what actually gates it
+        // now (rather than a race between two already-open menu items' animations).
+        val posts = (1..300L).map { id ->
+            Post(id = id, bodyHtml = "<p>post $id</p>", user = RavelryUser(username = "a"))
+        }
+        val unreadTopic = topic.copy(postCount = 300, unreadCount = 250, firstUnreadPostNumber = 50)
+        compose.setContent {
+            TopicDetailScreen(
+                topic = unreadTopic,
+                postsState = TopicDetailState.Loaded(posts = posts, hasMore = false),
+                onBack = {},
+                onVote = { _, _ -> },
+            )
+        }
+
+        // Open the menu first (its own entrance animation needs the clock running), THEN
+        // freeze it so "Jump to last read"'s animateScrollToItem(50) genuinely suspends
+        // mid-flight instead of resolving within a single test-idle pass.
+        openJumpMenu()
+        compose.waitForIdle()
+        compose.mainClock.autoAdvance = false
+        compose.onNodeWithText("Jump to last read").performClick()
+        compose.mainClock.advanceTimeByFrame()
+
+        // Tap the FAB again while that jump is still in flight. It's showing its
+        // spinner (no "Jump" contentDescription) at this point, hence the stable
+        // testTag instead — see the FAB's own comment on why that tag exists.
+        compose.onNodeWithTag("JumpFab").performClick()
+
+        compose.mainClock.autoAdvance = true
+        compose.waitForIdle()
+
+        // The menu never reopened, so the first jump reaches its own target (post 50)
+        // undisturbed, and "Jump to newest" was never offered a chance to hijack it.
+        compose.onNodeWithText("post 50").assertIsDisplayed()
+        compose.onNodeWithText("Jump to newest").assertDoesNotExist()
+    }
 
     @Test
     fun `offers jump-to-last-read for a fully-read topic that isn't fully visible, targeting the end`() {
