@@ -25,3 +25,19 @@ required 6.7" display size — dark theme, same Ravelry account.
 | `ios-02-group-drawer.png` | Group drawer — "Your Groups" list. |
 | `ios-03-group-feed.png` | Group feed, same screen as `ios-01` a moment later. |
 | `ios-04-event-detail.png` | Event detail screen — "Fake Event" test event, found in "FiberSocial App Test Group - super long name on purpose" rather than "FiberSocial App Support" (its group assignment on Ravelry differs from when the Android set was captured). |
+
+# iPadOS screenshots
+
+The same four screens again, for App Store Connect's required 13" iPad
+display set (the app is universal — `TARGETED_DEVICE_FAMILY = "1,2"` — so
+Connect requires iPad screenshots alongside the iPhone set, not just phone
+screenshots). Captured from the iPad Pro 13-inch (M5) Simulator (iOS 26.3) at
+2064×2752 — App Store Connect's required 13" display size — dark theme, same
+Ravelry account.
+
+| File | Screen |
+|------|--------|
+| `ipad-01-group-feed.png` | Group feed — forum topic list (FiberSocial App Support). |
+| `ipad-02-group-drawer.png` | Group drawer — "Your Groups" list. |
+| `ipad-03-group-feed.png` | Group feed, same screen as `ipad-01` a moment later. |
+| `ipad-04-event-detail.png` | Event detail screen — "Fake Event" test event, same group as the iOS phone set. |
