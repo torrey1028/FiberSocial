@@ -16,7 +16,8 @@ tablet-specific set was required.
 # iOS screenshots
 
 The same four screens, replicated on iOS for comparison. Captured from the
-iPhone 17 Simulator (iOS 26.3), dark theme, same Ravelry account.
+iPhone 14 Plus Simulator (iOS 26.3) at 1284×2778 — App Store Connect's
+required 6.7" display size — dark theme, same Ravelry account.
 
 | File | Screen |
 |------|--------|
