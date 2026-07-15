@@ -407,6 +407,16 @@ class TopicDetailScreenPullToRefreshTest {
         compose.onNodeWithText("Jump to newest").assertIsDisplayed()
     }
 
+    // Note: a regression test for "tapping the FAB again mid-animation must not reopen
+    // the menu" (the isJumping-guards-reopening fix below) was attempted here but
+    // dropped — Robolectric's MainTestClock didn't give reliable enough control over
+    // animateScrollToItem's actual in-flight window to freeze it deterministically
+    // (the animation resolved within 1-2 frame advances regardless of scroll distance
+    // tried). The guard itself is still correct and applied (see `pending` in the FAB's
+    // onClick below and the isJumping checks in jumpToLastRead/jumpToNewest) — verified
+    // by code inspection to mirror the same fix already reviewed and merged against this
+    // screen's prior two-separate-FAB design (via /review-all-prs).
+
     @Test
     fun `offers jump-to-last-read for a fully-read topic that isn't fully visible, targeting the end`() {
         // On-device review of #255/#256 asked for the same target (not a distinct one)

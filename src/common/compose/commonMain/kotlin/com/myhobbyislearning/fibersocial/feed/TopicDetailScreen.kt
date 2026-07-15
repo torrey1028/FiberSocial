@@ -67,6 +67,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
@@ -364,12 +365,23 @@ fun TopicDetailScreen(
         LaunchedEffect(pendingJump, loaded?.isLoadingMore) {
             if (pendingJump && loaded?.isLoadingMore == false) {
                 isJumping = true
-                val target = effectiveJumpTarget.coerceIn(0, postCount)
-                listState.scrollToItem(target)
-                listState.snapTargetToBottom(target)
-                if (target > furthestSeen) furthestSeen = target
-                isJumping = false
-                pendingJump = false
+                // try/finally: if this jump's scroll is cancelled by a competing one (see
+                // the mutual isJumping guards on both FABs' onClick below — a jump started
+                // while another is still resolving from a deep load is the case this
+                // protects against), isJumping/pendingJump must still reset. Compose's
+                // scroll APIs share one MutatorMutex per LazyListState, so a second
+                // concurrent scroll call cancels the first — without this, the cancelled
+                // coroutine would skip past these resets, permanently stuck, silently
+                // freezing the furthest-seen tracker below for the rest of the session.
+                try {
+                    val target = effectiveJumpTarget.coerceIn(0, postCount)
+                    listState.scrollToItem(target)
+                    listState.snapTargetToBottom(target)
+                    if (target > furthestSeen) furthestSeen = target
+                } finally {
+                    isJumping = false
+                    pendingJump = false
+                }
             }
         }
         // Mirrors the pendingJump effect above, but for jump-to-newest: onLoadUntil is
@@ -380,12 +392,19 @@ fun TopicDetailScreen(
         LaunchedEffect(pendingJumpToNewest, loaded?.isLoadingMore) {
             if (pendingJumpToNewest && loaded?.isLoadingMore == false) {
                 isJumping = true
-                val target = postCount
-                listState.scrollToItem(target.coerceIn(0, postCount))
-                listState.snapTargetToBottom(target.coerceIn(0, postCount))
-                if (target > furthestSeen) furthestSeen = target
-                isJumping = false
-                pendingJumpToNewest = false
+                // See the twin comment on the pendingJump effect above: try/finally
+                // guarantees isJumping/pendingJumpToNewest reset even if this jump's
+                // scroll gets cancelled by the OTHER jump control's scroll racing it on
+                // the same LazyListState.
+                try {
+                    val target = postCount
+                    listState.scrollToItem(target.coerceIn(0, postCount))
+                    listState.snapTargetToBottom(target.coerceIn(0, postCount))
+                    if (target > furthestSeen) furthestSeen = target
+                } finally {
+                    isJumping = false
+                    pendingJumpToNewest = false
+                }
             }
         }
         // Whether the FAB below is showing its two-way chooser (issue #309 follow-up:
@@ -396,17 +415,28 @@ fun TopicDetailScreen(
         // entry point that expands into a choice keeps only one control on screen at once).
         var jumpMenuExpanded by remember(topic.id) { mutableStateOf(false) }
         val jumpToLastRead: () -> Unit = {
-            if (!pendingJump) {
+            // isJumping also guards against the OTHER destination (jump-to-newest) being
+            // mid-scroll — both share one LazyListState, so starting a second scroll here
+            // would cancel it via Compose's MutatorMutex rather than queue politely, which
+            // (absent this guard) is exactly what leaves the cancelled coroutine's
+            // isJumping/pending flag stuck permanently true.
+            if (!pendingJump && !isJumping) {
                 val count = loaded?.posts?.size ?: 0
                 if (count >= effectiveJumpTarget || loaded?.hasMore != true) {
                     // Target already loaded (or nothing more to load): scroll now.
                     jumpScope.launch {
                         isJumping = true
-                        val target = effectiveJumpTarget.coerceIn(0, count)
-                        listState.animateScrollToItem(target)
-                        listState.snapTargetToBottom(target)
-                        if (target > furthestSeen) furthestSeen = target
-                        isJumping = false
+                        // try/finally: if this jump's scroll is cancelled by a competing
+                        // one, isJumping must still reset — see the LaunchedEffect
+                        // versions of this same guard above for the full reasoning.
+                        try {
+                            val target = effectiveJumpTarget.coerceIn(0, count)
+                            listState.animateScrollToItem(target)
+                            listState.snapTargetToBottom(target)
+                            if (target > furthestSeen) furthestSeen = target
+                        } finally {
+                            isJumping = false
+                        }
                     }
                 } else {
                     // Target is pages away: load forward, then the effect above scrolls.
@@ -416,16 +446,21 @@ fun TopicDetailScreen(
             }
         }
         val jumpToNewest: () -> Unit = {
-            if (!pendingJumpToNewest) {
+            // See the twin comment on jumpToLastRead above: isJumping guards against
+            // racing that destination's own in-flight scroll on the same LazyListState.
+            if (!pendingJumpToNewest && !isJumping) {
                 if (loaded?.hasMore != true) {
                     // Already fully loaded: scroll now.
                     jumpScope.launch {
                         isJumping = true
-                        val target = postCount
-                        listState.animateScrollToItem(target.coerceIn(0, postCount))
-                        listState.snapTargetToBottom(target.coerceIn(0, postCount))
-                        if (target > furthestSeen) furthestSeen = target
-                        isJumping = false
+                        try {
+                            val target = postCount
+                            listState.animateScrollToItem(target.coerceIn(0, postCount))
+                            listState.snapTargetToBottom(target.coerceIn(0, postCount))
+                            if (target > furthestSeen) furthestSeen = target
+                        } finally {
+                            isJumping = false
+                        }
                     }
                 } else {
                     // More pages remain: load everything, then the effect above scrolls.
@@ -560,9 +595,19 @@ fun TopicDetailScreen(
                     .align(Alignment.BottomCenter)
                     .padding(bottom = 16.dp),
             ) {
-                val pending = pendingJump || pendingJumpToNewest
+                // isJumping is included (not just the two pending flags) so the menu can't
+                // be reopened while either destination's "scroll now" branch is still
+                // animating — that branch never sets pendingJump/pendingJumpToNewest, only
+                // isJumping, so without this a second tap mid-animation could still race
+                // the first jump's scroll on the same LazyListState.
+                val pending = pendingJump || pendingJumpToNewest || isJumping
                 FloatingActionButton(
                     onClick = { if (!pending) jumpMenuExpanded = true },
+                    // The spinner shown while pending has no contentDescription of its own
+                    // (it's not a distinct action, just a busy state of this one button),
+                    // so a stable tag is what lets a test find/tap this FAB reliably
+                    // regardless of which of the two states it's currently rendering.
+                    modifier = Modifier.testTag("JumpFab"),
                 ) {
                     if (pending) {
                         CircularProgressIndicator(
