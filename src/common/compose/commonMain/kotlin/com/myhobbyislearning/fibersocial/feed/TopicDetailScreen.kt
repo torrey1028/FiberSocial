@@ -40,8 +40,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.ExtendedFloatingActionButton
-import androidx.compose.material3.SmallFloatingActionButton
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -68,6 +67,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import com.myhobbyislearning.fibersocial.feed.html.parseBodyDocument
@@ -336,7 +336,13 @@ fun TopicDetailScreen(
         // of read state — unlike showJump, NOT gated on markedAllRead, since skipping to
         // the end is a navigation aid, not a read-tracking one. Shown whenever the true
         // last post isn't on screen yet, including while further pages remain to load.
-        val showJumpToNewest by remember {
+        // Keyed on loaded?.hasMore and postCount (mirrors shouldLoadMore below): both are
+        // plain vals derived from displayState, not genuine State reads, so a key-less
+        // remember would freeze this derivedStateOf's closure on whatever they were on the
+        // FIRST composition — typically Loading, i.e. loaded=null/postCount=0 — and never
+        // see the topic actually finish loading (found on-device: the button never
+        // appeared at all).
+        val showJumpToNewest by remember(loaded?.hasMore, postCount) {
             derivedStateOf {
                 if (pendingJumpToNewest) return@derivedStateOf true
                 loaded?.hasMore == true || lastVisibleIndex < postCount
@@ -380,6 +386,54 @@ fun TopicDetailScreen(
                 if (target > furthestSeen) furthestSeen = target
                 isJumping = false
                 pendingJumpToNewest = false
+            }
+        }
+        // Whether the FAB below is showing its two-way chooser (issue #309 follow-up:
+        // "last read" and "newest" are distinct destinations, both potentially useful
+        // regardless of read state — rather than two separately-floating buttons, which
+        // read as competing/cluttered since "newest" differs from "last read" for the
+        // WHOLE time you're catching up on a thread, not just occasionally, a single
+        // entry point that expands into a choice keeps only one control on screen at once).
+        var jumpMenuExpanded by remember(topic.id) { mutableStateOf(false) }
+        val jumpToLastRead: () -> Unit = {
+            if (!pendingJump) {
+                val count = loaded?.posts?.size ?: 0
+                if (count >= effectiveJumpTarget || loaded?.hasMore != true) {
+                    // Target already loaded (or nothing more to load): scroll now.
+                    jumpScope.launch {
+                        isJumping = true
+                        val target = effectiveJumpTarget.coerceIn(0, count)
+                        listState.animateScrollToItem(target)
+                        listState.snapTargetToBottom(target)
+                        if (target > furthestSeen) furthestSeen = target
+                        isJumping = false
+                    }
+                } else {
+                    // Target is pages away: load forward, then the effect above scrolls.
+                    pendingJump = true
+                    onLoadUntil(effectiveJumpTarget)
+                }
+            }
+        }
+        val jumpToNewest: () -> Unit = {
+            if (!pendingJumpToNewest) {
+                if (loaded?.hasMore != true) {
+                    // Already fully loaded: scroll now.
+                    jumpScope.launch {
+                        isJumping = true
+                        val target = postCount
+                        listState.animateScrollToItem(target.coerceIn(0, postCount))
+                        listState.snapTargetToBottom(target.coerceIn(0, postCount))
+                        if (target > furthestSeen) furthestSeen = target
+                        isJumping = false
+                    }
+                } else {
+                    // More pages remain: load everything, then the effect above scrolls.
+                    // MAX_VALUE makes loadUntilPost's own loop run until hasMore is false
+                    // rather than stopping at some specific (not yet known) post number.
+                    pendingJumpToNewest = true
+                    onLoadUntil(Int.MAX_VALUE)
+                }
             }
         }
         Box(modifier = Modifier.padding(padding)) {
@@ -495,84 +549,63 @@ fun TopicDetailScreen(
                 }
             }
         }
-        if (showJump) {
-            ExtendedFloatingActionButton(
-                onClick = {
-                    if (pendingJump) return@ExtendedFloatingActionButton
-                    val count = loaded?.posts?.size ?: 0
-                    if (count >= effectiveJumpTarget || loaded?.hasMore != true) {
-                        // Target already loaded (or nothing more to load): scroll now.
-                        jumpScope.launch {
-                            isJumping = true
-                            val target = effectiveJumpTarget.coerceIn(0, count)
-                            listState.animateScrollToItem(target)
-                            listState.snapTargetToBottom(target)
-                            if (target > furthestSeen) furthestSeen = target
-                            isJumping = false
-                        }
-                    } else {
-                        // Target is pages away: load forward, then the effect above scrolls.
-                        pendingJump = true
-                        onLoadUntil(effectiveJumpTarget)
-                    }
-                },
+        // Single entry point for both jump destinations (issue #309 follow-up): tapping it
+        // opens a chooser rather than jumping directly, so only one control ever floats
+        // over the list — "last read" and "newest" only ever differ for the WHOLE time
+        // you're catching up on a thread, not occasionally, so two simultaneously-visible
+        // buttons read as permanently cluttered/competing rather than clarifying anything.
+        if (showJump || showJumpToNewest) {
+            Box(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .padding(bottom = 16.dp),
             ) {
-                if (pendingJump) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(20.dp),
-                        strokeWidth = 2.dp,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                    )
-                } else {
-                    Text("Jump to last read")
-                }
-            }
-        }
-        // A distinct, smaller, secondary action from "Jump to last read" above (issue
-        // #309 follow-up): always jumps to the true newest post, regardless of read
-        // state. Parked at the opposite corner (bottom-end vs. the main FAB's bottom-
-        // center) specifically so it reads as a lightweight utility control rather than
-        // a second competing primary action — it's visible for the whole time you're
-        // catching up on a long unread thread, so a same-weight second FAB here would
-        // constantly compete with "Jump to last read" instead of quietly complementing it.
-        if (showJumpToNewest) {
-            SmallFloatingActionButton(
-                onClick = {
-                    if (pendingJumpToNewest) return@SmallFloatingActionButton
-                    if (loaded?.hasMore != true) {
-                        // Already fully loaded: scroll now.
-                        jumpScope.launch {
-                            isJumping = true
-                            val target = postCount
-                            listState.animateScrollToItem(target.coerceIn(0, postCount))
-                            listState.snapTargetToBottom(target.coerceIn(0, postCount))
-                            if (target > furthestSeen) furthestSeen = target
-                            isJumping = false
-                        }
+                val pending = pendingJump || pendingJumpToNewest
+                FloatingActionButton(
+                    onClick = { if (!pending) jumpMenuExpanded = true },
+                ) {
+                    if (pending) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        )
                     } else {
-                        // More pages remain: load everything, then the effect above scrolls.
-                        // MAX_VALUE makes loadUntilPost's own loop run until hasMore is
-                        // false rather than stopping at some specific (not yet known) post
-                        // number — see the LaunchedEffect above.
-                        pendingJumpToNewest = true
-                        onLoadUntil(Int.MAX_VALUE)
+                        Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Jump")
                     }
-                },
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(bottom = 16.dp, end = 16.dp),
-            ) {
-                if (pendingJumpToNewest) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(20.dp),
-                        strokeWidth = 2.dp,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                    )
-                } else {
-                    Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Jump to newest")
+                }
+                DropdownMenu(
+                    expanded = jumpMenuExpanded,
+                    onDismissRequest = { jumpMenuExpanded = false },
+                    // DropdownMenu's default position starts flush with its anchor's LEFT
+                    // edge and grows rightward, so anchored to the (56.dp-wide) FAB alone
+                    // it renders well off to the right of it rather than centered. Nudges
+                    // it left by roughly (typical menu width − FAB width) / 2 so it reads
+                    // as centered under the arrow instead. Static/approximate rather than
+                    // measured — the two menu items are fixed, known strings, not
+                    // arbitrary-length content, so a tuned constant is a reasonable
+                    // trade-off against the complexity of measuring the popup's actual
+                    // rendered width. Re-tune if the item labels ever change meaningfully.
+                    offset = DpOffset(x = (-40).dp, y = 0.dp),
+                ) {
+                    if (showJump) {
+                        DropdownMenuItem(
+                            text = { Text("Jump to last read") },
+                            onClick = {
+                                jumpMenuExpanded = false
+                                jumpToLastRead()
+                            },
+                        )
+                    }
+                    if (showJumpToNewest) {
+                        DropdownMenuItem(
+                            text = { Text("Jump to newest") },
+                            onClick = {
+                                jumpMenuExpanded = false
+                                jumpToNewest()
+                            },
+                        )
+                    }
                 }
             }
         }
