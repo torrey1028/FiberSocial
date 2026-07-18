@@ -2,6 +2,7 @@ package com.myhobbyislearning.fibersocial.app
 
 import com.myhobbyislearning.fibersocial.notifications.EventSync
 import com.myhobbyislearning.fibersocial.notifications.NOTIFICATION_EVENT_PERMALINK_KEY
+import com.myhobbyislearning.fibersocial.notifications.NOTIFICATION_OPEN_MY_POSTS_KEY
 import kotlinx.coroutines.flow.MutableStateFlow
 import platform.Foundation.NSNotificationCenter
 import platform.Foundation.NSOperationQueue
@@ -21,6 +22,9 @@ import platform.darwin.NSObject
  * the iOS analog of MainActivity's `deepLinkEvent` intent-extra flow.
  */
 val deepLinkEvent = MutableStateFlow<String?>(null)
+
+/** Set by a tapped reply notification; FeedScreen opens the My Posts feed. */
+val deepLinkMyPosts = MutableStateFlow(false)
 
 // The delegate property on UNUserNotificationCenter is weak; keep the strong ref here.
 private val notificationDelegate = NotificationDelegate()
@@ -64,11 +68,12 @@ private class NotificationDelegate : NSObject(), UNUserNotificationCenterDelegat
         didReceiveNotificationResponse: UNNotificationResponse,
         withCompletionHandler: () -> Unit,
     ) {
-        val permalink = didReceiveNotificationResponse.notification.request.content.userInfo[
-            NOTIFICATION_EVENT_PERMALINK_KEY,
-        ] as? String
-        println("FiberSocial: notification tapped, event=$permalink")
+        val userInfo = didReceiveNotificationResponse.notification.request.content.userInfo
+        val permalink = userInfo[NOTIFICATION_EVENT_PERMALINK_KEY] as? String
+        val openMyPosts = userInfo[NOTIFICATION_OPEN_MY_POSTS_KEY] != null
+        println("FiberSocial: notification tapped, event=$permalink myPosts=$openMyPosts")
         if (permalink != null) deepLinkEvent.value = permalink
+        if (openMyPosts) deepLinkMyPosts.value = true
         withCompletionHandler()
     }
 

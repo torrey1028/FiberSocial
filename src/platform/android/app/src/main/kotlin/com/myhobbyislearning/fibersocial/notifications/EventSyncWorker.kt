@@ -26,9 +26,9 @@ import kotlin.time.Clock
 import kotlinx.datetime.TimeZone
 
 /**
- * Periodic background sync for event notifications: scrapes the user's groups and
- * saved events, then applies the [EventSyncRunner]'s plan — posts "new event"
- * notifications and (re)schedules reminder alarms.
+ * Periodic background sync for event and reply notifications: scrapes the user's groups
+ * and saved events, then applies the [EventSyncRunner]'s plan — posts "new event" and
+ * "new reply" notifications and (re)schedules reminder alarms.
  */
 class EventSyncWorker(
     context: Context,
@@ -77,6 +77,7 @@ class EventSyncWorker(
     private fun apply(plan: SyncPlan) {
         val notifier = EventNotifier(applicationContext).apply { ensureChannels() }
         plan.newEventNotifications.forEach { notifier.showNewEvent(it) }
+        notifier.showNewReplies(plan.newReplyNotifications)
         val scheduler = ReminderScheduler(applicationContext)
         plan.remindersToCancel.forEach { scheduler.cancel(it) }
         // Re-arm everything still in the future, not just the plan's diff: state is

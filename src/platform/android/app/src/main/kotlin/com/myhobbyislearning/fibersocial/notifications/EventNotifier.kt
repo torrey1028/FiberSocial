@@ -15,8 +15,24 @@ import com.myhobbyislearning.fibersocial.R
 /** Intent extra carrying an event permalink; MainActivity deep-links to its detail. */
 const val EXTRA_EVENT_PERMALINK = "event_permalink"
 
+/** Intent extra: a tapped reply notification opens the cross-group My Posts feed. */
+const val EXTRA_OPEN_MY_POSTS = "open_my_posts"
+
 private const val CHANNEL_REMINDERS = "event_reminders"
 private const val CHANNEL_NEW_EVENTS = "new_events"
+private const val CHANNEL_MY_POSTS = "my_posts_replies"
+
+/** Notification group collecting the per-topic reply children under one summary. */
+private const val GROUP_MY_POSTS_REPLIES = "my_posts_replies_group"
+
+/** Tag of the single group-summary notification (its id is a constant 0). */
+internal const val MY_POSTS_SUMMARY_TAG = "my-posts-summary"
+
+/** Child-notification extras key: its unread reply count, read back when summing. */
+internal const val EXTRA_REPLY_COUNT = "reply_count"
+
+/** PendingIntent request code for the summary's tap (children use their own ids). */
+private const val SUMMARY_REQUEST_CODE = -1
 
 /**
  * Posts the two kinds of event notifications and owns their channels.
@@ -44,6 +60,13 @@ class EventNotifier(private val context: Context) {
                 NotificationManager.IMPORTANCE_DEFAULT,
             ).apply { description = "New events added to your groups" },
         )
+        manager.createNotificationChannel(
+            NotificationChannel(
+                CHANNEL_MY_POSTS,
+                "Replies to your topics",
+                NotificationManager.IMPORTANCE_DEFAULT,
+            ).apply { description = "New replies in topics you've posted in" },
+        )
     }
 
     /** Posts a reminder for an RSVP'd event. */
@@ -65,6 +88,82 @@ class EventNotifier(private val context: Context) {
             title = EventNotificationContent.newEventTitle(notification.groupName),
             text = EventNotificationContent.newEventText(notification.eventTitle, notification.whenText),
             eventPermalink = notification.eventPermalink,
+        )
+    }
+
+    /**
+     * Announces new replies in the topics the user posted in, as a notification group:
+     * one child per topic (tag = the topic id, so a later batch for the same topic
+     * replaces its earlier child with a fresh count while different topics stack) under
+     * a summary notification ("9 new replies in 4 topics") that Android renders as an
+     * expandable stack. Every tap — child or summary — opens the My Posts feed.
+     */
+    fun showNewReplies(batch: List<NewReplyNotification>) {
+        if (batch.isEmpty()) return
+        if (!canNotify()) {
+            println("FiberSocial: EventNotifier skipping ${batch.size} reply notifications — not permitted")
+            return
+        }
+        batch.forEach { showNewReply(it) }
+        postReplySummary(batch)
+    }
+
+    private fun showNewReply(notification: NewReplyNotification) {
+        val id = MyPostsNotificationContent.replyNotificationId(notification.topicId)
+        val built = NotificationCompat.Builder(context, CHANNEL_MY_POSTS)
+            .setSmallIcon(R.drawable.ic_notification_reply)
+            .setContentTitle(MyPostsNotificationContent.replyTitle(notification))
+            .setContentText(MyPostsNotificationContent.replyText(notification))
+            .setContentIntent(myPostsTapIntent(id))
+            .setAutoCancel(true)
+            .setGroup(GROUP_MY_POSTS_REPLIES)
+            // Carried so the summary can total the WHOLE visible stack later, including
+            // children posted by earlier syncs that this batch doesn't know about.
+            .addExtras(android.os.Bundle().apply { putInt(EXTRA_REPLY_COUNT, notification.newReplyCount) })
+            .build()
+        NotificationManagerCompat.from(context).notify("topic-${notification.topicId}", id, built)
+    }
+
+    /**
+     * (Re)posts the group summary. Totals are computed over the union of the currently
+     * visible children and this batch — an earlier sync's still-showing topics keep
+     * counting, and a batch that re-notifies a visible topic overrides its stale count.
+     */
+    private fun postReplySummary(batch: List<NewReplyNotification>) {
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val countsByTag = manager.activeNotifications
+            .filter { active ->
+                active.notification.group == GROUP_MY_POSTS_REPLIES &&
+                    active.notification.flags and android.app.Notification.FLAG_GROUP_SUMMARY == 0
+            }
+            .associate { active -> active.tag.orEmpty() to active.notification.extras.getInt(EXTRA_REPLY_COUNT, 0) }
+            .toMutableMap()
+        batch.forEach { countsByTag["topic-${it.topicId}"] = it.newReplyCount }
+        val summary = NotificationCompat.Builder(context, CHANNEL_MY_POSTS)
+            .setSmallIcon(R.drawable.ic_notification_reply)
+            .setContentTitle("New replies")
+            .setContentText(MyPostsNotificationContent.summaryText(countsByTag.values.sum(), countsByTag.size))
+            .setContentIntent(myPostsTapIntent(SUMMARY_REQUEST_CODE))
+            .setAutoCancel(true)
+            .setGroup(GROUP_MY_POSTS_REPLIES)
+            .setGroupSummary(true)
+            .build()
+        NotificationManagerCompat.from(context).notify(MY_POSTS_SUMMARY_TAG, 0, summary)
+    }
+
+    private fun myPostsTapIntent(requestCode: Int): PendingIntent {
+        val tapIntent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            // One shared data URI is fine here (unlike per-event URIs): every reply
+            // notification deep-links to the same destination, the My Posts feed.
+            data = Uri.parse("fibersocial://my-posts")
+            putExtra(EXTRA_OPEN_MY_POSTS, true)
+        }
+        return PendingIntent.getActivity(
+            context,
+            requestCode,
+            tapIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
     }
 

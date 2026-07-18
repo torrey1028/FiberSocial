@@ -105,6 +105,7 @@ object EventSync {
     private fun apply(plan: SyncPlan) {
         val notifier = IosEventNotifier()
         plan.newEventNotifications.forEach { notifier.showNewEvent(it) }
+        plan.newReplyNotifications.forEach { notifier.showNewReplies(it) }
         plan.remindersToCancel.forEach { notifier.cancelReminder(it) }
         // Re-arm everything still in the future, not just the plan's diff — same
         // crash-safety reasoning as Android's EventSyncWorker: state persists before

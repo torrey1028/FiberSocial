@@ -106,4 +106,68 @@ class EventNotifierTest {
         notifier.showReminder("cozy-meetup", "Cozy Meetup", ReminderKind.SOON)
         assertTrue(shadowOf(manager).allNotifications.isEmpty())
     }
+
+    private fun reply(topicId: Long, count: Int, title: String = "Topic $topicId") =
+        NewReplyNotification(topicId = topicId, topicTitle = title, groupName = "KAL Hub", newReplyCount = count)
+
+    @Test
+    fun `a reply batch posts one child per topic plus a totalling summary`() {
+        notifier.showNewReplies(listOf(reply(1L, 2), reply(2L, 3)))
+
+        val active = manager.activeNotifications
+        assertEquals(3, active.size)
+        val summary = active.single { it.tag == MY_POSTS_SUMMARY_TAG }
+        assertTrue(summary.notification.flags and android.app.Notification.FLAG_GROUP_SUMMARY != 0)
+        assertEquals(
+            "5 new replies in 2 topics",
+            shadowOf(summary.notification).contentText.toString(),
+        )
+        // Children and summary share the group so Android stacks them together.
+        assertTrue(active.all { it.notification.group == summary.notification.group })
+    }
+
+    @Test
+    fun `a later batch re-totals the summary across still-visible earlier topics`() {
+        notifier.showNewReplies(listOf(reply(1L, 2)))
+        // Next sync: a different topic. Topic 1's child is still in the shade, so the
+        // summary must count both, not just the new batch.
+        notifier.showNewReplies(listOf(reply(2L, 3)))
+
+        val summary = manager.activeNotifications.single { it.tag == MY_POSTS_SUMMARY_TAG }
+        assertEquals(
+            "5 new replies in 2 topics",
+            shadowOf(summary.notification).contentText.toString(),
+        )
+    }
+
+    @Test
+    fun `a re-notified topic replaces its child and overrides its stale count`() {
+        notifier.showNewReplies(listOf(reply(1L, 2)))
+        // The same topic grows again: its child is replaced (same tag), and the
+        // summary uses the fresh count — not 2 + 5.
+        notifier.showNewReplies(listOf(reply(1L, 5)))
+
+        val active = manager.activeNotifications
+        assertEquals(2, active.size) // one child + the summary
+        val summary = active.single { it.tag == MY_POSTS_SUMMARY_TAG }
+        assertEquals(
+            "5 new replies in 1 topic",
+            shadowOf(summary.notification).contentText.toString(),
+        )
+    }
+
+    @Test
+    fun `an empty reply batch posts nothing, not even a summary`() {
+        notifier.showNewReplies(emptyList())
+        assertTrue(shadowOf(manager).allNotifications.isEmpty())
+    }
+
+    @Test
+    fun `reply notifications deep-link to the My Posts feed`() {
+        notifier.showNewReplies(listOf(reply(1L, 2)))
+
+        val child = manager.activeNotifications.single { it.tag == "topic-1" }
+        val tapIntent = shadowOf(child.notification.contentIntent).savedIntent
+        assertTrue(tapIntent.getBooleanExtra(EXTRA_OPEN_MY_POSTS, false))
+    }
 }
