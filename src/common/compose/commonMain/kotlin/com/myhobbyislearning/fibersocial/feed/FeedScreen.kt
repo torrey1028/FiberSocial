@@ -38,6 +38,8 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.materialIcon
@@ -380,6 +382,12 @@ fun FeedScreen(
     // group — it's a standing preference the user sets once and expects to carry across
     // group switches, not a per-group default that resets to "show all" each time.
     var showUnreadOnly by remember { mutableStateOf(false) }
+    // Collapsed state of the pinned-topics section. Hoisted here (not owned by FeedList)
+    // for the same reason as feedListState: FeedList is removed from composition while a
+    // topic is open, so state owned by it would reset on return. Like showUnreadOnly it
+    // deliberately carries across group switches — folding the pinned section away is a
+    // standing "I don't need these" preference, not a per-group choice.
+    var pinnedCollapsed by remember { mutableStateOf(false) }
     var selectedTopic by remember { mutableStateOf<FeedItem?>(null) }
     var selectedEventPermalink by remember { mutableStateOf<String?>(null) }
     var eventsGroup by remember { mutableStateOf<Group?>(null) }
@@ -850,6 +858,8 @@ fun FeedScreen(
                             loadingMore = s.loadingMore,
                             onLoadMore = { viewModel.feed.loadMore() },
                             listState = feedListState,
+                            pinnedCollapsed = pinnedCollapsed,
+                            onTogglePinnedCollapsed = { pinnedCollapsed = !pinnedCollapsed },
                             onTopicClick = { topic ->
                                 // Reset on open as well as on back, so this topic's reply
                                 // composer starts from a clean attachment flow no matter how
@@ -894,6 +904,8 @@ fun FeedScreen(
                             loadingMore = s.stale.loadingMore,
                             onLoadMore = { viewModel.feed.loadMore() },
                             listState = feedListState,
+                            pinnedCollapsed = pinnedCollapsed,
+                            onTogglePinnedCollapsed = { pinnedCollapsed = !pinnedCollapsed },
                             onTopicClick = { topic ->
                                 // Reset on open as well as on back, so this topic's reply
                                 // composer starts from a clean attachment flow no matter how
@@ -1604,6 +1616,8 @@ internal fun FeedList(
     onLoadMore: () -> Unit,
     modifier: Modifier = Modifier,
     listState: LazyListState = rememberLazyListState(),
+    pinnedCollapsed: Boolean = false,
+    onTogglePinnedCollapsed: () -> Unit = {},
     onTopicClick: (FeedItem) -> Unit,
 ) {
     // Fires onLoadMore once the user has scrolled within LOAD_MORE_THRESHOLD items of the
@@ -1619,13 +1633,37 @@ internal fun FeedList(
         if (shouldLoadMore && hasMore && !loadingMore) onLoadMore()
     }
 
+    // Sticky topics are already sorted first within the flat list (FeedRepository), but
+    // partition rather than split at the first non-sticky index so a sticky item is never
+    // stranded outside the section if the ordering assumption ever changes upstream.
+    val (pinnedItems, regularItems) = items.partition { it.sticky }
+
     LazyColumn(
         state = listState,
         modifier = modifier.fillMaxSize(),
         contentPadding = PaddingValues(vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        items(items, key = { it.id }) { item ->
+        if (pinnedItems.isNotEmpty()) {
+            item(key = "pinned-header") {
+                PinnedSectionHeader(
+                    count = pinnedItems.size,
+                    collapsed = pinnedCollapsed,
+                    onToggle = onTogglePinnedCollapsed,
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                )
+            }
+            if (!pinnedCollapsed) {
+                items(pinnedItems, key = { it.id }) { item ->
+                    TopicCard(
+                        item = item,
+                        onClick = { onTopicClick(item) },
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                    )
+                }
+            }
+        }
+        items(regularItems, key = { it.id }) { item ->
             TopicCard(
                 item = item,
                 onClick = { onTopicClick(item) },
@@ -1637,6 +1675,41 @@ internal fun FeedList(
                 FeedListFooter(loadingMore = loadingMore, hasMore = hasMore)
             }
         }
+    }
+}
+
+/**
+ * Header row above the pinned (sticky) topics in the feed. Tapping anywhere on it folds
+ * the section closed or back open — the chevron only mirrors the state. Only rendered
+ * when the feed actually has pinned topics, so a collapsed-but-empty section can't leave
+ * a dangling header behind.
+ */
+@Composable
+private fun PinnedSectionHeader(
+    count: Int,
+    collapsed: Boolean,
+    onToggle: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(role = Role.Button, onClick = onToggle)
+            .padding(horizontal = 4.dp, vertical = 6.dp),
+    ) {
+        Text(
+            text = if (count == 1) "📌 1 pinned topic" else "📌 $count pinned topics",
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.weight(1f),
+        )
+        Icon(
+            imageVector = if (collapsed) Icons.Default.KeyboardArrowDown else Icons.Default.KeyboardArrowUp,
+            contentDescription = if (collapsed) "Expand pinned topics" else "Collapse pinned topics",
+            tint = MaterialTheme.colorScheme.primary,
+        )
     }
 }
 
