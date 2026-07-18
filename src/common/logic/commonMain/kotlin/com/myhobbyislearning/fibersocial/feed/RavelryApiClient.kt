@@ -395,6 +395,15 @@ class RavelryApiClient(
             header(HttpHeaders.Cookie, sessionCookie())
             setBody(FormDataContent(buildEventFormParameters(form, input)))
         }
+        val redirectPath = response.headers[HttpHeaders.Location]
+            ?.let { runCatching { Url(it).encodedPath }.getOrDefault(it) }
+            .orEmpty()
+        if (redirectPath.startsWith("/login") || redirectPath.startsWith("/account")) {
+            throw SessionExpiredException("Event creation redirected to login")
+        }
+        if (response.status == HttpStatusCode.Forbidden) {
+            throw ForbiddenException(forbiddenMessage(response))
+        }
         val result = EventCreateResponseParser.parse(response.bodyAsText())
         println("FiberSocial: createEvent(groupId=${input.groupId}) -> $result")
         val success = when (result) {
@@ -458,6 +467,9 @@ class RavelryApiClient(
             .orEmpty()
         if (redirectPath.startsWith("/login") || redirectPath.startsWith("/account")) {
             throw SessionExpiredException("Venue step for event $eventPermalink redirected to login")
+        }
+        if (response.status == HttpStatusCode.Forbidden) {
+            throw ForbiddenException(forbiddenMessage(response))
         }
         // Success is a redirect back to the event page; anything else means the venue was
         // NOT saved and the event won't be listed in the group — surface it rather than

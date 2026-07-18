@@ -141,13 +141,17 @@ fun NewEventScreen(
     val canSubmit = name.isNotBlank() && startDate.isNotBlank() && startTime.isNotBlank() &&
         categoryId != null &&
         (
-            online || (
+            // Ravelry's own online-event form always has a timezone pre-selected (its
+            // <select> has no blank placeholder option), so require one here too.
+            if (online) {
+                timezone != null
+            } else {
                 countryId != null && city.isNotBlank() &&
                     venueName.isNotBlank() && address.isNotBlank() &&
                     // Ravelry's venue step rejects countries that have a state list
                     // with "State can't be blank" unless one is chosen.
                     (statesForCountry.isEmpty() || stateId != null)
-                )
+            }
             )
 
     Scaffold(

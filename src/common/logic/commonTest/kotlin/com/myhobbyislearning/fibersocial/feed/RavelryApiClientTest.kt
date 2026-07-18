@@ -2202,6 +2202,47 @@ class RavelryApiClientTest {
     }
 
     @Test
+    fun `createEvent throws ForbiddenException on 403 rather than bouncing to login`() = runTest {
+        val engine = MockEngine { respond("", HttpStatusCode.Forbidden) }
+        val e = assertFailsWith<ForbiddenException> {
+            htmlApiClient(engine).createEvent(NEW_EVENT_FORM, inPersonEventInput())
+        }
+        assertFalse(e.message!!.contains("403"))
+    }
+
+    @Test
+    fun `createEvent treats its own login redirect as session expiry`() = runTest {
+        val engine = MockEngine {
+            respond(
+                "",
+                HttpStatusCode.Found,
+                headersOf(HttpHeaders.Location, "https://www.ravelry.com/login"),
+            )
+        }
+        assertFailsWith<SessionExpiredException> {
+            htmlApiClient(engine).createEvent(NEW_EVENT_FORM, inPersonEventInput())
+        }
+    }
+
+    @Test
+    fun `createEvent venue step throws ForbiddenException on 403 rather than bouncing to login`() = runTest {
+        val engine = MockEngine { request ->
+            when (request.url.encodedPath) {
+                "/events" -> respond(
+                    EVENT_CREATE_RESPONSE_HTML,
+                    HttpStatusCode.OK,
+                    headersOf("Content-Type", ContentType.Text.Html.toString()),
+                )
+                else -> respond("", HttpStatusCode.Forbidden)
+            }
+        }
+        val e = assertFailsWith<ForbiddenException> {
+            htmlApiClient(engine).createEvent(NEW_EVENT_FORM, inPersonEventInput())
+        }
+        assertFalse(e.message!!.contains("403"))
+    }
+
+    @Test
     fun `getStatesForCountry posts the CSRF token and parses options out of the script response`() = runTest {
         var body = ""
         var csrfHeader: String? = null
