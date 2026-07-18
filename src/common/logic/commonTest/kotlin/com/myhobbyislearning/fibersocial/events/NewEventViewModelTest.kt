@@ -82,7 +82,7 @@ class NewEventViewModelTest {
     }
 
     @Test
-    fun `event whose venue step was rejected is still created, warned about, and pre-seeded`() = runTest(UnconfinedTestDispatcher()) {
+    fun `event whose venue step was rejected is still created and warned about and pre-seeded`() = runTest(UnconfinedTestDispatcher()) {
         val client = routingApiClient { path ->
             when {
                 path.endsWith("/events/new") -> FORM_HTML
