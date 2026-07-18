@@ -81,6 +81,55 @@ class GroupDrawerTest {
     }
 
     @Test
+    fun `collapsing Your Groups hides the group rows but keeps My Posts`() {
+        compose.setContent {
+            GroupDrawer(
+                groups = twoGroups,
+                selectedGroup = twoGroups.first(),
+                eventCounts = emptyMap(),
+                user = user,
+                onGroupSelected = {},
+                onGroupEventsClick = {},
+                onSettingsClick = {},
+            )
+        }
+
+        compose.onNodeWithText("Your Groups").performClick()
+
+        compose.onNodeWithText(twoGroups[0].name).assertDoesNotExist()
+        compose.onNodeWithText(twoGroups[1].name).assertDoesNotExist()
+        compose.onNodeWithText("Find groups").assertDoesNotExist()
+        compose.onNodeWithText("My Posts").assertIsDisplayed()
+        // Folded: the Edit affordance yields to the hidden-group count.
+        compose.onNodeWithText("Edit").assertDoesNotExist()
+        compose.onNodeWithText("2").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Expand your groups").assertIsDisplayed()
+    }
+
+    @Test
+    fun `expanding Your Groups restores the group rows`() {
+        compose.setContent {
+            GroupDrawer(
+                groups = twoGroups,
+                selectedGroup = twoGroups.first(),
+                eventCounts = emptyMap(),
+                user = user,
+                onGroupSelected = {},
+                onGroupEventsClick = {},
+                onSettingsClick = {},
+            )
+        }
+
+        compose.onNodeWithText("Your Groups").performClick()
+        compose.onNodeWithText("Your Groups").performClick()
+
+        compose.onNodeWithText(twoGroups[0].name).assertIsDisplayed()
+        compose.onNodeWithText("Find groups").assertIsDisplayed()
+        compose.onNodeWithText("Edit").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Collapse your groups").assertIsDisplayed()
+    }
+
+    @Test
     fun `find groups row invokes onFindGroups`() {
         var found = 0
         compose.setContent {

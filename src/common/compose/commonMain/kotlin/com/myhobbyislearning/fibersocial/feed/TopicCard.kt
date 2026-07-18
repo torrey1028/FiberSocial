@@ -49,7 +49,9 @@ fun TopicCard(
                 Text(
                     text = "in ${item.groupName}",
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.tertiary,
+                    // The app's accent color, like the pinned label and unread badge —
+                    // this theme's tertiary renders reddish and read as an error state.
+                    color = MaterialTheme.colorScheme.primary,
                 )
                 Spacer(modifier = Modifier.height(6.dp))
             }

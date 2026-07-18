@@ -1288,6 +1288,12 @@ internal fun GroupDrawer(
     // immediately from the handle, or via long-press anywhere on the row.
     var reorderMode by remember { mutableStateOf(false) }
 
+    // Folds the "Your Groups" section (list + "Find groups") behind its header pill.
+    // Session-scoped like the feed's pinnedCollapsed: a standing preference, not
+    // persisted. Toggling is locked during reorder mode — collapsing mid-drag would
+    // tear the rows being dragged out of composition.
+    var groupsCollapsed by remember { mutableStateOf(false) }
+
     // Rows move live in a local working copy so the list follows the finger; the new
     // order is committed upstream (and persisted) once at drop. One state object for
     // the drawer's lifetime — NOT remember(groups) — because the per-row pointerInput
@@ -1390,23 +1396,45 @@ internal fun GroupDrawer(
                     }
                     item(key = "drawer-header") {
                         Spacer(Modifier.height(16.dp))
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(start = 28.dp, end = 16.dp),
-                        ) {
-                            Text(
-                                text = "Your Groups",
-                                style = MaterialTheme.typography.titleSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.weight(1f),
-                            )
-                            TextButton(onClick = { reorderMode = !reorderMode }) {
-                                Text(if (reorderMode) "Done" else "Edit")
-                            }
-                        }
+                        // The section header is a NavigationDrawerItem so its pill matches
+                        // the "My Posts" row above, and it folds the group list like the
+                        // feed's pinned section: same rotating disclosure chevron (right =
+                        // folded, down = open). While open the badge slot holds the
+                        // reorder Edit/Done button; folded it shows the hidden group count,
+                        // and the pill highlights when the active feed is one of them.
+                        val chevronRotation by animateFloatAsState(if (groupsCollapsed) 0f else 90f)
+                        NavigationDrawerItem(
+                            label = { Text("Your Groups") },
+                            selected = groupsCollapsed && selectedGroup != null,
+                            onClick = { if (!reorderMode) groupsCollapsed = !groupsCollapsed },
+                            icon = {
+                                Icon(
+                                    Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                    contentDescription = if (groupsCollapsed) {
+                                        "Expand your groups"
+                                    } else {
+                                        "Collapse your groups"
+                                    },
+                                    modifier = Modifier.rotate(chevronRotation),
+                                )
+                            },
+                            badge = {
+                                if (groupsCollapsed) {
+                                    Text(
+                                        text = groups.size.toString(),
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                } else {
+                                    TextButton(onClick = { reorderMode = !reorderMode }) {
+                                        Text(if (reorderMode) "Done" else "Edit")
+                                    }
+                                }
+                            },
+                            modifier = Modifier.padding(horizontal = 12.dp),
+                        )
                     }
+                    if (!groupsCollapsed) {
                     items(localGroups, key = { it.id }) { group ->
                     val eventCount = eventCounts[group.id] ?: 0
                     val dragging = draggingId == group.id
@@ -1518,6 +1546,7 @@ internal fun GroupDrawer(
                         modifier = Modifier.padding(horizontal = 12.dp),
                     )
                 }
+                } // end of the collapsible "Your Groups" section (groupsCollapsed)
                 item(key = "drawer-footer-spacer") { Spacer(Modifier.height(16.dp)) }
                 }
             }
