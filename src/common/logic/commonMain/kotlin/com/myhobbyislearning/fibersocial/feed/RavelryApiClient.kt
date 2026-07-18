@@ -9,7 +9,16 @@ import com.myhobbyislearning.fibersocial.events.EventDetail
 import com.myhobbyislearning.fibersocial.events.EventPageParser
 import com.myhobbyislearning.fibersocial.events.EventPeopleParser
 import com.myhobbyislearning.fibersocial.events.EventSummary
+import com.myhobbyislearning.fibersocial.events.EventCreateResponseParser
+import com.myhobbyislearning.fibersocial.events.EventCreateResult
+import com.myhobbyislearning.fibersocial.events.EventState
+import com.myhobbyislearning.fibersocial.events.EventVenueException
+import com.myhobbyislearning.fibersocial.events.EventVenueForm
 import com.myhobbyislearning.fibersocial.events.GroupEventsParser
+import com.myhobbyislearning.fibersocial.events.GroupPageInfo
+import com.myhobbyislearning.fibersocial.events.NewEventForm
+import com.myhobbyislearning.fibersocial.events.NewEventFormParser
+import com.myhobbyislearning.fibersocial.events.NewEventInput
 import com.myhobbyislearning.fibersocial.events.SavedEvent
 import com.myhobbyislearning.fibersocial.events.SavedEventsParser
 import com.myhobbyislearning.fibersocial.feed.models.Group
@@ -239,18 +248,39 @@ class RavelryApiClient(
      * with the session cookie and parses the "upcoming events" box (see
      * [GroupEventsParser]). Groups without the box yield an empty list.
      *
+     * A thin wrapper over [getGroupPage] for callers (e.g. the notification sync
+     * runner) that only need the events, not moderator status.
+     *
      * @param groupPermalink The group's permalink, e.g. `kirkland-fiber-arts-circle-2`.
      * @throws ForbiddenException on 403 — valid session, but no permission for this page.
      * @throws SessionExpiredException if the session cookie is rejected (401, or a
      *   redirect off the group page — Ravelry sends expired sessions to the login page).
      * @throws IllegalStateException on any other non-2xx response.
      */
-    suspend fun getGroupEvents(groupPermalink: String): List<EventSummary> {
+    suspend fun getGroupEvents(groupPermalink: String): List<EventSummary> =
+        getGroupPage(groupPermalink).events
+
+    /**
+     * Scrapes a group's page once for both its upcoming events and whether the current
+     * user moderates the group — the two things [EventsViewModel] needs, both found on
+     * the same page, so callers wanting both should use this instead of a separate
+     * [getGroupEvents] call plus a second fetch (see [GroupEventsParser.parseIsModerator]).
+     *
+     * @param groupPermalink The group's permalink, e.g. `kirkland-fiber-arts-circle-2`.
+     * @throws ForbiddenException on 403 — valid session, but no permission for this page.
+     * @throws SessionExpiredException if the session cookie is rejected (401, or a
+     *   redirect off the group page — Ravelry sends expired sessions to the login page).
+     * @throws IllegalStateException on any other non-2xx response.
+     */
+    suspend fun getGroupPage(groupPermalink: String): GroupPageInfo {
         val html = scrapeHtml("https://www.ravelry.com/groups/$groupPermalink", "/groups/",
             "Group page for $groupPermalink")
-        val events = GroupEventsParser.parse(html)
-        println("FiberSocial: getGroupEvents($groupPermalink) -> ${events.size} events")
-        return events
+        val info = GroupPageInfo(
+            events = GroupEventsParser.parse(html),
+            isModerator = GroupEventsParser.parseIsModerator(html),
+        )
+        println("FiberSocial: getGroupPage($groupPermalink) -> ${info.events.size} events, isModerator=${info.isModerator}")
+        return info
     }
 
     /**
@@ -318,6 +348,246 @@ class RavelryApiClient(
         val saved = SavedEventsParser.parse(html)
         println("FiberSocial: getSavedEvents -> ${saved.size} saved events")
         return saved
+    }
+
+    /**
+     * Scrapes the "New Event" form for a group — a moderator-only page listing every
+     * field (and each dropdown's current option list: countries, event categories, time
+     * zones) needed to create an event, plus the CSRF token and draft ID [createEvent]
+     * needs (see [NewEventFormParser]).
+     *
+     * @param groupId The group's numeric [com.myhobbyislearning.fibersocial.feed.models.Group.id].
+     * @throws ForbiddenException on 403 — valid session, but no permission for this page.
+     * @throws SessionExpiredException if the session cookie is rejected (401, or a
+     *   redirect off the new-event path — Ravelry sends expired sessions to the login
+     *   page). A non-moderator with a valid session may also redirect elsewhere and
+     *   surface here, since Ravelry's own response doesn't distinguish the two cases.
+     * @throws IllegalStateException on any other non-2xx response, or when the page
+     *   loaded but didn't contain the expected form.
+     */
+    suspend fun getNewEventForm(groupId: Long): NewEventForm {
+        val html = scrapeHtml("https://www.ravelry.com/events/new?group=$groupId", "/events/new",
+            "New event form for group $groupId")
+        return NewEventFormParser.parse(html)
+            ?: error("New event form for group $groupId didn't contain the expected form")
+    }
+
+    /**
+     * Creates a new event, moderator-only. There is no events API, so this replays the
+     * website's own "New Event" form submission — `POST www.ravelry.com/events` with the
+     * CSRF token and draft ID from [form] (call [getNewEventForm] first) plus [input]'s
+     * fields (see [EventCreateResponseParser]).
+     *
+     * Unlike other website writes in this client, a successful creation responds with
+     * HTTP 200 (not a redirect) and shows a follow-up "choose a venue" step for the new
+     * event. For in-person events this call completes that step too — the event doesn't
+     * appear in its group's "upcoming events" box until the venue (name and address)
+     * is saved, confirmed on-device and on ravelry.com. Online events have no venue step.
+     *
+     * @return The new event's permalink.
+     * @throws IllegalStateException wrapping Ravelry's own validation messages (e.g.
+     *   "City is required") when [input] is rejected.
+     * @throws EventVenueException when the event was created but the venue step was
+     *   rejected — the event exists, so callers must not blindly retry the whole call.
+     */
+    suspend fun createEvent(form: NewEventForm, input: NewEventInput): String {
+        val response = httpClient.post("$WWW_URL/events") {
+            header(HttpHeaders.Cookie, sessionCookie())
+            setBody(FormDataContent(buildEventFormParameters(form, input)))
+        }
+        val redirectPath = response.headers[HttpHeaders.Location]
+            ?.let { runCatching { Url(it).encodedPath }.getOrDefault(it) }
+            .orEmpty()
+        if (redirectPath.startsWith("/login") || redirectPath.startsWith("/account")) {
+            throw SessionExpiredException("Event creation redirected to login")
+        }
+        if (response.status == HttpStatusCode.Forbidden) {
+            throw ForbiddenException(forbiddenMessage(response))
+        }
+        val result = EventCreateResponseParser.parse(response.bodyAsText())
+        println("FiberSocial: createEvent(groupId=${input.groupId}) -> $result")
+        val success = when (result) {
+            is EventCreateResult.Success -> result
+            is EventCreateResult.ValidationFailed -> error(result.errors.joinToString("; "))
+        }
+        if (!input.online) {
+            // Replay the venue form exactly as the creation response served it (action +
+            // hidden fields, including step=venue), falling back to the documented shape
+            // if the response somehow lacked the embedded form.
+            val venueForm = success.venueForm ?: EventVenueForm(
+                action = "/events/${success.permalink}",
+                hiddenFields = listOf(
+                    "_method" to "put",
+                    "authenticity_token" to form.authenticityToken,
+                    "step" to "venue",
+                ),
+            )
+            setEventVenue(success.permalink, venueForm, input)
+        }
+        return success.permalink
+    }
+
+    /**
+     * Completes an in-person event's venue details — the step Ravelry's own "Add Event"
+     * flow shows immediately after creation. [createEvent] found a venue name specifically
+     * to be required for the event to actually appear in the group's "upcoming events"
+     * listing (a bare creation without one is a real, loadable event page that never
+     * surfaces there; confirmed both through this client and manually on ravelry.com).
+     *
+     * Replays the website's own request — the [venueForm] embedded in the creation
+     * response: a POST to its `action` with its hidden fields (a Rails `_method=put`
+     * override plus `step=venue`) and the location fields. Success is a 302 back to the
+     * event page (captured in a browser HAR of the real flow); a rejected submission
+     * re-renders the venue form inline with a `ul.brief_error_messages` banner instead.
+     */
+    private suspend fun setEventVenue(
+        eventPermalink: String,
+        venueForm: EventVenueForm,
+        input: NewEventInput,
+    ) {
+        val url = if (venueForm.action.startsWith("http")) venueForm.action else WWW_URL + venueForm.action
+        val response = httpClient.post(url) {
+            header(HttpHeaders.Cookie, sessionCookie())
+            setBody(
+                FormDataContent(
+                    Parameters.build {
+                        venueForm.hiddenFields.forEach { (name, value) -> append(name, value) }
+                        input.venueName?.let { append("event[venue_name]", it) }
+                        input.countryId?.let { append("event[country_id]", it.toString()) }
+                        input.stateId?.let { append("event[state_id]", it.toString()) }
+                        input.city?.let { append("event[city]", it) }
+                        input.address?.let { append("event[address]", it) }
+                    },
+                ),
+            )
+        }
+        println("FiberSocial: setEventVenue($eventPermalink) -> ${response.status}")
+        val redirectPath = response.headers[HttpHeaders.Location]
+            ?.let { runCatching { Url(it).encodedPath }.getOrDefault(it) }
+            .orEmpty()
+        if (redirectPath.startsWith("/login") || redirectPath.startsWith("/account")) {
+            throw SessionExpiredException("Venue step for event $eventPermalink redirected to login")
+        }
+        if (response.status == HttpStatusCode.Forbidden) {
+            throw ForbiddenException(forbiddenMessage(response))
+        }
+        // Success is a redirect back to the event page; anything else means the venue was
+        // NOT saved and the event won't be listed in the group — surface it rather than
+        // silently returning as if the whole creation worked.
+        if (response.status.value in 300..399) return
+        val body = response.bodyAsText()
+        val errors = EventCreateResponseParser.parseErrors(body)
+        println(
+            "FiberSocial: setEventVenue($eventPermalink) rejected (${response.status}), " +
+                "errors=$errors, body: ${body.take(600)}",
+        )
+        val detail = if (errors.isNotEmpty()) errors.joinToString("; ") else "HTTP ${response.status.value}"
+        throw EventVenueException(
+            eventPermalink,
+            "The event was created, but Ravelry didn't accept its venue details ($detail). " +
+                "Until a venue is saved (e.g. by editing the event on ravelry.com) it won't " +
+                "appear in the group's upcoming events.",
+        )
+    }
+
+    private fun buildEventFormParameters(form: NewEventForm, input: NewEventInput) = Parameters.build {
+        append("authenticity_token", form.authenticityToken)
+        append("event[creation_id]", form.creationId)
+        append("event[group_id]", input.groupId.toString())
+        append("event[name]", input.name)
+        append("event[event_setting_id]", if (input.online) "2" else "1")
+        if (input.online) {
+            input.categoryId?.let { append("event[online_event_type_id]", it.toString()) }
+            input.startTimezone?.let { append("event[start_timezone]", it) }
+            input.endTimezone?.let { append("event[end_timezone]", it) }
+        } else {
+            input.categoryId?.let { append("event[in_person_event_type_id]", it.toString()) }
+            input.estimatedAttendance?.let { append("event[estimated_attendance]", it.toString()) }
+            input.countryId?.let { append("event[country_id]", it.toString()) }
+            input.stateId?.let { append("event[state_id]", it.toString()) }
+            input.city?.let { append("event[city]", it) }
+        }
+        input.url?.takeIf { it.isNotBlank() }?.let { append("event[url]", it) }
+        append("event[start_date]", input.startDate)
+        append("event[start_time]", input.startTime)
+        input.endDate?.takeIf { it.isNotBlank() }?.let { append("event[end_date]", it) }
+        input.endTime?.takeIf { it.isNotBlank() }?.let { append("event[end_time]", it) }
+        input.description?.takeIf { it.isNotBlank() }?.let { append("event[description]", it) }
+        input.editorList?.takeIf { it.isNotBlank() }?.let { append("event[editor_list]", it) }
+    }
+
+    /**
+     * Returns the state/region options for [countryId], for the "State/Region" dropdown
+     * that appears after choosing a country on the new-event form.
+     *
+     * Ravelry has no JSON endpoint for this — the form's own JavaScript triggers a
+     * Prototype.js `Ajax.Request('.../locations/states', {parameters:'from=event&country_id=' + id})`.
+     * Prototype's `Ajax.Request` defaults to POST with `parameters` as the form body (not
+     * a GET query string, which 404s — confirmed on-device), and `evalScripts:true` means
+     * the response is an inline `<script>` that rewrites the state `<select>` rather than
+     * a documented JSON/HTML body. This extracts `<option value="id">name</option>` pairs
+     * from the raw response text wherever they appear, tolerating whatever wrapper script
+     * Ravelry sends them in; a country with no state list (or an unrecognized response)
+     * yields an empty list.
+     *
+     * @param countryId A [NewEventForm.countries] ID.
+     * @param authenticityToken The CSRF token from the new-event form
+     *   ([NewEventForm.authenticityToken]). Without a token this POST is bounced with a
+     *   302 back to its own URL (Rails' unverified-request handling — reproduced
+     *   on-device AND with plain curl regardless of `X-Requested-With`/`Accept`
+     *   headers); the browser succeeds because Ravelry's JS attaches the page token to
+     *   every Ajax request. Sent both as the `authenticity_token` param and the
+     *   `X-CSRF-Token` header to cover either verification path.
+     */
+    suspend fun getStatesForCountry(countryId: Long, authenticityToken: String): List<EventState> {
+        val response = httpClient.post("$WWW_URL/locations/states") {
+            header(HttpHeaders.Cookie, sessionCookie())
+            // request.xhr? gating: Prototype.js's own Ajax.Request sets this header
+            // automatically, and Rails renders the evalScripts response only for AJAX.
+            header("X-Requested-With", "XMLHttpRequest")
+            // Prototype's default Accept — text/javascript first, so Rails' format
+            // negotiation picks the JS (inline <script>) response over HTML.
+            header(HttpHeaders.Accept, "text/javascript, text/html, application/xml, text/xml, */*")
+            header("X-CSRF-Token", authenticityToken)
+            header(HttpHeaders.Origin, WWW_URL)
+            header(HttpHeaders.Referrer, "$WWW_URL/events/new")
+            setBody(
+                FormDataContent(
+                    Parameters.build {
+                        append("authenticity_token", authenticityToken)
+                        append("from", "event")
+                        append("country_id", countryId.toString())
+                    },
+                ),
+            )
+        }
+        val rawBody = response.bodyAsText()
+        println("FiberSocial: getStatesForCountry($countryId) raw (${response.status}); Location=${response.headers[HttpHeaders.Location]}; final url=${response.request.url}; body: ${rawBody.take(800)}")
+        val states = parseStateOptions(rawBody)
+        println("FiberSocial: getStatesForCountry($countryId) -> ${states.size} states")
+        return states
+    }
+
+    private val JS_UNICODE_ESCAPE_REGEX = Regex("""\\u([0-9a-fA-F]{4})""")
+
+    /**
+     * Extracts the state `<option>`s from the states response — an
+     * `Element.update("state_options", "...")` script whose HTML payload is a JS string
+     * literal with its markup escaped: angle brackets as JS unicode escapes (backslash-u003C
+     * / -u003E) and quotes as backslash-quote, confirmed on-device. It must be unescaped
+     * before it parses as HTML at all.
+     */
+    private fun parseStateOptions(raw: String): List<EventState> {
+        val html = raw
+            .replace(JS_UNICODE_ESCAPE_REGEX) { it.groupValues[1].toInt(16).toChar().toString() }
+            .replace("\\\"", "\"")
+            .replace("\\n", "\n")
+            .replace("\\/", "/")
+        return Ksoup.parse(html).select("option").mapNotNull { option ->
+            val id = option.attr("value").toLongOrNull() ?: return@mapNotNull null
+            val name = option.text().trim()
+            if (name.isEmpty()) null else EventState(id, name)
+        }
     }
 
     /**

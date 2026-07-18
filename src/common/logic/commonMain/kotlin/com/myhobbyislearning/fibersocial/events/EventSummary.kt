@@ -24,3 +24,13 @@ data class EventSummary(
     val whenText: String,
     val attendeeCount: Int,
 )
+
+/**
+ * Result of scraping a group's page once (see `RavelryApiClient.getGroupPage`): its
+ * upcoming events plus whether the current user moderates the group. Both come from the
+ * same fetch, so a caller wanting both avoids a second network round-trip.
+ */
+data class GroupPageInfo(
+    val events: List<EventSummary>,
+    val isModerator: Boolean,
+)

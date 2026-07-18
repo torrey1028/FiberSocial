@@ -25,8 +25,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -59,6 +61,7 @@ fun EventsScreen(
     onBack: () -> Unit,
     onEventClick: (GroupEvent) -> Unit,
     onRefresh: () -> Unit = {},
+    onAddEvent: (() -> Unit)? = null,
 ) {
     // System back must mirror the top-bar back arrow instead of exiting the app
     // (same contract as TopicDetailScreen; see issue #38 / PR #56).
@@ -75,6 +78,8 @@ fun EventsScreen(
         if (state !is EventsState.Loading) isRefreshing = false
     }
     val displayState = if (state is EventsState.Loading && lastLoaded != null) lastLoaded!! else state
+    val canAddEvent = onAddEvent != null &&
+        (displayState as? EventsState.Loaded)?.moderatedGroupIds?.contains(group.id) == true
 
     Scaffold(
         topBar = {
@@ -86,6 +91,13 @@ fun EventsScreen(
                     }
                 },
             )
+        },
+        floatingActionButton = {
+            if (canAddEvent) {
+                FloatingActionButton(onClick = { onAddEvent?.invoke() }) {
+                    Icon(Icons.Default.Add, contentDescription = "Add event")
+                }
+            }
         },
     ) { padding ->
         when (displayState) {

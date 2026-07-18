@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<!-- Trimmed capture of https://www.ravelry.com/events/new?group=<id> (2026-07-14), the
+     "Add Event" form shown only to a group's moderators. Page chrome removed; the
+     #new_event form is kept close to verbatim, with three redactions:
+       - authenticity_token/event[creation_id] values replaced with obvious fakes
+       - event[group_id] and the country_id/state_id numeric IDs unrelated to the ones
+         this file exercises left as captured (they're Ravelry's own opaque IDs, not
+         secrets)
+       - the country_id and start_timezone/end_timezone <select>s trimmed from Ravelry's
+         full lists (257 countries, ~146 zones) down to a handful of representative
+         options; note the country list keeps its real duplicate structure — Ravelry
+         renders a "quick pick" shortlist (Australia/Canada/Germany/UK/US) followed by
+         the same countries again inside the full alphabetical list
+     A prior failed submission left the "City is required"/"Country is required"
+     validation banner in place, which happens to be a useful sample of Ravelry's error
+     markup (ul.brief_error_messages) for free.
+-->
+<html>
+<head><title>Ravelry</title></head>
+<body>
+<form action="https://www.ravelry.com/events" class="vertical_form event_form event_form--medium_1" id="new_event" method="post"><div style="margin:0;padding:0;display:inline"><input name="authenticity_token" type="hidden" value="FAKE_TOKEN_abc123=="></div>
+<h1 class="rsp_hidden">New Event</h1>
+<ul class="brief_error_messages pretty_error_messages"><strong>Please correct the following errors:</strong><li>City is required</li><li>Country is required</li></ul>
+<input id="event_creation_id" name="event[creation_id]" type="hidden" value="999999">
+<fieldset>
+<div class="field">
+<label>Group name</label>
+<input id="event_group_id" name="event[group_id]" type="hidden" value="12345">
+FiberSocial App Test Group - super long name on purpose
+</div>
+</fieldset>
+<fieldset>
+<div class="field">
+<label>Event name</label>
+<input id="event_name" name="event[name]" placeholder="Name of your event" size="30" type="text" value="">
+</div>
+<div class="field">
+<label>Medium</label>
+<div class="form_select form_select--vertical_form">
+<select id="event_event_setting_id" name="event[event_setting_id]" onchange="" onkeyup=""><option value="" disabled="true" hidden="true">Choose online or in-person</option>
+<option value="2">Online</option>
+<option value="1" selected="selected">In person</option></select>
+</div>
+</div>
+<div class="field event_form__field event_form__field--online">
+<label>Category</label>
+<div class="form_select form_select--vertical_form">
+<select id="event_online_event_type_id" name="event[online_event_type_id]"><option value="">Choose a category</option>
+<option value="14">Class or other education</option>
+<option value="12">Fiber festival</option>
+<option value="21">Group chat</option>
+<option value="20">Livestream</option>
+<option value="22">Make along</option>
+<option value="16" selected="selected">Other</option></select>
+</div>
+</div>
+<div class="field event_form__field event_form__field--in_person">
+<label>Category</label>
+<div class="form_select form_select--vertical_form">
+<select id="event_in_person_event_type_id" name="event[in_person_event_type_id]"><option value="">Choose a category</option>
+<option value="17">Book signing or reading</option>
+<option value="14">Class or other education</option>
+<option value="12">Fiber festival</option>
+<option value="11">Knitting/crochet group</option>
+<option value="16" selected="selected">Other</option>
+<option value="18">Party</option>
+<option value="13">Retreat, cruise, or tour</option>
+<option value="15">Sporting event</option>
+<option value="19">Trunk show</option></select>
+</div>
+</div>
+<div class="field event_form__field event_form__field--in_person">
+<label># of attendees (estimate)</label>
+<div class="form_select form_select--vertical_form">
+<select id="event_estimated_attendance" name="event[estimated_attendance]"><option value=""></option>
+<option value="0">I don't know</option>
+<option value="5">5</option>
+<option value="10">10</option>
+<option value="15">15</option>
+<option value="20">20</option>
+<option value="30">30</option>
+<option value="40">40</option>
+<option value="50">50</option>
+<option value="75">75</option>
+<option value="100">100</option>
+<option value="150">150</option>
+<option value="200">200</option>
+<option value="300" selected="selected">300</option>
+<option value="400">400</option>
+<option value="500">500 and up</option></select>
+</div>
+</div>
+<div class="field event_form__field event_form__field--online event_form__field--in_person">
+<label>Event URL</label>
+<input id="event_url" name="event[url]" placeholder="https://" size="30" type="text" value="">
+</div>
+<div class="field event_form__field event_form__field--online event_form__field--in_person">
+<label>Event hashtag</label>
+<input id="smart_tag" name="smart_tag" type="text">
+</div>
+</fieldset>
+<fieldset class="event_form__fieldset event_form__fieldset--in_person">
+<div class="field event_form__field event_form__field--in_person">
+<label>
+Country
+</label>
+<div class="fieldWithErrors"><select id="event_country_id" name="event[country_id]"><option value="13">Australia</option><option value="39">Canada</option><option value="84">Germany</option><option value="228">United Kingdom</option><option value="229">United States</option><option value="13">Australia</option><option value="39">Canada</option><option value="84">Germany</option><option value="228">United Kingdom</option><option value="229">United States</option></select></div>
+
+</div>
+<div class="field event_form__field event_form__field--in_person" id="state_options" style="display: none;">
+<label>State/Region</label>
+<div class="form_select">
+<select id="event_state_id" name="event[state_id]"><option value=""></option>
+</select>
+</div>
+<span class="loading_indicator loading_animation" id="states" style="display:none;"></span>
+
+</div>
+<div class="field event_form__field event_form__field--in_person">
+<label>City</label>
+<div class="fieldWithErrors"><input id="event_city" name="event[city]" size="30" type="text" value=""></div>
+</div>
+
+</fieldset>
+<fieldset>
+<div class="field field--date_select">
+<label>Start date</label>
+<input id="event_start_date" name="event[start_date]" size="30" style="width: 120px;" type="text" value="2026-07-20" autocomplete="off">
+<a class="date_select" href="https://www.ravelry.com/events#">Select a day</a>
+</div>
+<div class="field">
+<label>Start time</label>
+<input id="event_start_time" name="event[start_time]" placeholder="00:00 AM/PM" size="30" type="text" value="04:00 PM" autocomplete="off">
+</div>
+<div class="field event_form__field event_form__field--online">
+<label>Time zone</label>
+<div class="form_select form_select--vertical_form">
+<select id="event_start_timezone" name="event[start_timezone]"><option value="Pacific Time (US &amp; Canada)">Pacific Time (US &amp; Canada)</option><option value="Alaska">Alaska</option><option value="Arizona">Arizona</option><option value="Pacific Time (US &amp; Canada)">Pacific Time (US &amp; Canada)</option></select>
+</div>
+</div>
+</fieldset>
+<fieldset>
+<div class="field field--date_select">
+<label>End date (optional)</label>
+<input id="event_end_date" name="event[end_date]" size="30" style="width: 120px;" type="text" value="2026-07-20" autocomplete="off">
+<a class="date_select" href="https://www.ravelry.com/events#">Select a day</a>
+</div>
+<div class="field">
+<label>End time (optional)</label>
+<input id="event_end_time" name="event[end_time]" placeholder="00:00 AM/PM" size="30" type="text" value="08:00 PM" autocomplete="off">
+</div>
+<div class="field event_form__field event_form__field--online">
+<label>Time zone (optional)</label>
+<div class="form_select form_select--vertical_form">
+<select id="event_end_timezone" name="event[end_timezone]"><option value="Pacific Time (US &amp; Canada)">Pacific Time (US &amp; Canada)</option><option value="Alaska">Alaska</option><option value="Arizona">Arizona</option><option value="Pacific Time (US &amp; Canada)">Pacific Time (US &amp; Canada)</option></select>
+</div>
+</div>
+</fieldset>
+<fieldset>
+<div class="field event_form__field">
+<label>Description</label>
+</div>
+<div class="field">
+<textarea cols="40" id="event_description" name="event[description]" rows="20" style="height: 200px;"></textarea>
+</div>
+<fieldset>
+<div class="field">
+<label>Ravelers who can edit this event page</label>
+<input id="event_editor_list" name="event[editor_list]" placeholder="username1 username2 ..." size="30" type="text" value="">
+</div>
+</fieldset>
+</fieldset>
+<fieldset class="submit">
+<a href="https://www.ravelry.com/events" class="cancel_submit">cancel</a>
+<button class="clicker_v2 clicker_v2--standard " type="submit">Continue</button>
+</fieldset>
+</form>
+</body>
+</html>

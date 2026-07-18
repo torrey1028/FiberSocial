@@ -25,8 +25,14 @@ sealed class EventsState {
     /**
      * Events loaded across all groups.
      * @property events Soonest first; events with unparseable dates sort last.
+     * @property moderatedGroupIds [com.myhobbyislearning.fibersocial.feed.models.Group.id]s
+     *   the current user moderates, from the same group-page scrape as [events] — drives
+     *   whether a group's [EventsScreen] offers an "Add Event" entry point.
      */
-    data class Loaded(val events: List<GroupEvent>) : EventsState()
+    data class Loaded(
+        val events: List<GroupEvent>,
+        val moderatedGroupIds: Set<Long> = emptySet(),
+    ) : EventsState()
 
     /**
      * Loading failed.
@@ -68,15 +74,18 @@ class EventsViewModel(
             _state.value = try {
                 val perGroup = coroutineScope {
                     groups.map { group ->
-                        async { group to apiClient.getGroupEvents(group.permalink) }
+                        async { group to apiClient.getGroupPage(group.permalink) }
                     }.awaitAll()
                 }
                 val events = perGroup
-                    .flatMap { (group, events) -> events.map { GroupEvent(group, it) } }
+                    .flatMap { (group, page) -> page.events.map { GroupEvent(group, it) } }
                     .distinctBy { it.event.permalink }
                     .sortedWith(compareBy(nullsLast()) { it.event.startsAt })
-                println("FiberSocial: EventsViewModel loaded ${events.size} events")
-                EventsState.Loaded(events)
+                val moderatedGroupIds = perGroup
+                    .filter { (_, page) -> page.isModerator }
+                    .mapTo(mutableSetOf()) { (group, _) -> group.id }
+                println("FiberSocial: EventsViewModel loaded ${events.size} events, moderates ${moderatedGroupIds.size} groups")
+                EventsState.Loaded(events, moderatedGroupIds)
             } catch (e: SessionExpiredException) {
                 println("FiberSocial: EventsViewModel.load session expired")
                 sessionExpirySignal.signal()
@@ -98,8 +107,8 @@ class EventsViewModel(
     fun applyAttendanceChange(permalink: String, attending: Boolean) {
         val loaded = _state.value as? EventsState.Loaded ?: return
         val delta = if (attending) 1 else -1
-        _state.value = EventsState.Loaded(
-            loaded.events.map { groupEvent ->
+        _state.value = loaded.copy(
+            events = loaded.events.map { groupEvent ->
                 if (groupEvent.event.permalink != permalink) groupEvent
                 else groupEvent.copy(
                     event = groupEvent.event.copy(
