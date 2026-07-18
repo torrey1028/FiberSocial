@@ -75,13 +75,13 @@ class GroupDrawerTest {
                 onSettingsClick = {},
             )
         }
-        compose.onNodeWithText("My Posts").assertIsDisplayed()
-        compose.onNodeWithText("My Posts").performClick()
+        compose.onNodeWithText("Your Posts").assertIsDisplayed()
+        compose.onNodeWithText("Your Posts").performClick()
         compose.runOnIdle { assertEquals(1, myPostsClicks) }
     }
 
     @Test
-    fun `collapsing Your Groups hides the group rows but keeps My Posts`() {
+    fun `collapsing Your Groups hides the group rows but keeps Your Posts`() {
         compose.setContent {
             GroupDrawer(
                 groups = twoGroups,
@@ -99,7 +99,7 @@ class GroupDrawerTest {
         compose.onNodeWithText(twoGroups[0].name).assertDoesNotExist()
         compose.onNodeWithText(twoGroups[1].name).assertDoesNotExist()
         compose.onNodeWithText("Find groups").assertDoesNotExist()
-        compose.onNodeWithText("My Posts").assertIsDisplayed()
+        compose.onNodeWithText("Your Posts").assertIsDisplayed()
         // Folded: the Edit affordance yields to the hidden-group count.
         compose.onNodeWithText("Edit").assertDoesNotExist()
         compose.onNodeWithText("2").assertIsDisplayed()

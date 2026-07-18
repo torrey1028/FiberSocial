@@ -801,7 +801,7 @@ fun FeedScreen(
     CloseDrawerOnBack(drawerState)
 
     val title = when {
-        showingMyPosts -> "My Posts"
+        showingMyPosts -> "Your Posts"
         else -> loaded?.selectedGroup?.name ?: "FiberSocial"
     }
     val selectedGroup = loaded?.selectedGroup
@@ -1389,7 +1389,7 @@ internal fun GroupDrawer(
                     item(key = "my-posts") {
                         Spacer(Modifier.height(16.dp))
                         NavigationDrawerItem(
-                            label = { Text("My Posts") },
+                            label = { Text("Your Posts") },
                             selected = myPostsSelected,
                             onClick = { if (!reorderMode) onMyPostsSelected() },
                             icon = { Icon(Icons.Default.Person, contentDescription = null) },
