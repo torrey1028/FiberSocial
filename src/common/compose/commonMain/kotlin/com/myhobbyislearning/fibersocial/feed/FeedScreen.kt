@@ -100,6 +100,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
@@ -1648,6 +1649,7 @@ internal fun FeedList(
             item(key = "pinned-header") {
                 PinnedSectionHeader(
                     count = pinnedItems.size,
+                    unreadCount = pinnedItems.sumOf { it.unreadCount },
                     collapsed = pinnedCollapsed,
                     onToggle = onTogglePinnedCollapsed,
                     modifier = Modifier.padding(horizontal = 16.dp),
@@ -1683,10 +1685,16 @@ internal fun FeedList(
  * the section closed or back open — the chevron only mirrors the state. Only rendered
  * when the feed actually has pinned topics, so a collapsed-but-empty section can't leave
  * a dangling header behind.
+ *
+ * While folded, the header carries the section's total unread count (summed over the
+ * hidden cards' [FeedItem.unreadCount]) so collapsing can't silently swallow new
+ * replies. Expanded it stays quiet — each visible card already wears its own "N new"
+ * badge, and doubling that up on the header would just be noise.
  */
 @Composable
 private fun PinnedSectionHeader(
     count: Int,
+    unreadCount: Int,
     collapsed: Boolean,
     onToggle: () -> Unit,
     modifier: Modifier = Modifier,
@@ -1703,8 +1711,19 @@ private fun PinnedSectionHeader(
             text = if (count == 1) "📌 1 pinned topic" else "📌 $count pinned topics",
             style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.weight(1f),
         )
+        if (collapsed && unreadCount > 0) {
+            Spacer(modifier = Modifier.width(8.dp))
+            // Same styling as TopicCard's per-topic unread badge, so the folded header
+            // reads as the sum of the badges it's hiding.
+            Text(
+                text = "$unreadCount new",
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
+        Spacer(modifier = Modifier.weight(1f))
         Icon(
             imageVector = if (collapsed) Icons.Default.KeyboardArrowDown else Icons.Default.KeyboardArrowUp,
             contentDescription = if (collapsed) "Expand pinned topics" else "Collapse pinned topics",

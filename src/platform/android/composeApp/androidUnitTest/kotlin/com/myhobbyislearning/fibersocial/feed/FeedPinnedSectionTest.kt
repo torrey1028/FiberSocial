@@ -30,7 +30,7 @@ class FeedPinnedSectionTest {
     @get:Rule
     val compose = createAndroidComposeRule<ComponentActivity>()
 
-    private fun item(id: Long, title: String, sticky: Boolean) = FeedItem(
+    private fun item(id: Long, title: String, sticky: Boolean, unreadCount: Int = 0) = FeedItem(
         id = id,
         groupId = 10L,
         groupName = "KAL Hub",
@@ -39,6 +39,7 @@ class FeedPinnedSectionTest {
         title = title,
         bodySummary = "",
         postCount = 3,
+        unreadCount = unreadCount,
         sticky = sticky,
     )
 
@@ -123,6 +124,53 @@ class FeedPinnedSectionTest {
 
         compose.onNodeWithText("Group rules").assertIsDisplayed()
         compose.onNodeWithContentDescription("Collapse pinned topics").assertIsDisplayed()
+    }
+
+    @Test
+    fun `a folded header sums the hidden topics' unread counts`() {
+        setFeedList(
+            listOf(
+                item(id = 1, title = "Group rules", sticky = true, unreadCount = 2),
+                item(id = 2, title = "KAL sign-ups", sticky = true, unreadCount = 5),
+                item(id = 3, title = "Show us your WIPs", sticky = false, unreadCount = 9),
+            ),
+        )
+
+        compose.onNodeWithText("📌 2 pinned topics").performClick()
+
+        // 2 + 5 from the pinned topics only — the regular topic's 9 must not leak in.
+        compose.onNodeWithText("7 new").assertIsDisplayed()
+    }
+
+    @Test
+    fun `an expanded header shows no unread count`() {
+        // Each visible card already wears its own badge; the header stays quiet.
+        setFeedList(
+            listOf(
+                item(id = 1, title = "Group rules", sticky = true, unreadCount = 2),
+                item(id = 2, title = "Show us your WIPs", sticky = false),
+            ),
+        )
+
+        compose.onNodeWithText("2 new").assertIsDisplayed() // the card's own badge
+        compose.onNodeWithText("📌 1 pinned topic").performClick()
+        compose.onNodeWithText("2 new").assertIsDisplayed() // now the header's sum
+        compose.onNodeWithText("📌 1 pinned topic").performClick()
+        compose.onNodeWithText("2 new").assertIsDisplayed() // the card's badge again
+    }
+
+    @Test
+    fun `a folded header with nothing unread shows no badge`() {
+        setFeedList(
+            listOf(
+                item(id = 1, title = "Group rules", sticky = true),
+                item(id = 2, title = "Show us your WIPs", sticky = false),
+            ),
+        )
+
+        compose.onNodeWithText("📌 1 pinned topic").performClick()
+
+        compose.onNodeWithText("new", substring = true).assertDoesNotExist()
     }
 
     @Test
