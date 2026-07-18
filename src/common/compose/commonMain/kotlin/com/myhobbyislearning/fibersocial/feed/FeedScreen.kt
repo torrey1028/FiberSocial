@@ -44,6 +44,7 @@ import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.materialIcon
 import androidx.compose.material.icons.materialPath
@@ -384,7 +385,16 @@ fun FeedScreen(
         is FeedState.Refreshing -> s.stale.selectedGroup?.id
         else -> null
     }
-    val feedListState = key(selectedGroupId) { rememberLazyListState() }
+    // Whether the cross-group "My Posts" feed is showing (drawer item above the groups).
+    // Derived alongside selectedGroupId because the two are the feed's selection identity:
+    // My Posts has a null selectedGroupId, so the list-state key below needs this flag to
+    // tell it apart from the no-groups case and reset scroll on a group ↔ My Posts switch.
+    val showingMyPosts = when (val s = state) {
+        is FeedState.Loaded -> s.myPosts
+        is FeedState.Refreshing -> s.stale.myPosts
+        else -> false
+    }
+    val feedListState = key(if (showingMyPosts) "my-posts" else selectedGroupId) { rememberLazyListState() }
     // "Unread only" filter (issue #210): a purely client-side toggle over the already-
     // loaded feed. Unlike feedListState above, this is intentionally NOT scoped per
     // group — it's a standing preference the user sets once and expects to carry across
@@ -790,7 +800,10 @@ fun FeedScreen(
 
     CloseDrawerOnBack(drawerState)
 
-    val title = loaded?.selectedGroup?.name ?: "FiberSocial"
+    val title = when {
+        showingMyPosts -> "Your Posts"
+        else -> loaded?.selectedGroup?.name ?: "FiberSocial"
+    }
     val selectedGroup = loaded?.selectedGroup
 
     ModalNavigationDrawer(
@@ -799,6 +812,11 @@ fun FeedScreen(
             GroupDrawer(
                 groups = groups,
                 selectedGroup = selectedGroup,
+                myPostsSelected = showingMyPosts,
+                onMyPostsSelected = {
+                    scope.launch { drawerState.close() }
+                    viewModel.feed.selectMyPosts()
+                },
                 eventCounts = eventCounts,
                 user = user,
                 isFeedbackGroupMember = groups.any { it.permalink == SupportGroup.PERMALINK },
@@ -904,6 +922,8 @@ fun FeedScreen(
                             listState = feedListState,
                             pinnedCollapsed = pinnedCollapsed,
                             onTogglePinnedCollapsed = { pinnedCollapsed = !pinnedCollapsed },
+                            pinnedSectionEnabled = !showingMyPosts,
+                            showGroupNames = showingMyPosts,
                             onTopicClick = { topic ->
                                 // Reset on open as well as on back, so this topic's reply
                                 // composer starts from a clean attachment flow no matter how
@@ -950,6 +970,8 @@ fun FeedScreen(
                             listState = feedListState,
                             pinnedCollapsed = pinnedCollapsed,
                             onTogglePinnedCollapsed = { pinnedCollapsed = !pinnedCollapsed },
+                            pinnedSectionEnabled = !showingMyPosts,
+                            showGroupNames = showingMyPosts,
                             onTopicClick = { topic ->
                                 // Reset on open as well as on back, so this topic's reply
                                 // composer starts from a clean attachment flow no matter how
@@ -1091,8 +1113,10 @@ internal fun <T> moveItem(list: List<T>, from: Int, to: Int): List<T> =
     if (from == to || from !in list.indices || to !in list.indices) list
     else list.toMutableList().apply { add(to, removeAt(from)) }
 
-// Lazy items before the first group row in the drawer (the "Your Groups" header).
-private const val DRAWER_ITEMS_BEFORE_GROUPS = 1
+// Lazy items before the first group row in the drawer (the "My Posts" entry and the
+// "Your Groups" header). The drag-reorder math offsets lazy-item indices by this to get
+// group-list indices — keep it in sync with the items above `items(localGroups, ...)`.
+private const val DRAWER_ITEMS_BEFORE_GROUPS = 2
 
 /** The classic six-dot drag affordance shown on rows while reordering is active. */
 @Composable
@@ -1193,6 +1217,8 @@ internal fun UnreadFilterEmptyState(
 internal fun GroupDrawer(
     groups: List<Group>,
     selectedGroup: Group?,
+    myPostsSelected: Boolean = false,
+    onMyPostsSelected: () -> Unit = {},
     eventCounts: Map<Long, Int>,
     user: RavelryUser?,
     isFeedbackGroupMember: Boolean = false,
@@ -1263,6 +1289,12 @@ internal fun GroupDrawer(
     // it each row grows a drag handle, row taps are disabled, and rows can be dragged —
     // immediately from the handle, or via long-press anywhere on the row.
     var reorderMode by remember { mutableStateOf(false) }
+
+    // Folds the "Your Groups" section (list + "Find groups") behind its header pill.
+    // Session-scoped like the feed's pinnedCollapsed: a standing preference, not
+    // persisted. Toggling is locked during reorder mode — collapsing mid-drag would
+    // tear the rows being dragged out of composition.
+    var groupsCollapsed by remember { mutableStateOf(false) }
 
     // Rows move live in a local working copy so the list follows the finger; the new
     // order is committed upstream (and persisted) once at drop. One state object for
@@ -1351,25 +1383,62 @@ internal fun GroupDrawer(
                     state = listState,
                     modifier = Modifier.fillMaxSize().testTag("GroupList"),
                 ) {
+                    // The cross-group "My Posts" feed entry, above the group list — it
+                    // isn't a group, so it sits outside the "Your Groups" section (and
+                    // outside reorder mode: there's nothing to drag it against).
+                    item(key = "my-posts") {
+                        Spacer(Modifier.height(16.dp))
+                        NavigationDrawerItem(
+                            label = { Text("Your Posts") },
+                            selected = myPostsSelected,
+                            onClick = { if (!reorderMode) onMyPostsSelected() },
+                            icon = { Icon(Icons.Default.Person, contentDescription = null) },
+                            modifier = Modifier.padding(horizontal = 12.dp),
+                        )
+                    }
                     item(key = "drawer-header") {
                         Spacer(Modifier.height(16.dp))
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(start = 28.dp, end = 16.dp),
-                        ) {
-                            Text(
-                                text = "Your Groups",
-                                style = MaterialTheme.typography.titleSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.weight(1f),
-                            )
-                            TextButton(onClick = { reorderMode = !reorderMode }) {
-                                Text(if (reorderMode) "Done" else "Edit")
-                            }
-                        }
+                        // The section header is a NavigationDrawerItem so its pill matches
+                        // the "My Posts" row above, and it folds the group list like the
+                        // feed's pinned section: same rotating disclosure chevron (right =
+                        // folded, down = open). While open the badge slot holds the
+                        // reorder Edit/Done button; folded it shows the hidden group count,
+                        // and the pill highlights when the active feed is one of them.
+                        val chevronRotation by animateFloatAsState(
+                            disclosureChevronRotation(groupsCollapsed, LocalLayoutDirection.current),
+                        )
+                        NavigationDrawerItem(
+                            label = { Text("Your Groups") },
+                            selected = groupsCollapsed && selectedGroup != null,
+                            onClick = { if (!reorderMode) groupsCollapsed = !groupsCollapsed },
+                            icon = {
+                                Icon(
+                                    Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                    contentDescription = if (groupsCollapsed) {
+                                        "Expand your groups"
+                                    } else {
+                                        "Collapse your groups"
+                                    },
+                                    modifier = Modifier.rotate(chevronRotation),
+                                )
+                            },
+                            badge = {
+                                if (groupsCollapsed) {
+                                    Text(
+                                        text = groups.size.toString(),
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                } else {
+                                    TextButton(onClick = { reorderMode = !reorderMode }) {
+                                        Text(if (reorderMode) "Done" else "Edit")
+                                    }
+                                }
+                            },
+                            modifier = Modifier.padding(horizontal = 12.dp),
+                        )
                     }
+                    if (!groupsCollapsed) {
                     items(localGroups, key = { it.id }) { group ->
                     val eventCount = eventCounts[group.id] ?: 0
                     val dragging = draggingId == group.id
@@ -1481,6 +1550,7 @@ internal fun GroupDrawer(
                         modifier = Modifier.padding(horizontal = 12.dp),
                     )
                 }
+                } // end of the collapsible "Your Groups" section (groupsCollapsed)
                 item(key = "drawer-footer-spacer") { Spacer(Modifier.height(16.dp)) }
                 }
             }
@@ -1589,8 +1659,8 @@ private fun ProfileFooter(user: RavelryUser?, onClick: () -> Unit) {
  * The feed's floating action buttons: a small calendar button for the selected group's
  * events (issue #179) stacked above the new-topic button. The calendar button needs a
  * group to open events for, so it renders only when [selectedGroup] is non-null; at the
- * FeedScreen call site that is the currently-viewed group, which (since the all-groups
- * view was removed, #97) is present whenever the user belongs to any group.
+ * FeedScreen call site that is the currently-viewed group, which is null both when the
+ * user belongs to no groups and while viewing the cross-group My Posts feed.
  */
 @Composable
 internal fun FeedFabs(
@@ -1662,6 +1732,8 @@ internal fun FeedList(
     listState: LazyListState = rememberLazyListState(),
     pinnedCollapsed: Boolean = false,
     onTogglePinnedCollapsed: () -> Unit = {},
+    pinnedSectionEnabled: Boolean = true,
+    showGroupNames: Boolean = false,
     onTopicClick: (FeedItem) -> Unit,
 ) {
     // Fires onLoadMore once the user has scrolled within LOAD_MORE_THRESHOLD items of the
@@ -1680,7 +1752,15 @@ internal fun FeedList(
     // Sticky topics are already sorted first within the flat list (FeedRepository), but
     // partition rather than split at the first non-sticky index so a sticky item is never
     // stranded outside the section if the ordering assumption ever changes upstream.
-    val (pinnedItems, regularItems) = items.partition { it.sticky }
+    //
+    // The section is disabled entirely for the cross-group "My Posts" feed: sticky means
+    // "pinned in its own forum", which isn't a meaningful grouping across groups — there
+    // the sticky flag stays a per-card label only.
+    val (pinnedItems, regularItems) = if (pinnedSectionEnabled) {
+        items.partition { it.sticky }
+    } else {
+        emptyList<FeedItem>() to items
+    }
 
     LazyColumn(
         state = listState,
@@ -1732,6 +1812,7 @@ internal fun FeedList(
             TopicCard(
                 item = item,
                 onClick = { onTopicClick(item) },
+                showGroupName = showGroupNames,
                 modifier = Modifier.animateItem().padding(horizontal = 16.dp),
             )
         }
@@ -1795,7 +1876,7 @@ private fun PinnedSectionHeader(
         // arrows ("is down the state or the action?"). The rotation is animated so a
         // tap visibly turns the chevron rather than swapping it.
         val chevronRotation by animateFloatAsState(
-            pinnedChevronRotation(collapsed, LocalLayoutDirection.current),
+            disclosureChevronRotation(collapsed, LocalLayoutDirection.current),
         )
         Icon(
             imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
@@ -1807,7 +1888,8 @@ private fun PinnedSectionHeader(
 }
 
 /**
- * Rotation (clockwise degrees) for [PinnedSectionHeader]'s chevron.
+ * Rotation (clockwise degrees) for a disclosure chevron — [PinnedSectionHeader]'s and the
+ * drawer's "Your Groups" section header both use this.
  *
  * `Icons.AutoMirrored.Filled.KeyboardArrowRight` flips horizontally in RTL layouts (it
  * points left while folded there, matching every other directional icon in this app), but
@@ -1816,7 +1898,7 @@ private fun PinnedSectionHeader(
  * up instead of down once expanded, so the sign flips for RTL to keep "expanded" pointing
  * down in both directions.
  */
-internal fun pinnedChevronRotation(collapsed: Boolean, layoutDirection: LayoutDirection): Float =
+internal fun disclosureChevronRotation(collapsed: Boolean, layoutDirection: LayoutDirection): Float =
     if (collapsed) 0f else if (layoutDirection == LayoutDirection.Rtl) -90f else 90f
 
 /**

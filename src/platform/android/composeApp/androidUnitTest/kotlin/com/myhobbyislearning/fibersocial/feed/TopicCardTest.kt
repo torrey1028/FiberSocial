@@ -58,6 +58,20 @@ class TopicCardTest {
     }
 
     @Test
+    fun `labels the card with its group when asked`() {
+        // Cross-group lists (the My Posts feed) can't imply the group from the screen.
+        compose.setContent { TopicCard(item = item(), onClick = {}, showGroupName = true) }
+        compose.onNodeWithText("in KAL Hub").assertIsDisplayed()
+    }
+
+    @Test
+    fun `omits the group label by default`() {
+        // A group's own feed already says which group it is.
+        compose.setContent { TopicCard(item = item(), onClick = {}) }
+        compose.onNodeWithText("in KAL Hub").assertDoesNotExist()
+    }
+
+    @Test
     fun `shows when the topic was started alongside who started it`() {
         // Issue #242: the card should surface the topic's original start time, not just
         // its last-reply time.

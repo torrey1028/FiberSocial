@@ -318,6 +318,42 @@ class RavelryApiClientTest {
     }
 
     @Test
+    fun `getMyTopics requests the posting filter sorted newest-reply-first`() = runTest {
+        var capturedUrl: io.ktor.http.Url? = null
+        val client = routingApiClientCapturing(onRequest = { capturedUrl = it }) { topicsJson(100L) }
+        client.getMyTopics(page = 3, pageSize = 50)
+        assertEquals("/forums/filtered_topics.json", capturedUrl?.encodedPath)
+        assertEquals("posting", capturedUrl?.parameters?.get("status"))
+        // Deliberately NO trailing underscore, inverting the getProjects created_ trap:
+        // this endpoint's "replied" field is "time since the latest reply", so ascending
+        // IS newest-first — "replied_" returns years-old topics first (verified on-device).
+        assertEquals("replied", capturedUrl?.parameters?.get("sort"))
+        assertEquals("3", capturedUrl?.parameters?.get("page"))
+        assertEquals("50", capturedUrl?.parameters?.get("page_size"))
+    }
+
+    @Test
+    fun `getMyTopics returns topics spanning several forums`() = runTest {
+        // Unlike a forum's own topic list, entries here carry meaningful forum_ids —
+        // the repository attributes each topic to a group through them.
+        val client = routingApiClient {
+            """{"topics":[
+                {"id":100,"title":"Topic 100","forum_id":42},
+                {"id":200,"title":"Topic 200","forum_id":77}
+            ],"paginator":{"page":1,"page_count":2,"results":30}}"""
+        }
+        val page = client.getMyTopics()
+        assertEquals(listOf(42L, 77L), page.topics.map { it.forumId })
+        assertTrue(page.hasMore)
+    }
+
+    @Test
+    fun `getMyTopics reports hasMore false when the paginator is absent`() = runTest {
+        val client = routingApiClient { topicsJson(100L) }
+        assertFalse(client.getMyTopics().hasMore)
+    }
+
+    @Test
     fun `getTopicDetail returns full topic with author and summary`() = runTest {
         val client = routingApiClient { topicDetailJson(100L, imagesCount = 2, summary = "Great WIP!") }
         val topic = client.getTopicDetail(100L)

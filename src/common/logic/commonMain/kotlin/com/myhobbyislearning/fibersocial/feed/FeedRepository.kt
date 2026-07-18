@@ -62,6 +62,54 @@ class FeedRepository(private val apiClient: RavelryApiClient) {
         fetchTopicsPage(group, page)
     }
 
+    /**
+     * Fetches one page of the cross-group "My Posts" feed: topics the user has posted in,
+     * across every group ([RavelryApiClient.getMyTopics]), newest-activity-first.
+     *
+     * Each topic's group attribution comes from matching the LIST entry's [Topic.forumId]
+     * against [groups] — the detail response reports `forum_id` as 0 (see [Topic]), so the
+     * list entry is the only place the forum is known. A topic whose forum matches none of
+     * the user's groups (e.g. posted in a since-left group) keeps an empty group name
+     * rather than being dropped — it's still the user's post.
+     *
+     * @param groups The user's groups, for forum-to-group attribution.
+     * @param page 1-based page number.
+     */
+    suspend fun getMyPostsPage(groups: List<Group>, page: Int): FeedItemsPage = coroutineScope {
+        val topicsPage = apiClient.getMyTopics(page = page)
+        val groupsByForumId = groups.associateBy { it.forumId }
+        val items = topicsPage.topics
+            .map { topic ->
+                // Same per-topic detail fetch as the group feed (summary/starter/read
+                // marker), under the same concurrency cap. Unlike the single-group feed,
+                // every topic here can belong to a different forum — including one the
+                // user has since left, which 403s. Isolated per topic (runCatching, not
+                // a bare fetch) so one inaccessible topic doesn't take the whole
+                // cross-group page down via awaitAll's fail-fast/cancel-siblings
+                // behavior; this is what actually makes the "keep unattributed rather
+                // than dropped" design above true in practice, not just for topics whose
+                // forum_id merely doesn't match a group.
+                async {
+                    topicFetchConcurrency.withPermit {
+                        val group = groupsByForumId[topic.forumId]
+                        runCatching {
+                            apiClient.getTopicDetail(topic.id)
+                                .toFeedItem(group?.id ?: 0L, group?.name.orEmpty())
+                        }.onFailure {
+                            println("FiberSocial: getMyPostsPage: skipping topic ${topic.id} (${it.message})")
+                        }.getOrNull()
+                    }
+                }
+            }
+            .awaitAll()
+            .filterNotNull()
+            // No sticky-first here: sticky means "pinned in its own forum", which is
+            // meaningless in a cross-group list — pure recency is the order that makes
+            // sense for "what did I post in lately".
+            .sortedByDescending { it.lastPostAt }
+        FeedItemsPage(items = items, hasMore = topicsPage.hasMore)
+    }
+
     private suspend fun CoroutineScope.fetchTopicsPage(group: Group, page: Int): FeedItemsPage {
         val topicsPage = apiClient.getGroupTopics(group.forumId, page = page)
         val items = topicsPage.topics

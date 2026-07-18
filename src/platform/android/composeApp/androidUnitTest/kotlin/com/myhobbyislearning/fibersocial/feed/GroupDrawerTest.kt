@@ -60,6 +60,76 @@ class GroupDrawerTest {
     }
 
     @Test
+    fun `my posts row sits above the groups and invokes its callback`() {
+        var myPostsClicks = 0
+        compose.setContent {
+            GroupDrawer(
+                groups = twoGroups,
+                selectedGroup = twoGroups.first(),
+                myPostsSelected = false,
+                onMyPostsSelected = { myPostsClicks++ },
+                eventCounts = emptyMap(),
+                user = user,
+                onGroupSelected = {},
+                onGroupEventsClick = {},
+                onSettingsClick = {},
+            )
+        }
+        compose.onNodeWithText("Your Posts").assertIsDisplayed()
+        compose.onNodeWithText("Your Posts").performClick()
+        compose.runOnIdle { assertEquals(1, myPostsClicks) }
+    }
+
+    @Test
+    fun `collapsing Your Groups hides the group rows but keeps Your Posts`() {
+        compose.setContent {
+            GroupDrawer(
+                groups = twoGroups,
+                selectedGroup = twoGroups.first(),
+                eventCounts = emptyMap(),
+                user = user,
+                onGroupSelected = {},
+                onGroupEventsClick = {},
+                onSettingsClick = {},
+            )
+        }
+
+        compose.onNodeWithText("Your Groups").performClick()
+
+        compose.onNodeWithText(twoGroups[0].name).assertDoesNotExist()
+        compose.onNodeWithText(twoGroups[1].name).assertDoesNotExist()
+        compose.onNodeWithText("Find groups").assertDoesNotExist()
+        compose.onNodeWithText("Your Posts").assertIsDisplayed()
+        // Folded: the Edit affordance yields to the hidden-group count.
+        compose.onNodeWithText("Edit").assertDoesNotExist()
+        compose.onNodeWithText("2").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Expand your groups").assertIsDisplayed()
+    }
+
+    @Test
+    fun `expanding Your Groups restores the group rows`() {
+        compose.setContent {
+            GroupDrawer(
+                groups = twoGroups,
+                selectedGroup = twoGroups.first(),
+                eventCounts = emptyMap(),
+                user = user,
+                onGroupSelected = {},
+                onGroupEventsClick = {},
+                onSettingsClick = {},
+            )
+        }
+
+        compose.onNodeWithText("Your Groups").performClick()
+        compose.onNodeWithText("Your Groups").performClick()
+
+        compose.onNodeWithText(twoGroups[0].name).assertIsDisplayed()
+        compose.onNodeWithText("Find groups").assertIsDisplayed()
+        compose.onNodeWithText("Edit").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Collapse your groups").assertIsDisplayed()
+    }
+
+    @Test
     fun `find groups row invokes onFindGroups`() {
         var found = 0
         compose.setContent {

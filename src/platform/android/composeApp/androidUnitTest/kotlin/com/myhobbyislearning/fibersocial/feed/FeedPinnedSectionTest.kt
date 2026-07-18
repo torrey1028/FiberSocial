@@ -181,6 +181,29 @@ class FeedPinnedSectionTest {
     }
 
     @Test
+    fun `a disabled pinned section renders sticky topics inline with no header`() {
+        // The cross-group My Posts feed disables the section: sticky means "pinned in
+        // its own forum", which isn't a meaningful grouping across groups.
+        compose.setContent {
+            FeedList(
+                items = listOf(
+                    item(id = 1, title = "Group rules", sticky = true),
+                    item(id = 2, title = "Show us your WIPs", sticky = false),
+                ),
+                hasMore = false,
+                loadingMore = false,
+                onLoadMore = {},
+                pinnedSectionEnabled = false,
+                onTopicClick = {},
+            )
+        }
+
+        compose.onNodeWithText("pinned topic", substring = true).assertDoesNotExist()
+        compose.onNodeWithText("Group rules").assertIsDisplayed()
+        compose.onNodeWithText("Show us your WIPs").assertIsDisplayed()
+    }
+
+    @Test
     fun `a sticky topic sorted below a regular one still lands in the pinned section`() {
         // FeedRepository sorts sticky-first, but the section must not depend on that:
         // partitioning (not prefix-splitting) keeps a stray sticky item in the fold.

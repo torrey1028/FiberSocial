@@ -376,4 +376,127 @@ class FeedRepositoryTest {
         val page = repo.getFeedItemsPage(group, page = 3)
         assertFalse(page.hasMore)
     }
+
+    /** KAL Hub (forum 42) plus a second group, for cross-group my-posts attribution. */
+    private val twoGroups = listOf(
+        group,
+        com.myhobbyislearning.fibersocial.feed.models.Group(
+            id = 20L, name = "Lace Society", permalink = "lace", forumId = 77L,
+        ),
+    )
+
+    @Test
+    fun `getMyPostsPage attributes topics to groups by the list entry's forum id`() = runTest {
+        // The detail response reports forum_id as 0, so attribution MUST come from the
+        // filtered_topics list entry — this fails if the mapping ever reads the detail.
+        val repo = repoWithRoute { path ->
+            when {
+                path.contains("filtered_topics") -> """{"topics":[
+                    {"id":100,"title":"Topic 100","forum_id":42},
+                    {"id":200,"title":"Topic 200","forum_id":77}
+                ]}"""
+                path.contains("/topics/100") -> topicDetailJson(100L)
+                path.contains("/topics/200") -> topicDetailJson(200L)
+                else -> error("Unexpected: $path")
+            }
+        }
+        val page = repo.getMyPostsPage(twoGroups, page = 1)
+        assertEquals(
+            mapOf(100L to "KAL Hub", 200L to "Lace Society"),
+            page.items.associate { it.id to it.groupName },
+        )
+        assertEquals(
+            mapOf(100L to 10L, 200L to 20L),
+            page.items.associate { it.id to it.groupId },
+        )
+    }
+
+    @Test
+    fun `getMyPostsPage keeps a topic whose forum matches no group`() = runTest {
+        // e.g. posted in a since-left group: still the user's post, shown without a
+        // group attribution rather than silently dropped.
+        val repo = repoWithRoute { path ->
+            when {
+                path.contains("filtered_topics") ->
+                    """{"topics":[{"id":100,"title":"Topic 100","forum_id":999}]}"""
+                path.contains("/topics/100") -> topicDetailJson(100L)
+                else -> error("Unexpected: $path")
+            }
+        }
+        val item = repo.getMyPostsPage(twoGroups, page = 1).items.single()
+        assertEquals("", item.groupName)
+        assertEquals(0L, item.groupId)
+    }
+
+    @Test
+    fun `getMyPostsPage sorts by recency only and ignores sticky`() = runTest {
+        // Sticky means "pinned in its own forum" — meaningless across groups, so a
+        // sticky topic with older activity must NOT jump ahead of a newer plain one.
+        val repo = repoWithRoute { path ->
+            when {
+                path.contains("filtered_topics") -> """{"topics":[
+                    {"id":100,"title":"Topic 100","forum_id":42},
+                    {"id":200,"title":"Topic 200","forum_id":42}
+                ]}"""
+                path.contains("/topics/100") ->
+                    topicDetailJson(100L, sticky = true, repliedAt = "2024-01-10")
+                path.contains("/topics/200") ->
+                    topicDetailJson(200L, repliedAt = "2024-01-20")
+                else -> error("Unexpected: $path")
+            }
+        }
+        val page = repo.getMyPostsPage(twoGroups, page = 1)
+        assertEquals(listOf(200L, 100L), page.items.map { it.id })
+    }
+
+    @Test
+    fun `getMyPostsPage threads hasMore through from the paginator`() = runTest {
+        val repo = repoWithRoute { path ->
+            when {
+                path.contains("filtered_topics") ->
+                    """{"topics":[{"id":100,"title":"Topic 100","forum_id":42}],
+                        "paginator":{"page":1,"page_count":2,"results":30}}"""
+                path.contains("/topics/100") -> topicDetailJson(100L)
+                else -> error("Unexpected: $path")
+            }
+        }
+        assertTrue(repo.getMyPostsPage(twoGroups, page = 1).hasMore)
+    }
+
+    @Test
+    fun `getMyPostsPage skips a topic whose detail fetch 403s rather than failing the whole page`() = runTest {
+        // A topic posted in a group the user has since left can 403 on its own detail
+        // fetch (the forum itself is off-limits) even though the list entry that named
+        // it came back fine. awaitAll's fail-fast/cancel-siblings behavior means an
+        // unguarded fetch here would blank the whole cross-group page over one topic —
+        // this is what actually makes "keep unattributed rather than dropped" (see the
+        // test above) true when the topic isn't just unattributed but inaccessible.
+        val engine = io.ktor.client.engine.mock.MockEngine { request ->
+            when {
+                request.url.encodedPath.contains("filtered_topics") -> respond(
+                    content = """{"topics":[
+                        {"id":100,"title":"Topic 100","forum_id":42},
+                        {"id":200,"title":"Topic 200","forum_id":999}
+                    ]}""",
+                    status = HttpStatusCode.OK,
+                    headers = headersOf("Content-Type", ContentType.Application.Json.toString()),
+                )
+                request.url.encodedPath.contains("/topics/100") -> respond(
+                    content = topicDetailJson(100L),
+                    status = HttpStatusCode.OK,
+                    headers = headersOf("Content-Type", ContentType.Application.Json.toString()),
+                )
+                request.url.encodedPath.contains("/topics/200") -> respond("", HttpStatusCode.Forbidden)
+                else -> error("Unexpected: ${request.url}")
+            }
+        }
+        val client = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val repo = FeedRepository(RavelryApiClient(client, FakeFeedTokenStorage()))
+
+        val page = repo.getMyPostsPage(twoGroups, page = 1)
+
+        assertEquals(listOf(100L), page.items.map { it.id })
+    }
 }

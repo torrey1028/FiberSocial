@@ -814,6 +814,55 @@ class RavelryApiClient(
     }
 
     /**
+     * Returns a page of topics the authenticated user has posted in, across ALL
+     * forums/groups — `/forums/filtered_topics.json?status=posting`, the API twin of the
+     * website's `/discuss/browse` page. Backs the drawer's "My Posts" feed.
+     *
+     * `status=posting` covers both topics the user replied to AND topics they started
+     * (the opening post counts as a post — confirmed on-device against a live account),
+     * so no second `status=mine` call is needed.
+     *
+     * SORT TRAP INVERSION: the sort is a bare `replied`, deliberately WITHOUT the
+     * trailing `_` that `getProjects`' `created_` needs for newest-first. Ravelry sorts
+     * ascending by default, but this endpoint's `replied` field is documented as "time
+     * since the latest reply" — ascending time-since IS newest-activity-first. Passing
+     * `replied_` here returns oldest-activity-first (confirmed on-device: the first page
+     * led with years-old topics), which page-1-only consumers then silently mistake for
+     * a complete recent view since the repository re-sorts within each page.
+     *
+     * The response reuses [TopicsResponse]: same `{topics, paginator}` envelope as a
+     * forum's topic list, just without the `forum` object (which that DTO doesn't map
+     * anyway). Unlike [getGroupTopics] the topics span many forums, so each list entry's
+     * [Topic.forumId] is meaningful here — callers map it back to a [Group].
+     *
+     * @param page 1-based page number.
+     * @param pageSize Number of topics per page (Ravelry caps this endpoint at 100).
+     */
+    suspend fun getMyTopics(
+        page: Int = 1,
+        pageSize: Int = DEFAULT_FEED_PAGE_SIZE,
+    ): TopicsPage {
+        val raw = authenticatedRequest {
+            httpClient.get("$BASE_URL/forums/filtered_topics.json") {
+                header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
+                url.parameters.apply {
+                    append("status", "posting")
+                    append("sort", "replied")
+                    append("page", page.toString())
+                    append("page_size", pageSize.toString())
+                }
+            }
+        }
+        val response = lenientJson.decodeFromString<TopicsResponse>(raw)
+        val paginator = response.paginator
+        return TopicsPage(
+            topics = response.topics,
+            page = paginator?.page ?: page,
+            hasMore = paginator != null && paginator.page < paginator.pageCount,
+        )
+    }
+
+    /**
      * Returns one page of a topic's posts (replies), ordered oldest-first, so post
      * position within the accumulated list matches Ravelry's 1-based post number (which
      * [Topic.lastRead] indexes into). Each post's [Post.voteTotals] and [Post.userVotes]
