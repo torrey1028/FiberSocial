@@ -8,16 +8,20 @@ import com.myhobbyislearning.fibersocial.BuildConfig
 import com.myhobbyislearning.fibersocial.auth.KeyValueTokenStorage
 import com.myhobbyislearning.fibersocial.events.EventDetailViewModel
 import com.myhobbyislearning.fibersocial.events.EventsViewModel
+import com.myhobbyislearning.fibersocial.events.NewEventViewModel
 import com.myhobbyislearning.fibersocial.feedback.FeedbackViewModel
 import com.myhobbyislearning.fibersocial.net.ravelryApiClient
 import com.myhobbyislearning.fibersocial.net.ravelryAuthRepository
 import com.myhobbyislearning.fibersocial.net.ravelryHttpClient
 import com.myhobbyislearning.fibersocial.notifications.EventSyncWorker
+import com.myhobbyislearning.fibersocial.notifications.KeyValueNotificationStateStore
 import com.myhobbyislearning.fibersocial.profile.UserProfileViewModel
 import com.myhobbyislearning.fibersocial.projects.ProjectPageViewModel
 import com.myhobbyislearning.fibersocial.projects.ProjectPhotoPickerViewModel
 import com.myhobbyislearning.fibersocial.storage.AUTH_PREFS_NAME
+import com.myhobbyislearning.fibersocial.storage.NOTIFICATION_STATE_PREFS_NAME
 import com.myhobbyislearning.fibersocial.storage.encryptedKeyValueStore
+import com.myhobbyislearning.fibersocial.storage.plainKeyValueStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.launch
@@ -54,6 +58,13 @@ class FeedAndroidViewModel(app: Application) : AndroidViewModel(app), FeedScreen
     override val userProfile = UserProfileViewModel(apiClient, viewModelScope)
     override val feedback = FeedbackViewModel(apiClient, viewModelScope)
     override val events = EventsViewModel(apiClient, viewModelScope)
+    override val newEvent = NewEventViewModel(
+        apiClient,
+        viewModelScope,
+        // Same store as EventSyncWorker: a just-created event is pre-seeded as known so
+        // the next sync doesn't pop a "new event" notification at its own creator.
+        KeyValueNotificationStateStore(plainKeyValueStore(app, NOTIFICATION_STATE_PREFS_NAME)),
+    )
     override val eventDetail = EventDetailViewModel(
         apiClient,
         viewModelScope,
@@ -76,6 +87,7 @@ class FeedAndroidViewModel(app: Application) : AndroidViewModel(app), FeedScreen
         feedback.sessionExpired,
         events.sessionExpired,
         eventDetail.sessionExpired,
+        newEvent.sessionExpired,
     )
 
     init {

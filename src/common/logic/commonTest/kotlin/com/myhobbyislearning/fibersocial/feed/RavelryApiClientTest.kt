@@ -3,6 +3,10 @@ package com.myhobbyislearning.fibersocial.feed
 import com.myhobbyislearning.fibersocial.auth.AuthToken
 import com.myhobbyislearning.fibersocial.auth.ForbiddenException
 import com.myhobbyislearning.fibersocial.auth.SessionExpiredException
+import com.myhobbyislearning.fibersocial.events.EventState
+import com.myhobbyislearning.fibersocial.events.EventVenueException
+import com.myhobbyislearning.fibersocial.events.NewEventForm
+import com.myhobbyislearning.fibersocial.events.NewEventInput
 import com.myhobbyislearning.fibersocial.feed.models.VoteType
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
@@ -15,11 +19,13 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.formUrlEncode
 import io.ktor.http.headersOf
+import io.ktor.http.parseUrlEncodedParameters
 import io.ktor.serialization.kotlinx.json.json
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.test.runTest
 import kotlin.time.Clock
@@ -2075,7 +2081,366 @@ class RavelryApiClientTest {
         }
         assertFailsWith<Exception> { client.uploadForumImage("p.jpg", "image/jpeg", byteArrayOf(1)) }
     }
+
+    @Test
+    fun `createEvent completes the venue step by replaying the response's embedded form`() = runTest {
+        val paths = mutableListOf<String>()
+        val bodies = mutableListOf<String>()
+        val engine = MockEngine { request ->
+            paths.add(request.url.encodedPath)
+            bodies.add(request.body.toByteArray().decodeToString())
+            when (request.url.encodedPath) {
+                "/events" -> respond(
+                    EVENT_CREATE_RESPONSE_HTML,
+                    HttpStatusCode.OK,
+                    headersOf("Content-Type", ContentType.Text.Html.toString()),
+                )
+                "/events/another-test-event" -> respond(
+                    "",
+                    HttpStatusCode.Found,
+                    headersOf(HttpHeaders.Location, "https://www.ravelry.com/events/another-test-event"),
+                )
+                else -> error("unexpected request to ${request.url}")
+            }
+        }
+
+        val permalink = htmlApiClient(engine).createEvent(NEW_EVENT_FORM, inPersonEventInput())
+
+        assertEquals("another-test-event", permalink)
+        assertEquals(listOf("/events", "/events/another-test-event"), paths)
+        val venueParams = bodies[1].replace("+", "%20").parseUrlEncodedParameters()
+        assertEquals("put", venueParams["_method"])
+        assertEquals("venue", venueParams["step"])
+        // The venue POST must carry the creation response's own hidden token, not the
+        // original new-event form's — proving the embedded form is replayed verbatim.
+        assertEquals("RESPONSE_TOKEN_xyz", venueParams["authenticity_token"])
+        assertEquals("Chainline Brewing", venueParams["event[venue_name]"])
+        assertEquals("229", venueParams["event[country_id]"])
+        assertEquals("3651", venueParams["event[state_id]"])
+        assertEquals("Redmond", venueParams["event[city]"])
+        assertEquals("503 6th St S", venueParams["event[address]"])
+    }
+
+    @Test
+    fun `createEvent skips the venue step for online events`() = runTest {
+        val paths = mutableListOf<String>()
+        val engine = MockEngine { request ->
+            paths.add(request.url.encodedPath)
+            respond(
+                EVENT_CREATE_RESPONSE_HTML,
+                HttpStatusCode.OK,
+                headersOf("Content-Type", ContentType.Text.Html.toString()),
+            )
+        }
+
+        val permalink = htmlApiClient(engine).createEvent(
+            NEW_EVENT_FORM,
+            NewEventInput(
+                groupId = 50697L,
+                name = "Online Test",
+                online = true,
+                categoryId = 16L,
+                startDate = "2026-07-20",
+                startTime = "04:00 PM",
+                startTimezone = "Pacific Time (US & Canada)",
+                endTimezone = "Pacific Time (US & Canada)",
+            ),
+        )
+
+        assertEquals("another-test-event", permalink)
+        assertEquals(listOf("/events"), paths)
+    }
+
+    @Test
+    fun `createEvent falls back to the documented venue-form shape when the response lacks one`() = runTest {
+        val bodies = mutableListOf<String>()
+        val engine = MockEngine { request ->
+            bodies.add(request.body.toByteArray().decodeToString())
+            when (request.url.encodedPath) {
+                "/events" -> respond(
+                    """<form id="edit_event_71975" action="/events/another-test-event" method="post"></form>""",
+                    HttpStatusCode.OK,
+                    headersOf("Content-Type", ContentType.Text.Html.toString()),
+                )
+                else -> respond(
+                    "",
+                    HttpStatusCode.Found,
+                    headersOf(HttpHeaders.Location, "https://www.ravelry.com/events/another-test-event"),
+                )
+            }
+        }
+
+        htmlApiClient(engine).createEvent(NEW_EVENT_FORM, inPersonEventInput())
+
+        val venueParams = bodies[1].replace("+", "%20").parseUrlEncodedParameters()
+        assertEquals("venue", venueParams["step"])
+        assertEquals("FORM_TOKEN_abc", venueParams["authenticity_token"])
+    }
+
+    @Test
+    fun `createEvent surfaces a rejected venue step as EventVenueException`() = runTest {
+        val engine = MockEngine { request ->
+            when (request.url.encodedPath) {
+                "/events" -> respond(
+                    EVENT_CREATE_RESPONSE_HTML,
+                    HttpStatusCode.OK,
+                    headersOf("Content-Type", ContentType.Text.Html.toString()),
+                )
+                else -> respond(
+                    """<ul class="brief_error_messages"><li>Address is required</li></ul>""",
+                    HttpStatusCode.OK,
+                    headersOf("Content-Type", ContentType.Text.Html.toString()),
+                )
+            }
+        }
+
+        val e = assertFailsWith<EventVenueException> {
+            htmlApiClient(engine).createEvent(NEW_EVENT_FORM, inPersonEventInput())
+        }
+        assertEquals("another-test-event", e.permalink)
+        assertTrue(e.message!!.contains("Address is required"))
+    }
+
+    @Test
+    fun `getStatesForCountry posts the CSRF token and parses options out of the script response`() = runTest {
+        var body = ""
+        var csrfHeader: String? = null
+        val engine = MockEngine { request ->
+            body = request.body.toByteArray().decodeToString()
+            csrfHeader = request.headers["X-CSRF-Token"]
+            respond(
+                // The Prototype.js evalScripts response captured on-device: an inline
+                // script rewriting the state <select>, with the option markup embedded
+                // as a JS string literal — angle brackets as unicode escapes, quotes
+                // backslash-escaped.
+                "Element.update(\"state_options\", \"\\u003Cselect id=\\\"event_state_id\\\"\\u003E" +
+                    "\\u003Coption value=\\\"\\\"\\u003E\\u003C/option\\u003E\\n" +
+                    "\\u003Coption     value=\\\"3651\\\"\\u003EWashington\\u003C/option\\u003E\\n" +
+                    "\\u003Coption     value=\\\"3654\\\"\\u003EAlaska\\u003C/option\\u003E" +
+                    "\\u003C/select\\u003E\");",
+                HttpStatusCode.OK,
+                headersOf("Content-Type", "text/javascript"),
+            )
+        }
+
+        val states = htmlApiClient(engine).getStatesForCountry(229L, "FORM_TOKEN_abc")
+
+        val params = body.replace("+", "%20").parseUrlEncodedParameters()
+        assertEquals("FORM_TOKEN_abc", params["authenticity_token"])
+        assertEquals("FORM_TOKEN_abc", csrfHeader)
+        assertEquals("event", params["from"])
+        assertEquals("229", params["country_id"])
+        assertEquals(listOf(EventState(3651L, "Washington"), EventState(3654L, "Alaska")), states)
+    }
+
+    @Test
+    fun `getStatesForCountry yields an empty list when the request is bounced with a redirect`() = runTest {
+        val engine = MockEngine {
+            respond(
+                """<html><body>You are being <a href="https://www.ravelry.com/locations/states">redirected</a>.</body></html>""",
+                HttpStatusCode.Found,
+                headersOf(HttpHeaders.Location, "https://www.ravelry.com/locations/states"),
+            )
+        }
+        assertEquals(emptyList(), htmlApiClient(engine).getStatesForCountry(229L, "FORM_TOKEN_abc"))
+    }
+
+    @Test
+    fun `createEvent posts optional fields when set and omits them when blank`() = runTest {
+        val bodies = mutableListOf<String>()
+        val engine = MockEngine { request ->
+            bodies.add(request.body.toByteArray().decodeToString())
+            when (request.url.encodedPath) {
+                "/events" -> respond(
+                    EVENT_CREATE_RESPONSE_HTML,
+                    HttpStatusCode.OK,
+                    headersOf("Content-Type", ContentType.Text.Html.toString()),
+                )
+                else -> respond(
+                    "",
+                    HttpStatusCode.Found,
+                    headersOf(HttpHeaders.Location, "https://www.ravelry.com/events/another-test-event"),
+                )
+            }
+        }
+        val client = htmlApiClient(engine)
+
+        client.createEvent(
+            NEW_EVENT_FORM,
+            inPersonEventInput().copy(
+                url = "https://example.com",
+                endDate = "2026-07-21",
+                endTime = "05:00 PM",
+                description = "Bring yarn",
+                editorList = "alice bob",
+            ),
+        )
+        val full = bodies[0].replace("+", "%20").parseUrlEncodedParameters()
+        assertEquals("1", full["event[event_setting_id]"])
+        assertEquals("https://example.com", full["event[url]"])
+        assertEquals("2026-07-21", full["event[end_date]"])
+        assertEquals("05:00 PM", full["event[end_time]"])
+        assertEquals("Bring yarn", full["event[description]"])
+        assertEquals("alice bob", full["event[editor_list]"])
+        assertEquals("5", full["event[estimated_attendance]"])
+
+        bodies.clear()
+        // Blank optionals are omitted entirely, not posted as empty strings — Ravelry
+        // treats a present-but-empty field differently from an absent one.
+        client.createEvent(
+            NEW_EVENT_FORM,
+            inPersonEventInput().copy(
+                url = "",
+                endDate = " ",
+                endTime = "",
+                description = "",
+                editorList = "",
+                stateId = null,
+                estimatedAttendance = null,
+            ),
+        )
+        val minimal = bodies[0].replace("+", "%20").parseUrlEncodedParameters()
+        assertNull(minimal["event[url]"])
+        assertNull(minimal["event[end_date]"])
+        assertNull(minimal["event[end_time]"])
+        assertNull(minimal["event[description]"])
+        assertNull(minimal["event[editor_list]"])
+        assertNull(minimal["event[state_id]"])
+        assertNull(minimal["event[estimated_attendance]"])
+    }
+
+    @Test
+    fun `createEvent treats a venue-step login redirect as session expiry`() = runTest {
+        val engine = MockEngine { request ->
+            when (request.url.encodedPath) {
+                "/events" -> respond(
+                    EVENT_CREATE_RESPONSE_HTML,
+                    HttpStatusCode.OK,
+                    headersOf("Content-Type", ContentType.Text.Html.toString()),
+                )
+                else -> respond(
+                    "",
+                    HttpStatusCode.Found,
+                    headersOf(HttpHeaders.Location, "https://www.ravelry.com/login"),
+                )
+            }
+        }
+        assertFailsWith<SessionExpiredException> {
+            htmlApiClient(engine).createEvent(NEW_EVENT_FORM, inPersonEventInput())
+        }
+    }
+
+    @Test
+    fun `createEvent venue rejection without a banner still fails with the HTTP status`() = runTest {
+        val engine = MockEngine { request ->
+            when (request.url.encodedPath) {
+                "/events" -> respond(
+                    EVENT_CREATE_RESPONSE_HTML,
+                    HttpStatusCode.OK,
+                    headersOf("Content-Type", ContentType.Text.Html.toString()),
+                )
+                else -> respond(
+                    "<html><body>unexpected</body></html>",
+                    HttpStatusCode.OK,
+                    headersOf("Content-Type", ContentType.Text.Html.toString()),
+                )
+            }
+        }
+        val e = assertFailsWith<EventVenueException> {
+            htmlApiClient(engine).createEvent(NEW_EVENT_FORM, inPersonEventInput())
+        }
+        assertTrue(e.message!!.contains("HTTP 200"))
+    }
+
+    @Test
+    fun `getNewEventForm fails loudly when the page lacks the form`() = runTest {
+        val client = routingApiClient { "<html><body>not the form</body></html>" }
+        assertFailsWith<IllegalStateException> { client.getNewEventForm(1L) }
+    }
+
+    @Test
+    fun `getNewEventForm parses the form page`() = runTest {
+        val client = routingApiClient {
+            """
+            <form id="new_event" action="https://www.ravelry.com/events" method="post">
+            <input name="authenticity_token" type="hidden" value="TOK">
+            <input id="event_creation_id" name="event[creation_id]" type="hidden" value="42">
+            <select id="event_country_id" name="event[country_id]"><option value="229">United States</option></select>
+            </form>
+            """
+        }
+        val form = client.getNewEventForm(1L)
+        assertEquals("TOK", form.authenticityToken)
+        assertEquals("42", form.creationId)
+        assertEquals(listOf(229L), form.countries.map { it.id })
+    }
+
+    @Test
+    fun `createEvent surfaces creation validation errors without attempting the venue step`() = runTest {
+        val paths = mutableListOf<String>()
+        val engine = MockEngine { request ->
+            paths.add(request.url.encodedPath)
+            respond(
+                """<ul class="brief_error_messages"><li>City is required</li></ul>""",
+                HttpStatusCode.OK,
+                headersOf("Content-Type", ContentType.Text.Html.toString()),
+            )
+        }
+
+        val e = assertFailsWith<IllegalStateException> {
+            htmlApiClient(engine).createEvent(NEW_EVENT_FORM, inPersonEventInput())
+        }
+        assertTrue(e.message!!.contains("City is required"))
+        assertEquals(listOf("/events"), paths)
+    }
 }
+
+private val NEW_EVENT_FORM = NewEventForm(
+    authenticityToken = "FORM_TOKEN_abc",
+    creationId = "999999",
+    countries = emptyList(),
+    onlineCategories = emptyList(),
+    inPersonCategories = emptyList(),
+    estimatedAttendanceOptions = emptyList(),
+    timezones = emptyList(),
+)
+
+private fun inPersonEventInput() = NewEventInput(
+    groupId = 50697L,
+    name = "Another Test event!",
+    online = false,
+    categoryId = 16L,
+    startDate = "2026-07-20",
+    startTime = "04:00 PM",
+    countryId = 229L,
+    stateId = 3651L,
+    city = "Redmond",
+    venueName = "Chainline Brewing",
+    address = "503 6th St S",
+    estimatedAttendance = 5L,
+)
+
+/**
+ * The success shape of POST /events (see docs/samples/event_create_response.html): the
+ * follow-up "choose a venue" step rendered inline as two nested edit_event forms, whose
+ * hidden token deliberately differs from [NEW_EVENT_FORM]'s.
+ */
+private val EVENT_CREATE_RESPONSE_HTML = """
+<html><body>
+<form action="/events/another-test-event" class="medium_form" id="edit_event_71975" method="post">
+<input name="_method" type="hidden" value="put" />
+<input name="authenticity_token" type="hidden" value="RESPONSE_TOKEN_xyz" />
+<input id="step" name="step" type="hidden" value="venue" />
+<form action="/events/another-test-event" class="edit_event" id="edit_event_71975" method="post">
+<input name="_method" type="hidden" value="put" />
+<input name="authenticity_token" type="hidden" value="RESPONSE_TOKEN_xyz" />
+<input id="event_venue_name" name="event[venue_name]" size="30" type="text" />
+<input id="event_city" name="event[city]" size="30" type="text" value="Redmond" />
+<input id="event_address" name="event[address]" size="30" type="text" />
+</form>
+</form>
+</body></html>
+"""
 
 private fun htmlApiClient(engine: MockEngine): RavelryApiClient {
     val httpClient = HttpClient(engine) {

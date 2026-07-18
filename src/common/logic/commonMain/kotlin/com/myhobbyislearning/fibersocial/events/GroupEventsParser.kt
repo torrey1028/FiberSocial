@@ -27,6 +27,21 @@ object GroupEventsParser {
             .select("#upcoming_events div.event")
             .mapNotNull { parseEvent(it) }
 
+    /**
+     * Whether the current user (per the session cookie the page was fetched with)
+     * moderates this group.
+     *
+     * Ravelry exposes no group-membership-role API, so this looks for the one
+     * moderator-only marker found on the group page (see
+     * `docs/samples/group_page_moderator_tools.html`): a `class="breadcrumbs__tools"`
+     * span holding an "edit" link to the group's `/edit` page, rendered only for
+     * moderators/admins. A plain member's view of this bar wasn't available to capture
+     * — absence of the marker is treated as "not a moderator", which is the safe
+     * default for a moderator-gated action.
+     */
+    fun parseIsModerator(groupPageHtml: String): Boolean =
+        Ksoup.parse(groupPageHtml).selectFirst("span.breadcrumbs__tools a[href*=/edit]") != null
+
     private fun parseEvent(event: Element): EventSummary? {
         val link = event.selectFirst("div.what a") ?: return null
         val permalink = eventPermalinkFromHref(link.attr("href")) ?: return null

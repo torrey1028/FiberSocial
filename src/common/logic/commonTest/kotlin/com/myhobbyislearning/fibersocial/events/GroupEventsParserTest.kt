@@ -3,6 +3,7 @@ package com.myhobbyislearning.fibersocial.events
 import kotlinx.datetime.LocalDateTime
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -97,6 +98,33 @@ class GroupEventsParserLenienceTest {
     fun `page without an events box yields no events`() {
         assertTrue(GroupEventsParser.parse("<html><body><p>quiet group</p></body></html>").isEmpty())
         assertTrue(GroupEventsParser.parse("").isEmpty())
+    }
+}
+
+class GroupEventsParserModeratorTest {
+    @Test
+    fun `edit link in breadcrumbs tools marks the user as a moderator`() {
+        val html = """
+            <span class="breadcrumbs__tools">
+              <a href="https://www.ravelry.com/groups/some-group/edit">edit</a>
+            </span>
+        """
+        assertTrue(GroupEventsParser.parseIsModerator(html))
+    }
+
+    @Test
+    fun `no breadcrumbs tools means not a moderator`() {
+        assertFalse(GroupEventsParser.parseIsModerator("<html><body>just a group page</body></html>"))
+    }
+
+    @Test
+    fun `breadcrumbs tools without an edit link means not a moderator`() {
+        val html = """
+            <span class="breadcrumbs__tools">
+              <a href="https://www.ravelry.com/groups/some-group/leave">leave group</a>
+            </span>
+        """
+        assertFalse(GroupEventsParser.parseIsModerator(html))
     }
 }
 

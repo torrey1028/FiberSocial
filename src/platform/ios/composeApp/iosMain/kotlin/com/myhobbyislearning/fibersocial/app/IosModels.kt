@@ -5,6 +5,7 @@ import com.myhobbyislearning.fibersocial.auth.KeyValueTokenStorage
 import com.myhobbyislearning.fibersocial.auth.RavelryAuthManager
 import com.myhobbyislearning.fibersocial.events.EventDetailViewModel
 import com.myhobbyislearning.fibersocial.events.EventsViewModel
+import com.myhobbyislearning.fibersocial.events.NewEventViewModel
 import com.myhobbyislearning.fibersocial.feed.FeedRepository
 import com.myhobbyislearning.fibersocial.feed.FeedScreenModel
 import com.myhobbyislearning.fibersocial.feed.FeedViewModel
@@ -17,12 +18,14 @@ import com.myhobbyislearning.fibersocial.feedback.FeedbackViewModel
 import com.myhobbyislearning.fibersocial.profile.UserProfileViewModel
 import com.myhobbyislearning.fibersocial.net.ravelryApiClient
 import com.myhobbyislearning.fibersocial.notifications.EventSync
+import com.myhobbyislearning.fibersocial.notifications.KeyValueNotificationStateStore
 import com.myhobbyislearning.fibersocial.net.ravelryAuthRepository
 import com.myhobbyislearning.fibersocial.net.ravelryHttpClient
 import com.myhobbyislearning.fibersocial.projects.ProjectPageViewModel
 import com.myhobbyislearning.fibersocial.projects.ProjectPhotoPickerViewModel
 import com.myhobbyislearning.fibersocial.storage.AUTH_STORE_NAME
 import com.myhobbyislearning.fibersocial.storage.GROUP_ORDER_STORE_NAME
+import com.myhobbyislearning.fibersocial.storage.NOTIFICATION_STATE_STORE_NAME
 import com.myhobbyislearning.fibersocial.storage.KeychainKeyValueStore
 import com.myhobbyislearning.fibersocial.storage.NsUserDefaultsKeyValueStore
 import kotlinx.coroutines.CoroutineScope
@@ -127,6 +130,13 @@ class IosFeedModel(scope: CoroutineScope) : FeedScreenModel {
     override val userProfile = UserProfileViewModel(apiClient, scope)
     override val feedback = FeedbackViewModel(apiClient, scope)
     override val events = EventsViewModel(apiClient, scope)
+    override val newEvent = NewEventViewModel(
+        apiClient,
+        scope,
+        // Same store as EventSync: a just-created event is pre-seeded as known so the
+        // next sync doesn't pop a "new event" notification at its own creator.
+        KeyValueNotificationStateStore(NsUserDefaultsKeyValueStore(NOTIFICATION_STATE_STORE_NAME)),
+    )
     override val eventDetail = EventDetailViewModel(
         apiClient,
         scope,
@@ -149,6 +159,7 @@ class IosFeedModel(scope: CoroutineScope) : FeedScreenModel {
         feedback.sessionExpired,
         events.sessionExpired,
         eventDetail.sessionExpired,
+        newEvent.sessionExpired,
     )
 
     init {
