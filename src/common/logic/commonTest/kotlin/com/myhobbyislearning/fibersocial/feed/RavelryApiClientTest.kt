@@ -324,9 +324,10 @@ class RavelryApiClientTest {
         client.getMyTopics(page = 3, pageSize = 50)
         assertEquals("/forums/filtered_topics.json", capturedUrl?.encodedPath)
         assertEquals("posting", capturedUrl?.parameters?.get("status"))
-        // Ravelry sorts ascending unless the param carries a trailing underscore — a bare
-        // "replied" would bury recent activity at the end (the getProjects created_ trap).
-        assertEquals("replied_", capturedUrl?.parameters?.get("sort"))
+        // Deliberately NO trailing underscore, inverting the getProjects created_ trap:
+        // this endpoint's "replied" field is "time since the latest reply", so ascending
+        // IS newest-first — "replied_" returns years-old topics first (verified on-device).
+        assertEquals("replied", capturedUrl?.parameters?.get("sort"))
         assertEquals("3", capturedUrl?.parameters?.get("page"))
         assertEquals("50", capturedUrl?.parameters?.get("page_size"))
     }

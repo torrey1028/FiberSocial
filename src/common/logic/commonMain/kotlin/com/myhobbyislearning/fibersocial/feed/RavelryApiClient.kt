@@ -818,13 +818,17 @@ class RavelryApiClient(
      * forums/groups — `/forums/filtered_topics.json?status=posting`, the API twin of the
      * website's `/discuss/browse` page. Backs the drawer's "My Posts" feed.
      *
-     * `status=posting` covers topics the user replied to; whether it also covers topics
-     * they *started* (the opening post is a post) is verified on-device — if Ravelry
-     * ever excludes them, add a second `status=mine` call and merge.
+     * `status=posting` covers both topics the user replied to AND topics they started
+     * (the opening post counts as a post — confirmed on-device against a live account),
+     * so no second `status=mine` call is needed.
      *
-     * The sort is pinned explicitly rather than trusting the documented `replied`
-     * default: Ravelry sorts ascending unless the param carries a trailing `_` (the
-     * `getProjects` `created_` trap), and this feed wants most-recent-activity first.
+     * SORT TRAP INVERSION: the sort is a bare `replied`, deliberately WITHOUT the
+     * trailing `_` that `getProjects`' `created_` needs for newest-first. Ravelry sorts
+     * ascending by default, but this endpoint's `replied` field is documented as "time
+     * since the latest reply" — ascending time-since IS newest-activity-first. Passing
+     * `replied_` here returns oldest-activity-first (confirmed on-device: the first page
+     * led with years-old topics), which page-1-only consumers then silently mistake for
+     * a complete recent view since the repository re-sorts within each page.
      *
      * The response reuses [TopicsResponse]: same `{topics, paginator}` envelope as a
      * forum's topic list, just without the `forum` object (which that DTO doesn't map
@@ -843,7 +847,7 @@ class RavelryApiClient(
                 header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
                 url.parameters.apply {
                     append("status", "posting")
-                    append("sort", "replied_")
+                    append("sort", "replied")
                     append("page", page.toString())
                     append("page_size", pageSize.toString())
                 }

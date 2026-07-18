@@ -92,6 +92,16 @@ Ravelry sort params are **ascending by default. A trailing `_` reverses to desce
 
 Confirmed live in `getProjects()`: `url.parameters.append("sort", "created_")`. When you add any sorted list, decide the direction explicitly and append the `_` if you want descending. (See also the reference_ravelry_sort_convention memory note.)
 
+**THE INVERSION: check what the sort FIELD measures before appending `_`.** The
+ascending-default rule is consistent, but some endpoints sort on a "time since X" field
+rather than a date — there, ascending IS newest-first and appending `_` buries recent
+items. Confirmed live in `getMyTopics()` (`/forums/filtered_topics.json`): its `replied`
+field is documented as "time since the latest reply", so the bare `sort=replied` gives
+newest-activity-first and `replied_` returned years-old topics first on a real account.
+The bug is invisible to page-1-only spot checks when the caller re-sorts within the page
+(FeedRepository does) — verify direction by looking at WHICH topics come back, not the
+order they're displayed in.
+
 ## The 6-step recipe (normal authenticated JSON endpoint)
 
 1. **Model** — a public `@Serializable data class` in `feed/models/` (or the relevant feature package). Use `@SerialName("snake_case")` for every wire field that isn't already camelCase-identical. Give defaults so absent keys don't throw.
