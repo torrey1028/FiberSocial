@@ -106,6 +106,7 @@ import com.myhobbyislearning.fibersocial.debug.DebugPanel
 import com.myhobbyislearning.fibersocial.events.EventDetailScreen
 import com.myhobbyislearning.fibersocial.events.EventsScreen
 import com.myhobbyislearning.fibersocial.events.EventsState
+import com.myhobbyislearning.fibersocial.events.NewEventScreen
 import com.myhobbyislearning.fibersocial.feed.models.FeedItem
 import com.myhobbyislearning.fibersocial.feed.models.Group
 import com.myhobbyislearning.fibersocial.feed.models.Post
@@ -383,6 +384,7 @@ fun FeedScreen(
     var selectedTopic by remember { mutableStateOf<FeedItem?>(null) }
     var selectedEventPermalink by remember { mutableStateOf<String?>(null) }
     var eventsGroup by remember { mutableStateOf<Group?>(null) }
+    var composingEventGroup by remember { mutableStateOf<Group?>(null) }
     var showSettings by rememberSaveable { mutableStateOf(false) }
     // Declared here (not at the feed chrome below) so the Settings block above can open it (#207).
     var showDebugPanel by remember { mutableStateOf(false) }
@@ -403,11 +405,13 @@ fun FeedScreen(
             showAbout = false
             eventsGroup = null
             composingTopic = false
+            composingEventGroup = null
             sendingFeedback = false
             // This path closes both composers without going through their onBack
             // handlers, so their attachment flows must be reset here too.
             viewModel.replyImage.reset()
             viewModel.newTopicImage.reset()
+            viewModel.newEvent.reset()
             viewModel.projectPicker.dismiss()
             viewModel.projectPage.dismiss()
             viewModel.userProfile.dismiss()
@@ -710,6 +714,34 @@ fun FeedScreen(
         return
     }
 
+    if (composingEventGroup != null) {
+        // Captured once for the same reason as `topic`/`permalink` above.
+        val group = composingEventGroup!!
+        val newEventState by viewModel.newEvent.state.collectAsState()
+        val newEventStates by viewModel.newEvent.states.collectAsState()
+        NewEventScreen(
+            group = group,
+            state = newEventState,
+            statesForCountry = newEventStates,
+            onBack = {
+                composingEventGroup = null
+                viewModel.newEvent.reset()
+            },
+            onCountrySelected = { countryId -> viewModel.newEvent.loadStates(countryId) },
+            onCreate = { input -> viewModel.newEvent.create(input) },
+            onCreated = { permalink ->
+                composingEventGroup = null
+                viewModel.newEvent.reset()
+                // Land the moderator inside their new event, and refresh the events
+                // list so it shows up once they navigate back.
+                viewModel.eventDetail.load(permalink)
+                selectedEventPermalink = permalink
+                viewModel.events.load(groups)
+            },
+        )
+        return
+    }
+
     if (eventsGroup != null) {
         EventsScreen(
             state = eventsState,
@@ -720,6 +752,11 @@ fun FeedScreen(
                 selectedEventPermalink = groupEvent.event.permalink
             },
             onRefresh = { viewModel.events.load(groups) },
+            onAddEvent = {
+                val group = eventsGroup!!
+                composingEventGroup = group
+                viewModel.newEvent.loadForm(group.id)
+            },
         )
         return
     }

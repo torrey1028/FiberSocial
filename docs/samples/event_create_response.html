@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<!-- Trimmed capture of the HTTP 200 response to POST www.ravelry.com/events (2026-07-14,
+     from a browser HAR of the real "Add Event" flow) — a successful creation renders the
+     follow-up "choose a venue" step inline rather than redirecting. Page chrome removed;
+     the notable structure is kept verbatim:
+       - TWO nested <form id="edit_event_{id}" action="/events/{permalink}"> elements
+         (invalid HTML that browsers flatten on submit): a wrapper carrying the hidden
+         step=venue field around the venue-fields form, each with its own hidden
+         _method=put + authenticity_token pair (identical values)
+       - the venue fields: event[venue_name], event[country_id], event[state_id]
+         (pre-selected from the creation submission), event[city] (pre-filled), and
+         event[address]
+     Redactions: the authenticity_token value replaced with an obvious fake; the
+     country/state <select>s trimmed from Ravelry's full lists to a few options.
+     The real venue submission this form produces (same HAR) POSTs to the action with
+     _method=put, authenticity_token, step=venue, and the event[...] fields, and success
+     is a 302 back to the event page. -->
+<html>
+<head><title>Ravelry</title></head>
+<body>
+<form action="/events/another-test-event" class="medium_form" id="edit_event_71975" method="post"><div style="margin:0;padding:0;display:inline"><input name="_method" type="hidden" value="put" /><input name="authenticity_token" type="hidden" value="FAKE_TOKEN_abc123==" /></div>
+<input id="step" name="step" type="hidden" value="venue" />
+<h1>
+Another Test event!
+</h1>
+<h2>check for duplicates</h2>
+<p>Other events that are occurring around the same time</p>
+<table class="grid">
+<tbody><tr><td>Test Event</td><td>July 18, 2026</td></tr></tbody>
+</table>
+<h2>choose a venue</h2>
+<p>We don't have any venues listed in <strong>Redmond, Washington</strong></p>
+<p>Please create a new venue by filling out the form below:</p>
+<form action="/events/another-test-event" class="edit_event" id="edit_event_71975" method="post"><div style="margin:0;padding:0;display:inline"><input name="_method" type="hidden" value="put" /><input name="authenticity_token" type="hidden" value="FAKE_TOKEN_abc123==" /></div>
+<fieldset>
+<div class="field">
+<label>Name of Venue</label>
+<input id="event_venue_name" name="event[venue_name]" size="30" type="text" />
+</div>
+</fieldset>
+<fieldset>
+<div class="field event_form__field event_form__field--in_person">
+<label>Country</label>
+<select id="event_country_id" name="event[country_id]"><option value=""></option>
+<option value="13">Australia</option>
+<option value="39">Canada</option>
+<option value="229" selected="selected">United States</option></select>
+</div>
+<div class="field event_form__field event_form__field--in_person" id="state_options" style="">
+<label>State/Region</label>
+<div class="form_select">
+<select id="event_state_id" name="event[state_id]"><option value=""></option>
+<option value="3654">Alaska</option>
+<option value="3651" selected="selected">Washington</option></select>
+</div>
+</div>
+<div class="field event_form__field event_form__field--in_person">
+<label>City</label>
+<input id="event_city" name="event[city]" size="30" type="text" value="Redmond" />
+</div>
+<div class="field">
+<label>Street Address</label>
+<input id="event_address" name="event[address]" size="30" type="text" />
+</div>
+</fieldset>
+<fieldset>
+<div class="field buttons">
+<button class="clicker_v2 clicker_v2--standard " type="submit">Save and add this event</button>
+</div>
+</fieldset>
+</form>
+</form>
+</body>
+</html>
