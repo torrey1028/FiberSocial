@@ -5,6 +5,7 @@ package com.myhobbyislearning.fibersocial.feed
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.backhandler.BackHandler
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
@@ -16,7 +17,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -32,6 +35,8 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
@@ -82,6 +87,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
@@ -93,12 +99,15 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import com.myhobbyislearning.fibersocial.about.AboutScreen
@@ -381,6 +390,12 @@ fun FeedScreen(
     // group — it's a standing preference the user sets once and expects to carry across
     // group switches, not a per-group default that resets to "show all" each time.
     var showUnreadOnly by remember { mutableStateOf(false) }
+    // Collapsed state of the pinned-topics section. Hoisted here (not owned by FeedList)
+    // for the same reason as feedListState: FeedList is removed from composition while a
+    // topic is open, so state owned by it would reset on return. Like showUnreadOnly it
+    // deliberately carries across group switches — folding the pinned section away is a
+    // standing "I don't need these" preference, not a per-group choice.
+    var pinnedCollapsed by remember { mutableStateOf(false) }
     var selectedTopic by remember { mutableStateOf<FeedItem?>(null) }
     var selectedEventPermalink by remember { mutableStateOf<String?>(null) }
     var eventsGroup by remember { mutableStateOf<Group?>(null) }
@@ -887,6 +902,8 @@ fun FeedScreen(
                             loadingMore = s.loadingMore,
                             onLoadMore = { viewModel.feed.loadMore() },
                             listState = feedListState,
+                            pinnedCollapsed = pinnedCollapsed,
+                            onTogglePinnedCollapsed = { pinnedCollapsed = !pinnedCollapsed },
                             onTopicClick = { topic ->
                                 // Reset on open as well as on back, so this topic's reply
                                 // composer starts from a clean attachment flow no matter how
@@ -931,6 +948,8 @@ fun FeedScreen(
                             loadingMore = s.stale.loadingMore,
                             onLoadMore = { viewModel.feed.loadMore() },
                             listState = feedListState,
+                            pinnedCollapsed = pinnedCollapsed,
+                            onTogglePinnedCollapsed = { pinnedCollapsed = !pinnedCollapsed },
                             onTopicClick = { topic ->
                                 // Reset on open as well as on back, so this topic's reply
                                 // composer starts from a clean attachment flow no matter how
@@ -1641,6 +1660,8 @@ internal fun FeedList(
     onLoadMore: () -> Unit,
     modifier: Modifier = Modifier,
     listState: LazyListState = rememberLazyListState(),
+    pinnedCollapsed: Boolean = false,
+    onTogglePinnedCollapsed: () -> Unit = {},
     onTopicClick: (FeedItem) -> Unit,
 ) {
     // Fires onLoadMore once the user has scrolled within LOAD_MORE_THRESHOLD items of the
@@ -1656,17 +1677,62 @@ internal fun FeedList(
         if (shouldLoadMore && hasMore && !loadingMore) onLoadMore()
     }
 
+    // Sticky topics are already sorted first within the flat list (FeedRepository), but
+    // partition rather than split at the first non-sticky index so a sticky item is never
+    // stranded outside the section if the ordering assumption ever changes upstream.
+    val (pinnedItems, regularItems) = items.partition { it.sticky }
+
     LazyColumn(
         state = listState,
         modifier = modifier.fillMaxSize(),
         contentPadding = PaddingValues(vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        items(items, key = { it.id }) { item ->
+        if (pinnedItems.isNotEmpty()) {
+            item(key = "pinned-header") {
+                PinnedSectionHeader(
+                    count = pinnedItems.size,
+                    unreadCount = pinnedItems.sumOf { it.unreadCount },
+                    collapsed = pinnedCollapsed,
+                    onToggle = onTogglePinnedCollapsed,
+                    modifier = Modifier.animateItem().padding(horizontal = 16.dp),
+                )
+            }
+            if (!pinnedCollapsed) {
+                items(pinnedItems, key = { it.id }) { item ->
+                    // Indented past the regular cards, with an accent rail in the
+                    // header's tint attaching them to it, so the open section reads
+                    // as "these belong to the header above" rather than more feed.
+                    // animateItem() makes the fold visible motion (fade + the list
+                    // resettling) instead of an instant layout jump.
+                    Row(
+                        modifier = Modifier
+                            .animateItem()
+                            .padding(start = 20.dp, end = 16.dp)
+                            .height(IntrinsicSize.Min),
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .width(3.dp)
+                                .fillMaxHeight()
+                                .clip(RoundedCornerShape(2.dp))
+                                .background(MaterialTheme.colorScheme.secondaryContainer),
+                        )
+                        Spacer(modifier = Modifier.width(9.dp))
+                        TopicCard(
+                            item = item,
+                            onClick = { onTopicClick(item) },
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                }
+            }
+        }
+        items(regularItems, key = { it.id }) { item ->
             TopicCard(
                 item = item,
                 onClick = { onTopicClick(item) },
-                modifier = Modifier.padding(horizontal = 16.dp),
+                modifier = Modifier.animateItem().padding(horizontal = 16.dp),
             )
         }
         if (items.isNotEmpty()) {
@@ -1676,6 +1742,82 @@ internal fun FeedList(
         }
     }
 }
+
+/**
+ * Header row above the pinned (sticky) topics in the feed. Tapping anywhere on it folds
+ * the section closed or back open — the chevron only mirrors the state. Only rendered
+ * when the feed actually has pinned topics, so a collapsed-but-empty section can't leave
+ * a dangling header behind.
+ *
+ * While folded, the header carries the section's total unread count (summed over the
+ * hidden cards' [FeedItem.unreadCount]) so collapsing can't silently swallow new
+ * replies. Expanded it stays quiet — each visible card already wears its own "N new"
+ * badge, and doubling that up on the header would just be noise.
+ */
+@Composable
+private fun PinnedSectionHeader(
+    count: Int,
+    unreadCount: Int,
+    collapsed: Boolean,
+    onToggle: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    // A filled tonal band, deliberately unlike the elevated surface-colored TopicCards
+    // around it, so the row reads as a section control and not as just another post.
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.secondaryContainer)
+            .clickable(role = Role.Button, onClick = onToggle)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+    ) {
+        Text(
+            text = if (count == 1) "📌 1 pinned topic" else "📌 $count pinned topics",
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSecondaryContainer,
+        )
+        if (collapsed && unreadCount > 0) {
+            Spacer(modifier = Modifier.width(8.dp))
+            // Bold like TopicCard's per-topic unread badge, so the folded header
+            // reads as the sum of the badges it's hiding.
+            Text(
+                text = "$unreadCount new",
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
+        Spacer(modifier = Modifier.weight(1f))
+        // Disclosure-style chevron: points right while folded, rotates to point down
+        // while open — the folder/accordion convention, less ambiguous than up/down
+        // arrows ("is down the state or the action?"). The rotation is animated so a
+        // tap visibly turns the chevron rather than swapping it.
+        val chevronRotation by animateFloatAsState(
+            pinnedChevronRotation(collapsed, LocalLayoutDirection.current),
+        )
+        Icon(
+            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+            contentDescription = if (collapsed) "Expand pinned topics" else "Collapse pinned topics",
+            tint = MaterialTheme.colorScheme.onSecondaryContainer,
+            modifier = Modifier.rotate(chevronRotation),
+        )
+    }
+}
+
+/**
+ * Rotation (clockwise degrees) for [PinnedSectionHeader]'s chevron.
+ *
+ * `Icons.AutoMirrored.Filled.KeyboardArrowRight` flips horizontally in RTL layouts (it
+ * points left while folded there, matching every other directional icon in this app), but
+ * [androidx.compose.ui.Modifier.rotate] always turns clockwise in screen space regardless
+ * of layout direction. A fixed +90° would rotate the already-mirrored (left-pointing) icon
+ * up instead of down once expanded, so the sign flips for RTL to keep "expanded" pointing
+ * down in both directions.
+ */
+internal fun pinnedChevronRotation(collapsed: Boolean, layoutDirection: LayoutDirection): Float =
+    if (collapsed) 0f else if (layoutDirection == LayoutDirection.Rtl) -90f else 90f
 
 /**
  * Trailing row below the last topic card: a spinner while [loadingMore] fetches the next
