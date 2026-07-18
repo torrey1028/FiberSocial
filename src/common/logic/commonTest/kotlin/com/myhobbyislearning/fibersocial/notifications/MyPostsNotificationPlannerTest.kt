@@ -165,4 +165,11 @@ class MyPostsNotificationContentTest {
     fun `title is the topic title`() {
         assertEquals("Cast-on question", MyPostsNotificationContent.replyTitle(notification(1)))
     }
+
+    @Test
+    fun `summary text handles singular and plural on both axes`() {
+        assertEquals("1 new reply in 1 topic", MyPostsNotificationContent.summaryText(1, 1))
+        assertEquals("5 new replies in 1 topic", MyPostsNotificationContent.summaryText(5, 1))
+        assertEquals("9 new replies in 4 topics", MyPostsNotificationContent.summaryText(9, 4))
+    }
 }

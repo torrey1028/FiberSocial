@@ -82,6 +82,10 @@ class IosEventNotifier(
             setBody(MyPostsNotificationContent.replyText(notification))
             setSound(UNNotificationSound.defaultSound)
             setUserInfo(mapOf(NOTIFICATION_OPEN_MY_POSTS_KEY to true))
+            // Coalesces all reply notifications into one Notification Center stack —
+            // iOS's own grouping, so no explicit summary notification is needed here
+            // (unlike Android's group-summary pattern).
+            setThreadIdentifier("my-posts-replies")
         }
         val request = UNNotificationRequest.requestWithIdentifier(
             "topic-replies/${notification.topicId}",

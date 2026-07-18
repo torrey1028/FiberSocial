@@ -130,4 +130,14 @@ object MyPostsNotificationContent {
             "$replies in ${notification.groupName}"
         }
     }
+
+    /**
+     * Line for the stack's summary notification, totalled across every reply
+     * notification currently showing (not just the latest sync's batch).
+     */
+    fun summaryText(totalReplies: Int, topicCount: Int): String {
+        val replies = if (totalReplies == 1) "1 new reply" else "$totalReplies new replies"
+        val topics = if (topicCount == 1) "1 topic" else "$topicCount topics"
+        return "$replies in $topics"
+    }
 }
