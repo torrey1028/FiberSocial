@@ -5,6 +5,7 @@ package com.myhobbyislearning.fibersocial.feed
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.backhandler.BackHandler
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
@@ -16,7 +17,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -32,14 +35,14 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.materialIcon
@@ -84,6 +87,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
@@ -1652,16 +1656,36 @@ internal fun FeedList(
                     unreadCount = pinnedItems.sumOf { it.unreadCount },
                     collapsed = pinnedCollapsed,
                     onToggle = onTogglePinnedCollapsed,
-                    modifier = Modifier.padding(horizontal = 16.dp),
+                    modifier = Modifier.animateItem().padding(horizontal = 16.dp),
                 )
             }
             if (!pinnedCollapsed) {
                 items(pinnedItems, key = { it.id }) { item ->
-                    TopicCard(
-                        item = item,
-                        onClick = { onTopicClick(item) },
-                        modifier = Modifier.padding(horizontal = 16.dp),
-                    )
+                    // Indented past the regular cards, with an accent rail in the
+                    // header's tint attaching them to it, so the open section reads
+                    // as "these belong to the header above" rather than more feed.
+                    // animateItem() makes the fold visible motion (fade + the list
+                    // resettling) instead of an instant layout jump.
+                    Row(
+                        modifier = Modifier
+                            .animateItem()
+                            .padding(start = 20.dp, end = 16.dp)
+                            .height(IntrinsicSize.Min),
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .width(3.dp)
+                                .fillMaxHeight()
+                                .clip(RoundedCornerShape(2.dp))
+                                .background(MaterialTheme.colorScheme.secondaryContainer),
+                        )
+                        Spacer(modifier = Modifier.width(9.dp))
+                        TopicCard(
+                            item = item,
+                            onClick = { onTopicClick(item) },
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
                 }
             }
         }
@@ -1669,7 +1693,7 @@ internal fun FeedList(
             TopicCard(
                 item = item,
                 onClick = { onTopicClick(item) },
-                modifier = Modifier.padding(horizontal = 16.dp),
+                modifier = Modifier.animateItem().padding(horizontal = 16.dp),
             )
         }
         if (items.isNotEmpty()) {
@@ -1699,22 +1723,25 @@ private fun PinnedSectionHeader(
     onToggle: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // A filled tonal band, deliberately unlike the elevated surface-colored TopicCards
+    // around it, so the row reads as a section control and not as just another post.
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.secondaryContainer)
             .clickable(role = Role.Button, onClick = onToggle)
-            .padding(horizontal = 4.dp, vertical = 6.dp),
+            .padding(horizontal = 12.dp, vertical = 10.dp),
     ) {
         Text(
             text = if (count == 1) "📌 1 pinned topic" else "📌 $count pinned topics",
             style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.primary,
+            color = MaterialTheme.colorScheme.onSecondaryContainer,
         )
         if (collapsed && unreadCount > 0) {
             Spacer(modifier = Modifier.width(8.dp))
-            // Same styling as TopicCard's per-topic unread badge, so the folded header
+            // Bold like TopicCard's per-topic unread badge, so the folded header
             // reads as the sum of the badges it's hiding.
             Text(
                 text = "$unreadCount new",
@@ -1724,10 +1751,16 @@ private fun PinnedSectionHeader(
             )
         }
         Spacer(modifier = Modifier.weight(1f))
+        // Disclosure-style chevron: points right while folded, rotates to point down
+        // while open — the folder/accordion convention, less ambiguous than up/down
+        // arrows ("is down the state or the action?"). The rotation is animated so a
+        // tap visibly turns the chevron rather than swapping it.
+        val chevronRotation by animateFloatAsState(if (collapsed) 0f else 90f)
         Icon(
-            imageVector = if (collapsed) Icons.Default.KeyboardArrowDown else Icons.Default.KeyboardArrowUp,
+            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
             contentDescription = if (collapsed) "Expand pinned topics" else "Collapse pinned topics",
-            tint = MaterialTheme.colorScheme.primary,
+            tint = MaterialTheme.colorScheme.onSecondaryContainer,
+            modifier = Modifier.rotate(chevronRotation),
         )
     }
 }

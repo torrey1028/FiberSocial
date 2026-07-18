@@ -6,10 +6,13 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasScrollToNodeAction
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToNode
 import com.myhobbyislearning.fibersocial.feed.models.FeedItem
 import com.myhobbyislearning.fibersocial.feed.models.RavelryUser
 import org.junit.Rule
@@ -71,6 +74,10 @@ class FeedPinnedSectionTest {
         compose.onNodeWithText("📌 2 pinned topics").assertIsDisplayed()
         compose.onNodeWithText("Group rules").assertIsDisplayed()
         compose.onNodeWithText("KAL sign-ups").assertIsDisplayed()
+        // The tonal header + indented pinned rows are tall enough to push the regular
+        // topic below the test viewport — scroll it into view before asserting.
+        compose.onNode(hasScrollToNodeAction())
+            .performScrollToNode(hasText("Show us your WIPs"))
         compose.onNodeWithText("Show us your WIPs").assertIsDisplayed()
     }
 
