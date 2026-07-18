@@ -429,7 +429,7 @@ class FeedRepositoryTest {
     }
 
     @Test
-    fun `getMyPostsPage sorts by recency only, ignoring sticky`() = runTest {
+    fun `getMyPostsPage sorts by recency only and ignores sticky`() = runTest {
         // Sticky means "pinned in its own forum" — meaningless across groups, so a
         // sticky topic with older activity must NOT jump ahead of a newer plain one.
         val repo = repoWithRoute { path ->
@@ -461,5 +461,42 @@ class FeedRepositoryTest {
             }
         }
         assertTrue(repo.getMyPostsPage(twoGroups, page = 1).hasMore)
+    }
+
+    @Test
+    fun `getMyPostsPage skips a topic whose detail fetch 403s rather than failing the whole page`() = runTest {
+        // A topic posted in a group the user has since left can 403 on its own detail
+        // fetch (the forum itself is off-limits) even though the list entry that named
+        // it came back fine. awaitAll's fail-fast/cancel-siblings behavior means an
+        // unguarded fetch here would blank the whole cross-group page over one topic —
+        // this is what actually makes "keep unattributed rather than dropped" (see the
+        // test above) true when the topic isn't just unattributed but inaccessible.
+        val engine = io.ktor.client.engine.mock.MockEngine { request ->
+            when {
+                request.url.encodedPath.contains("filtered_topics") -> respond(
+                    content = """{"topics":[
+                        {"id":100,"title":"Topic 100","forum_id":42},
+                        {"id":200,"title":"Topic 200","forum_id":999}
+                    ]}""",
+                    status = HttpStatusCode.OK,
+                    headers = headersOf("Content-Type", ContentType.Application.Json.toString()),
+                )
+                request.url.encodedPath.contains("/topics/100") -> respond(
+                    content = topicDetailJson(100L),
+                    status = HttpStatusCode.OK,
+                    headers = headersOf("Content-Type", ContentType.Application.Json.toString()),
+                )
+                request.url.encodedPath.contains("/topics/200") -> respond("", HttpStatusCode.Forbidden)
+                else -> error("Unexpected: ${request.url}")
+            }
+        }
+        val client = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val repo = FeedRepository(RavelryApiClient(client, FakeFeedTokenStorage()))
+
+        val page = repo.getMyPostsPage(twoGroups, page = 1)
+
+        assertEquals(listOf(100L), page.items.map { it.id })
     }
 }
