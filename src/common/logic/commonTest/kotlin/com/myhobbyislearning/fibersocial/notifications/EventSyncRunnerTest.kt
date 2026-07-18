@@ -141,8 +141,16 @@ class EventSyncRunnerTest {
     @Test
     fun `sync propagates a network failure without saving partial state`() = runTest {
         val engine = MockEngine { request ->
-            if (request.url.encodedPath.contains("current_user")) {
+            val path = request.url.encodedPath
+            if (path.contains("current_user")) {
                 throw RuntimeException("network unreachable")
+            }
+            // getMyTopics() runs concurrently with the current_user fetch (both are
+            // async'd in sync()) — give it a well-formed response so this test
+            // deterministically exercises only the intended current_user failure,
+            // not an incidental JSON-parse failure racing it.
+            if (path.contains("filtered_topics")) {
+                return@MockEngine respond("""{"topics":[]}""", HttpStatusCode.OK, headersOf("Content-Type", ContentType.Application.Json.toString()))
             }
             respond("<div class=\"event_list\"></div>", HttpStatusCode.OK, headersOf("Content-Type", ContentType.Text.Html.toString()))
         }

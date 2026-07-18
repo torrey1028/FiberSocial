@@ -494,7 +494,12 @@ fun FeedScreen(
             viewModel.projectPicker.dismiss()
             viewModel.projectPage.dismiss()
             viewModel.userProfile.dismiss()
-            viewModel.feed.selectMyPosts()
+            // selectMyPosts() no-ops if My Posts is already the active view (it's a
+            // "switch to" call, not a "load" call) — which would otherwise strand a
+            // second notification tap showing stale content, since that's exactly the
+            // case a reply notification arrives in. Refresh instead so the tap that
+            // reported new replies actually pulls them in.
+            if (loaded?.myPosts == true) viewModel.feed.refresh() else viewModel.feed.selectMyPosts()
             onDeepLinkMyPostsConsumed()
         }
     }

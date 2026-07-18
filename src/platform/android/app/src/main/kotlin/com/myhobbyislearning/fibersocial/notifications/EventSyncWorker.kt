@@ -26,9 +26,9 @@ import kotlin.time.Clock
 import kotlinx.datetime.TimeZone
 
 /**
- * Periodic background sync for event notifications: scrapes the user's groups and
- * saved events, then applies the [EventSyncRunner]'s plan — posts "new event"
- * notifications and (re)schedules reminder alarms.
+ * Periodic background sync for event and reply notifications: scrapes the user's groups
+ * and saved events, then applies the [EventSyncRunner]'s plan — posts "new event" and
+ * "new reply" notifications and (re)schedules reminder alarms.
  */
 class EventSyncWorker(
     context: Context,
