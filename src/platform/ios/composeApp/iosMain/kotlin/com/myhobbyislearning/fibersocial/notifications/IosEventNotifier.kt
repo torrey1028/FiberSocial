@@ -21,6 +21,9 @@ import platform.UserNotifications.UNUserNotificationCenter
 /** userInfo key carrying an event permalink; the tap handler deep-links to its detail. */
 const val NOTIFICATION_EVENT_PERMALINK_KEY = "event_permalink"
 
+/** userInfo key (presence = true): the tap handler opens the My Posts feed. */
+const val NOTIFICATION_OPEN_MY_POSTS_KEY = "open_my_posts"
+
 /**
  * Posts the two kinds of event notifications via `UNUserNotificationCenter` — the iOS
  * counterpart of Android's `EventNotifier` + `ReminderScheduler` in one: on iOS a
@@ -64,6 +67,29 @@ class IosEventNotifier(
         )
         center.addNotificationRequest(request) { error ->
             error?.let { println("FiberSocial: showNewEvent(${notification.eventPermalink}) failed: ${it.localizedDescription}") }
+        }
+    }
+
+    /**
+     * Announces new replies in a topic the user posted in (posts immediately). The
+     * identifier is per-topic, so a later batch for the same topic replaces the earlier
+     * banner (with a fresh count) while different topics stack — mirroring Android's
+     * per-topic tag.
+     */
+    fun showNewReplies(notification: NewReplyNotification) {
+        val content = UNMutableNotificationContent().apply {
+            setTitle(MyPostsNotificationContent.replyTitle(notification))
+            setBody(MyPostsNotificationContent.replyText(notification))
+            setSound(UNNotificationSound.defaultSound)
+            setUserInfo(mapOf(NOTIFICATION_OPEN_MY_POSTS_KEY to true))
+        }
+        val request = UNNotificationRequest.requestWithIdentifier(
+            "topic-replies/${notification.topicId}",
+            content = content,
+            trigger = null, // deliver now
+        )
+        center.addNotificationRequest(request) { error ->
+            error?.let { println("FiberSocial: showNewReplies(${notification.topicId}) failed: ${it.localizedDescription}") }
         }
     }
 

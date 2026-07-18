@@ -36,6 +36,12 @@ class EventSyncRunner(
      */
     suspend fun sync(now: Instant, timeZone: TimeZone): SyncPlan = coroutineScope {
         val savedDeferred = async { savedEventsWithTimes() }
+        // The My Posts leg: one page of the topics the user has posted in, for reply
+        // notifications (page 1 is sorted newest-activity-first, so anything with new
+        // replies since the last sync is on it).
+        val myTopicsDeferred = async {
+            scrapeConcurrency.withPermit { apiClient.getMyTopics().topics }
+        }
 
         val user = apiClient.getCurrentUser()
         val groups = apiClient.getUserGroups(user.username)
@@ -51,18 +57,30 @@ class EventSyncRunner(
             .flatten()
             .distinctBy { it.event.permalink }
 
-        val plan = EventNotificationPlanner.plan(
-            state = stateStore.load(),
+        val state = stateStore.load()
+        val eventPlan = EventNotificationPlanner.plan(
+            state = state,
             upcoming = upcoming,
             saved = savedDeferred.await(),
             now = now,
             timeZone = timeZone,
         )
+        val myPostsPlan = MyPostsNotificationPlanner.plan(
+            knownTopics = state?.knownTopics,
+            myTopics = myTopicsDeferred.await(),
+            groupNamesByForumId = groups.associateBy({ it.forumId }, { it.name }),
+            nowMs = now.toEpochMilliseconds(),
+        )
+        val plan = eventPlan.copy(
+            newReplyNotifications = myPostsPlan.notifications,
+            newState = eventPlan.newState.copy(knownTopics = myPostsPlan.newKnownTopics),
+        )
         stateStore.save(plan.newState)
         println(
             "FiberSocial: EventSyncRunner -> ${plan.newEventNotifications.size} new events, " +
                 "${plan.remindersToSchedule.size} reminders to schedule, " +
-                "${plan.remindersToCancel.size} to cancel",
+                "${plan.remindersToCancel.size} to cancel, " +
+                "${plan.newReplyNotifications.size} topics with new replies",
         )
         plan
     }

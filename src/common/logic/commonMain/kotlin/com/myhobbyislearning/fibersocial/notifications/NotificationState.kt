@@ -6,7 +6,7 @@ import kotlin.time.Duration.Companion.minutes
 import kotlinx.serialization.Serializable
 
 /**
- * Persistent state of the event-notification system, updated by each sync cycle.
+ * Persistent state of the notification system, updated by each sync cycle.
  *
  * @property knownEvents Event permalinks already seen in group scrapes, mapped to the
  *   epoch-millis they were last seen (refreshed by every sync that sees them; events
@@ -15,11 +15,15 @@ import kotlinx.serialization.Serializable
  * @property scheduledReminders Reminders currently scheduled with the platform's alarm
  *   system. Kept so a sync can compute which alarms to cancel or reschedule when an
  *   event's time changes or an RSVP is withdrawn.
+ * @property knownTopics Per-topic activity for topics the user has posted in, keyed by
+ *   topic id ([MyPostsNotificationPlanner]). Defaulted so state persisted before this
+ *   field existed still deserializes.
  */
 @Serializable
 data class NotificationState(
     val knownEvents: Map<String, Long> = emptyMap(),
     val scheduledReminders: List<ScheduledReminder> = emptyList(),
+    val knownTopics: Map<Long, KnownTopicActivity> = emptyMap(),
 )
 
 /**

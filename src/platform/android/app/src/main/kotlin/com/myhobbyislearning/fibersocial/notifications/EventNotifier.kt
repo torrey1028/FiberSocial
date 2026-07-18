@@ -15,8 +15,12 @@ import com.myhobbyislearning.fibersocial.R
 /** Intent extra carrying an event permalink; MainActivity deep-links to its detail. */
 const val EXTRA_EVENT_PERMALINK = "event_permalink"
 
+/** Intent extra: a tapped reply notification opens the cross-group My Posts feed. */
+const val EXTRA_OPEN_MY_POSTS = "open_my_posts"
+
 private const val CHANNEL_REMINDERS = "event_reminders"
 private const val CHANNEL_NEW_EVENTS = "new_events"
+private const val CHANNEL_MY_POSTS = "my_posts_replies"
 
 /**
  * Posts the two kinds of event notifications and owns their channels.
@@ -44,6 +48,13 @@ class EventNotifier(private val context: Context) {
                 NotificationManager.IMPORTANCE_DEFAULT,
             ).apply { description = "New events added to your groups" },
         )
+        manager.createNotificationChannel(
+            NotificationChannel(
+                CHANNEL_MY_POSTS,
+                "Replies to your topics",
+                NotificationManager.IMPORTANCE_DEFAULT,
+            ).apply { description = "New replies in topics you've posted in" },
+        )
     }
 
     /** Posts a reminder for an RSVP'd event. */
@@ -66,6 +77,40 @@ class EventNotifier(private val context: Context) {
             text = EventNotificationContent.newEventText(notification.eventTitle, notification.whenText),
             eventPermalink = notification.eventPermalink,
         )
+    }
+
+    /**
+     * Announces new replies in a topic the user posted in. Tag = the topic id, so a
+     * later batch for the same topic replaces the earlier notification (with a fresh
+     * count) while different topics stack. The tap opens the My Posts feed.
+     */
+    fun showNewReplies(notification: NewReplyNotification) {
+        if (!canNotify()) {
+            println("FiberSocial: EventNotifier skipping replies for topic ${notification.topicId} — notifications not permitted")
+            return
+        }
+        val tapIntent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            // One shared data URI is fine here (unlike per-event URIs): every reply
+            // notification deep-links to the same destination, the My Posts feed.
+            data = Uri.parse("fibersocial://my-posts")
+            putExtra(EXTRA_OPEN_MY_POSTS, true)
+        }
+        val id = MyPostsNotificationContent.replyNotificationId(notification.topicId)
+        val pending = PendingIntent.getActivity(
+            context,
+            id,
+            tapIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val built = NotificationCompat.Builder(context, CHANNEL_MY_POSTS)
+            .setSmallIcon(R.drawable.ic_notification_event)
+            .setContentTitle(MyPostsNotificationContent.replyTitle(notification))
+            .setContentText(MyPostsNotificationContent.replyText(notification))
+            .setContentIntent(pending)
+            .setAutoCancel(true)
+            .build()
+        NotificationManagerCompat.from(context).notify("topic-${notification.topicId}", id, built)
     }
 
     private fun post(channel: String, id: Int, title: String, text: String, eventPermalink: String) {

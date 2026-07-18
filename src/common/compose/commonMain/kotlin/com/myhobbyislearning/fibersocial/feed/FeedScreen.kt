@@ -351,6 +351,8 @@ fun FeedScreen(
     onLogout: () -> Unit,
     deepLinkEventPermalink: String? = null,
     onDeepLinkConsumed: () -> Unit = {},
+    deepLinkMyPosts: Boolean = false,
+    onDeepLinkMyPostsConsumed: () -> Unit = {},
     themeMode: ThemeMode? = null,
     onThemeModeSelected: (ThemeMode) -> Unit = {},
     // Platform seams, injected by the host (MainActivity today, an iOS host in #117):
@@ -465,6 +467,35 @@ fun FeedScreen(
     }
     val user = loaded?.user
     val groups = loaded?.groups ?: emptyList()
+
+    // A tapped "new replies" notification lands here: open the cross-group My Posts
+    // feed. Unlike the event deep link above, this must wait for the feed to load —
+    // selectMyPosts() no-ops before FeedState.Loaded, and a cold start from the
+    // notification arrives mid-load — so the effect keys on the loaded flag too and
+    // consumes the link only once it has acted.
+    val feedIsLoaded = state is FeedState.Loaded
+    LaunchedEffect(deepLinkMyPosts, feedIsLoaded) {
+        if (deepLinkMyPosts && feedIsLoaded) {
+            // Same rule as the event deep link: the tap must win over whatever screen
+            // is open, and force-closed composers need their attachment flows reset.
+            selectedTopic = null
+            showSettings = false
+            showAbout = false
+            eventsGroup = null
+            composingTopic = false
+            composingEventGroup = null
+            sendingFeedback = false
+            selectedEventPermalink = null
+            viewModel.replyImage.reset()
+            viewModel.newTopicImage.reset()
+            viewModel.newEvent.reset()
+            viewModel.projectPicker.dismiss()
+            viewModel.projectPage.dismiss()
+            viewModel.userProfile.dismiss()
+            viewModel.feed.selectMyPosts()
+            onDeepLinkMyPostsConsumed()
+        }
+    }
 
     // Scrape events in the background as soon as the groups are known so the drawer's
     // per-group calendar badges are populated by the time it opens. Keyed on group

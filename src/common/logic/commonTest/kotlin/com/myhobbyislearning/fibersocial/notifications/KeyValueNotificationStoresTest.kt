@@ -31,6 +31,29 @@ class KeyValueNotificationStateStoreTest {
         fake.putString("state", "not json")
         assertNull(KeyValueNotificationStateStore(fake).load())
     }
+
+    @Test
+    fun `state persisted before knownTopics existed still loads`() = runTest {
+        // JSON captured from the pre-my-posts schema: no knownTopics key.
+        val fake = FakeKeyValueStore()
+        fake.putString(
+            "state",
+            """{"knownEvents":{"cozy-meetup":123},"scheduledReminders":[]}""",
+        )
+        val state = KeyValueNotificationStateStore(fake).load()
+        assertEquals(mapOf("cozy-meetup" to 123L), state?.knownEvents)
+        assertEquals(emptyMap(), state?.knownTopics)
+    }
+
+    @Test
+    fun `knownTopics round-trips`() = runTest {
+        val store = KeyValueNotificationStateStore(FakeKeyValueStore())
+        val state = NotificationState(
+            knownTopics = mapOf(500L to KnownTopicActivity(postCount = 7, lastSeenMs = 123L)),
+        )
+        store.save(state)
+        assertEquals(state, store.load())
+    }
 }
 
 class KeyValueNotificationSettingsStoreTest {
