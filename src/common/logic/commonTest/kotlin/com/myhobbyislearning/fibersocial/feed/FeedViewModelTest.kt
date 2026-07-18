@@ -974,4 +974,102 @@ class FeedViewModelTest {
             vm.markTopicReadUpTo(999L, readUpTo = 5)
             assertEquals(before, vm.state.value)
         }
+
+    /**
+     * [successRepo] plus a filtered_topics route for the "My Posts" feed. Routed BEFORE
+     * the generic `/forums/` branch — filtered_topics lives under `/forums/` too, so the
+     * order is load-bearing. Each call returns the next page (300 then 301) so loadMore
+     * can be exercised; page 1 of 2 → hasMore.
+     */
+    private fun myPostsRepo(): FeedRepository {
+        var filteredCalls = 0
+        return FeedRepository(routingApiClient { path ->
+            when {
+                path.contains("/current_user") -> CURRENT_USER_JSON
+                path.contains("memberships") -> MEMBERSHIPS_HTML
+                path.contains("/groups/search") -> GROUPS_JSON
+                path.contains("filtered_topics") -> {
+                    filteredCalls++
+                    val id = if (filteredCalls == 1) 300L else 301L
+                    """{"topics":[{"id":$id,"title":"Topic $id","forum_id":42}],
+                        "paginator":{"page":$filteredCalls,"page_count":2,"results":2}}"""
+                }
+                path.contains("/forums/") -> topicsJson(100L)
+                path.contains("/topics/") -> topicDetailJson(
+                    path.split("/topics/")[1].replace(".json", "").toLong(),
+                )
+                else -> error("Unexpected: $path")
+            }
+        })
+    }
+
+    @Test
+    fun `selectMyPosts swaps to the cross-group feed and clears the group selection`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val vm = FeedViewModel(myPostsRepo(), this, FakeGroupOrderStore())
+            vm.load()
+            awaitChildren(coroutineContext[Job]!!)
+
+            vm.selectMyPosts()
+            awaitChildren(coroutineContext[Job]!!)
+
+            val state = assertIs<FeedState.Loaded>(vm.state.value)
+            assertTrue(state.myPosts)
+            assertNull(state.selectedGroup)
+            assertEquals(listOf(300L), state.items.map { it.id })
+            // Attributed to KAL Hub via the list entry's forum_id 42.
+            assertEquals("KAL Hub", state.items.single().groupName)
+            assertTrue(state.hasMore)
+        }
+
+    @Test
+    fun `selectGroup leaves the my-posts view`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = FeedViewModel(myPostsRepo(), this, FakeGroupOrderStore())
+        vm.load()
+        awaitChildren(coroutineContext[Job]!!)
+        vm.selectMyPosts()
+        awaitChildren(coroutineContext[Job]!!)
+
+        vm.selectGroup(group)
+        awaitChildren(coroutineContext[Job]!!)
+
+        val state = assertIs<FeedState.Loaded>(vm.state.value)
+        assertFalse(state.myPosts)
+        assertEquals(group, state.selectedGroup)
+        assertEquals(listOf(100L), state.items.map { it.id })
+    }
+
+    @Test
+    fun `loadMore in the my-posts view appends the next cross-group page`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val vm = FeedViewModel(myPostsRepo(), this, FakeGroupOrderStore())
+            vm.load()
+            awaitChildren(coroutineContext[Job]!!)
+            vm.selectMyPosts()
+            awaitChildren(coroutineContext[Job]!!)
+
+            vm.loadMore()
+            awaitChildren(coroutineContext[Job]!!)
+
+            val state = assertIs<FeedState.Loaded>(vm.state.value)
+            assertTrue(state.myPosts)
+            assertEquals(listOf(300L, 301L), state.items.map { it.id })
+            assertFalse(state.hasMore)
+        }
+
+    @Test
+    fun `refresh keeps the my-posts view`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = FeedViewModel(myPostsRepo(), this, FakeGroupOrderStore())
+        vm.load()
+        awaitChildren(coroutineContext[Job]!!)
+        vm.selectMyPosts()
+        awaitChildren(coroutineContext[Job]!!)
+
+        vm.refresh()
+        awaitChildren(coroutineContext[Job]!!)
+
+        val state = assertIs<FeedState.Loaded>(vm.state.value)
+        assertTrue(state.myPosts)
+        assertNull(state.selectedGroup)
+    }
 }

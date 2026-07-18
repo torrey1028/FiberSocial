@@ -25,8 +25,12 @@ sealed class FeedState {
      * @property user The authenticated Ravelry user.
      * @property groups All groups the user is a member of, in the user's stored display
      *   order (see [GroupOrderStore]); populates the group drawer.
-     * @property selectedGroup The group whose topics are being shown. `null` only when
-     *   the user belongs to no groups — there is no "all groups" view (issue #97).
+     * @property selectedGroup The group whose topics are being shown. `null` when the
+     *   user belongs to no groups — there is no "all groups" view (issue #97) — or when
+     *   [myPosts] is showing (that feed spans all groups, so no single group is selected).
+     * @property myPosts Whether the cross-group "My Posts" feed (topics the user has
+     *   posted in) is being shown instead of a group's topics. Mutually exclusive with a
+     *   non-null [selectedGroup].
      * @property items Feed items for the selected group, sorted newest-reply-first.
      * @property hasMore Whether [selectedGroup] has further pages of topics beyond
      *   [items] (issue #106). Always `false` when [selectedGroup] is `null`.
@@ -42,6 +46,7 @@ sealed class FeedState {
         val hasMore: Boolean = false,
         val loadingMore: Boolean = false,
         val nextPage: Int = 2,
+        val myPosts: Boolean = false,
     ) : FeedState()
 
     /**
@@ -133,10 +138,14 @@ class FeedViewModel(
             try {
                 repository.joinGroup(permalink)
                 // Re-scrape memberships so the just-joined group appears and the button
-                // flips to "Send feedback"; keep whatever group the user was viewing.
-                val selected = (_state.value as? FeedState.Loaded)?.selectedGroup
-                    ?: (_state.value as? FeedState.Refreshing)?.stale?.selectedGroup
-                _state.value = fetchFeed(selectedGroup = selected)
+                // flips to "Send feedback"; keep whatever feed the user was viewing
+                // (their group, or the My Posts view).
+                val viewing = (_state.value as? FeedState.Loaded)
+                    ?: (_state.value as? FeedState.Refreshing)?.stale
+                _state.value = fetchFeed(
+                    selectedGroup = viewing?.selectedGroup,
+                    myPosts = viewing?.myPosts ?: false,
+                )
                 _joinState.value = JoinState.Idle
             } catch (e: SessionExpiredException) {
                 println("FiberSocial: joinSupportGroup session expired")
@@ -163,7 +172,7 @@ class FeedViewModel(
             try {
                 repository.leaveGroup(group.permalink)
                 val newSelection = if (current.selectedGroup?.id == group.id) null else current.selectedGroup
-                _state.value = fetchFeed(selectedGroup = newSelection)
+                _state.value = fetchFeed(selectedGroup = newSelection, myPosts = current.myPosts)
             } catch (e: SessionExpiredException) {
                 println("FiberSocial: leaveGroup session expired")
                 sessionExpirySignal.signal()
@@ -222,7 +231,7 @@ class FeedViewModel(
         scope.launch {
             println("FiberSocial: FeedViewModel.refresh()")
             _state.value = FeedState.Refreshing(current)
-            _state.value = fetchFeed(selectedGroup = current.selectedGroup)
+            _state.value = fetchFeed(selectedGroup = current.selectedGroup, myPosts = current.myPosts)
             println("FiberSocial: FeedViewModel.refresh() -> ${_state.value::class.simpleName}")
         }
     }
@@ -269,6 +278,7 @@ class FeedViewModel(
         _state.value = FeedState.Refreshing(
             current.copy(
                 selectedGroup = group,
+                myPosts = false,
                 items = emptyList(),
                 hasMore = false,
                 loadingMore = false,
@@ -298,6 +308,50 @@ class FeedViewModel(
     }
 
     /**
+     * Shows the cross-group "My Posts" feed — topics the user has posted in, across all
+     * groups (the drawer item above the group list). Mirrors [selectGroup]'s
+     * switch-immediately shape: chrome flips to My Posts on this frame with a loading
+     * content area, then the fetch fills it in. No-ops if the feed is not in
+     * [FeedState.Loaded] or My Posts is already showing.
+     */
+    fun selectMyPosts() {
+        val current = _state.value as? FeedState.Loaded ?: return
+        if (current.myPosts) return
+        println("FiberSocial: FeedViewModel.selectMyPosts()")
+        _state.value = FeedState.Refreshing(
+            current.copy(
+                selectedGroup = null,
+                myPosts = true,
+                items = emptyList(),
+                hasMore = false,
+                loadingMore = false,
+                nextPage = 2,
+            ),
+        )
+        scope.launch {
+            _state.value = try {
+                val page = repository.getMyPostsPage(current.groups, page = 1)
+                println("FiberSocial: selectMyPosts loaded ${page.items.size} items")
+                FeedState.Loaded(
+                    user = current.user,
+                    groups = current.groups,
+                    selectedGroup = null,
+                    myPosts = true,
+                    items = page.items,
+                    hasMore = page.hasMore,
+                )
+            } catch (e: SessionExpiredException) {
+                println("FiberSocial: selectMyPosts session expired")
+                sessionExpirySignal.signal()
+                current
+            } catch (e: Exception) {
+                println("FiberSocial: selectMyPosts error: ${e.message}")
+                current
+            }
+        }
+    }
+
+    /**
      * Fetches the next page of topics for the currently selected group and appends it to
      * [FeedState.Loaded.items] (issue #106 — infinite scroll). No-ops if the feed isn't
      * [FeedState.Loaded], there's no selected group, a fetch is already in flight, or
@@ -306,13 +360,18 @@ class FeedViewModel(
     fun loadMore() {
         val current = _state.value as? FeedState.Loaded ?: return
         if (!current.hasMore || current.loadingMore) return
-        val group = current.selectedGroup ?: return
+        val group = current.selectedGroup
+        if (group == null && !current.myPosts) return
         val loading = current.copy(loadingMore = true)
         _state.value = loading
         scope.launch {
             println("FiberSocial: FeedViewModel.loadMore() page=${current.nextPage}")
             val next = try {
-                val page = repository.getFeedItemsPage(group, page = current.nextPage)
+                val page = if (group != null) {
+                    repository.getFeedItemsPage(group, page = current.nextPage)
+                } else {
+                    repository.getMyPostsPage(current.groups, page = current.nextPage)
+                }
                 println("FiberSocial: loadMore appended ${page.items.size} items, hasMore=${page.hasMore}")
                 loading.copy(
                     items = loading.items + page.items,
@@ -358,9 +417,11 @@ class FeedViewModel(
     /**
      * @param selectedGroup Group to keep showing (a refresh), or `null` to open the
      *   default group — the first in the stored order. A remembered selection survives
-     *   only while the user still belongs to that group.
+     *   only while the user still belongs to that group. Ignored when [myPosts] is set.
+     * @param myPosts Keep showing the cross-group "My Posts" feed instead of a group
+     *   (a refresh while it's selected).
      */
-    private suspend fun fetchFeed(selectedGroup: Group?): FeedState = try {
+    private suspend fun fetchFeed(selectedGroup: Group?, myPosts: Boolean = false): FeedState = try {
         val user = repository.getCurrentUser()
         println("FiberSocial: fetched user=${user.username}")
         val fetched = repository.getUserGroups(user.username)
@@ -371,18 +432,31 @@ class FeedViewModel(
         // issue #97 maintenance rules (joined groups appended, left groups pruned).
         val reconciledIds = groups.map { it.id }
         if (reconciledIds != storedOrder) groupOrderStore.save(reconciledIds)
-        val selected = selectedGroup?.let { s -> groups.firstOrNull { it.id == s.id } }
-            ?: groups.firstOrNull()
-        val page = selected?.let { repository.getFeedItemsPage(it, page = 1) }
-        val items = page?.items ?: emptyList()
-        println("FiberSocial: fetched ${items.size} feed items")
-        FeedState.Loaded(
-            user = user,
-            groups = groups,
-            selectedGroup = selected,
-            items = items,
-            hasMore = page?.hasMore ?: false,
-        )
+        if (myPosts) {
+            val page = repository.getMyPostsPage(groups, page = 1)
+            println("FiberSocial: fetched ${page.items.size} my-posts items")
+            FeedState.Loaded(
+                user = user,
+                groups = groups,
+                selectedGroup = null,
+                myPosts = true,
+                items = page.items,
+                hasMore = page.hasMore,
+            )
+        } else {
+            val selected = selectedGroup?.let { s -> groups.firstOrNull { it.id == s.id } }
+                ?: groups.firstOrNull()
+            val page = selected?.let { repository.getFeedItemsPage(it, page = 1) }
+            val items = page?.items ?: emptyList()
+            println("FiberSocial: fetched ${items.size} feed items")
+            FeedState.Loaded(
+                user = user,
+                groups = groups,
+                selectedGroup = selected,
+                items = items,
+                hasMore = page?.hasMore ?: false,
+            )
+        }
     } catch (e: SessionExpiredException) {
         println("FiberSocial: fetchFeed session expired — navigating to login")
         sessionExpirySignal.signal()

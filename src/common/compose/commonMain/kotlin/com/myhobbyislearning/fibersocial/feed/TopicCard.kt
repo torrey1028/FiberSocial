@@ -28,18 +28,31 @@ import com.myhobbyislearning.fibersocial.ui.Avatar
  * #242), the author-written summary rendered in full (omitted when there is none), the
  * reply count, how many posts are unread (from Ravelry's own read marker), and when it
  * was last active.
+ *
+ * @param showGroupName Label the card with [FeedItem.groupName] — for cross-group lists
+ *   (the "My Posts" feed) where the group isn't implied by the screen. Skipped when the
+ *   name is blank (a topic from a forum outside the user's groups).
  */
 @Composable
 fun TopicCard(
     item: FeedItem,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    showGroupName: Boolean = false,
 ) {
     ElevatedCard(
         onClick = onClick,
         modifier = modifier.fillMaxWidth(),
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
+            if (showGroupName && item.groupName.isNotBlank()) {
+                Text(
+                    text = "in ${item.groupName}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.tertiary,
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+            }
             if (item.sticky) {
                 Text(
                     text = "📌 Pinned",

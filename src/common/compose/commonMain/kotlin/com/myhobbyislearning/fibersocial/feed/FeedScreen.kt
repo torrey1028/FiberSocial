@@ -44,6 +44,7 @@ import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.materialIcon
 import androidx.compose.material.icons.materialPath
@@ -382,7 +383,16 @@ fun FeedScreen(
         is FeedState.Refreshing -> s.stale.selectedGroup?.id
         else -> null
     }
-    val feedListState = key(selectedGroupId) { rememberLazyListState() }
+    // Whether the cross-group "My Posts" feed is showing (drawer item above the groups).
+    // Derived alongside selectedGroupId because the two are the feed's selection identity:
+    // My Posts has a null selectedGroupId, so the list-state key below needs this flag to
+    // tell it apart from the no-groups case and reset scroll on a group ↔ My Posts switch.
+    val showingMyPosts = when (val s = state) {
+        is FeedState.Loaded -> s.myPosts
+        is FeedState.Refreshing -> s.stale.myPosts
+        else -> false
+    }
+    val feedListState = key(if (showingMyPosts) "my-posts" else selectedGroupId) { rememberLazyListState() }
     // "Unread only" filter (issue #210): a purely client-side toggle over the already-
     // loaded feed. Unlike feedListState above, this is intentionally NOT scoped per
     // group — it's a standing preference the user sets once and expects to carry across
@@ -788,7 +798,10 @@ fun FeedScreen(
 
     CloseDrawerOnBack(drawerState)
 
-    val title = loaded?.selectedGroup?.name ?: "FiberSocial"
+    val title = when {
+        showingMyPosts -> "My Posts"
+        else -> loaded?.selectedGroup?.name ?: "FiberSocial"
+    }
     val selectedGroup = loaded?.selectedGroup
 
     ModalNavigationDrawer(
@@ -797,6 +810,11 @@ fun FeedScreen(
             GroupDrawer(
                 groups = groups,
                 selectedGroup = selectedGroup,
+                myPostsSelected = showingMyPosts,
+                onMyPostsSelected = {
+                    scope.launch { drawerState.close() }
+                    viewModel.feed.selectMyPosts()
+                },
                 eventCounts = eventCounts,
                 user = user,
                 isFeedbackGroupMember = groups.any { it.permalink == SupportGroup.PERMALINK },
@@ -902,6 +920,8 @@ fun FeedScreen(
                             listState = feedListState,
                             pinnedCollapsed = pinnedCollapsed,
                             onTogglePinnedCollapsed = { pinnedCollapsed = !pinnedCollapsed },
+                            pinnedSectionEnabled = !showingMyPosts,
+                            showGroupNames = showingMyPosts,
                             onTopicClick = { topic ->
                                 // Reset on open as well as on back, so this topic's reply
                                 // composer starts from a clean attachment flow no matter how
@@ -948,6 +968,8 @@ fun FeedScreen(
                             listState = feedListState,
                             pinnedCollapsed = pinnedCollapsed,
                             onTogglePinnedCollapsed = { pinnedCollapsed = !pinnedCollapsed },
+                            pinnedSectionEnabled = !showingMyPosts,
+                            showGroupNames = showingMyPosts,
                             onTopicClick = { topic ->
                                 // Reset on open as well as on back, so this topic's reply
                                 // composer starts from a clean attachment flow no matter how
@@ -1089,8 +1111,10 @@ internal fun <T> moveItem(list: List<T>, from: Int, to: Int): List<T> =
     if (from == to || from !in list.indices || to !in list.indices) list
     else list.toMutableList().apply { add(to, removeAt(from)) }
 
-// Lazy items before the first group row in the drawer (the "Your Groups" header).
-private const val DRAWER_ITEMS_BEFORE_GROUPS = 1
+// Lazy items before the first group row in the drawer (the "My Posts" entry and the
+// "Your Groups" header). The drag-reorder math offsets lazy-item indices by this to get
+// group-list indices — keep it in sync with the items above `items(localGroups, ...)`.
+private const val DRAWER_ITEMS_BEFORE_GROUPS = 2
 
 /** The classic six-dot drag affordance shown on rows while reordering is active. */
 @Composable
@@ -1191,6 +1215,8 @@ internal fun UnreadFilterEmptyState(
 internal fun GroupDrawer(
     groups: List<Group>,
     selectedGroup: Group?,
+    myPostsSelected: Boolean = false,
+    onMyPostsSelected: () -> Unit = {},
     eventCounts: Map<Long, Int>,
     user: RavelryUser?,
     isFeedbackGroupMember: Boolean = false,
@@ -1349,6 +1375,19 @@ internal fun GroupDrawer(
                     state = listState,
                     modifier = Modifier.fillMaxSize().testTag("GroupList"),
                 ) {
+                    // The cross-group "My Posts" feed entry, above the group list — it
+                    // isn't a group, so it sits outside the "Your Groups" section (and
+                    // outside reorder mode: there's nothing to drag it against).
+                    item(key = "my-posts") {
+                        Spacer(Modifier.height(16.dp))
+                        NavigationDrawerItem(
+                            label = { Text("My Posts") },
+                            selected = myPostsSelected,
+                            onClick = { if (!reorderMode) onMyPostsSelected() },
+                            icon = { Icon(Icons.Default.Person, contentDescription = null) },
+                            modifier = Modifier.padding(horizontal = 12.dp),
+                        )
+                    }
                     item(key = "drawer-header") {
                         Spacer(Modifier.height(16.dp))
                         Row(
@@ -1660,6 +1699,8 @@ internal fun FeedList(
     listState: LazyListState = rememberLazyListState(),
     pinnedCollapsed: Boolean = false,
     onTogglePinnedCollapsed: () -> Unit = {},
+    pinnedSectionEnabled: Boolean = true,
+    showGroupNames: Boolean = false,
     onTopicClick: (FeedItem) -> Unit,
 ) {
     // Fires onLoadMore once the user has scrolled within LOAD_MORE_THRESHOLD items of the
@@ -1678,7 +1719,14 @@ internal fun FeedList(
     // Sticky topics are already sorted first within the flat list (FeedRepository), but
     // partition rather than split at the first non-sticky index so a sticky item is never
     // stranded outside the section if the ordering assumption ever changes upstream.
-    val (pinnedItems, regularItems) = items.partition { it.sticky }
+    // The section is disabled entirely for the cross-group "My Posts" feed: sticky means
+    // "pinned in its own forum", which isn't a meaningful grouping across groups — there
+    // the sticky flag stays a per-card label only.
+    val (pinnedItems, regularItems) = if (pinnedSectionEnabled) {
+        items.partition { it.sticky }
+    } else {
+        emptyList<FeedItem>() to items
+    }
 
     LazyColumn(
         state = listState,
@@ -1730,6 +1778,7 @@ internal fun FeedList(
             TopicCard(
                 item = item,
                 onClick = { onTopicClick(item) },
+                showGroupName = showGroupNames,
                 modifier = Modifier.animateItem().padding(horizontal = 16.dp),
             )
         }

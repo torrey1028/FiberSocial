@@ -60,6 +60,27 @@ class GroupDrawerTest {
     }
 
     @Test
+    fun `my posts row sits above the groups and invokes its callback`() {
+        var myPostsClicks = 0
+        compose.setContent {
+            GroupDrawer(
+                groups = twoGroups,
+                selectedGroup = twoGroups.first(),
+                myPostsSelected = false,
+                onMyPostsSelected = { myPostsClicks++ },
+                eventCounts = emptyMap(),
+                user = user,
+                onGroupSelected = {},
+                onGroupEventsClick = {},
+                onSettingsClick = {},
+            )
+        }
+        compose.onNodeWithText("My Posts").assertIsDisplayed()
+        compose.onNodeWithText("My Posts").performClick()
+        compose.runOnIdle { assertEquals(1, myPostsClicks) }
+    }
+
+    @Test
     fun `find groups row invokes onFindGroups`() {
         var found = 0
         compose.setContent {
