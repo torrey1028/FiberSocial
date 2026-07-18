@@ -100,6 +100,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.Role
@@ -107,6 +108,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import com.myhobbyislearning.fibersocial.about.AboutScreen
@@ -1433,7 +1435,9 @@ internal fun GroupDrawer(
                         // folded, down = open). While open the badge slot holds the
                         // reorder Edit/Done button; folded it shows the hidden group count,
                         // and the pill highlights when the active feed is one of them.
-                        val chevronRotation by animateFloatAsState(if (groupsCollapsed) 0f else 90f)
+                        val chevronRotation by animateFloatAsState(
+                            disclosureChevronRotation(groupsCollapsed, LocalLayoutDirection.current),
+                        )
                         NavigationDrawerItem(
                             label = { Text("Your Groups") },
                             selected = groupsCollapsed && selectedGroup != null,
@@ -1686,8 +1690,8 @@ private fun ProfileFooter(user: RavelryUser?, onClick: () -> Unit) {
  * The feed's floating action buttons: a small calendar button for the selected group's
  * events (issue #179) stacked above the new-topic button. The calendar button needs a
  * group to open events for, so it renders only when [selectedGroup] is non-null; at the
- * FeedScreen call site that is the currently-viewed group, which (since the all-groups
- * view was removed, #97) is present whenever the user belongs to any group.
+ * FeedScreen call site that is the currently-viewed group, which is null both when the
+ * user belongs to no groups and while viewing the cross-group My Posts feed.
  */
 @Composable
 internal fun FeedFabs(
@@ -1779,6 +1783,7 @@ internal fun FeedList(
     // Sticky topics are already sorted first within the flat list (FeedRepository), but
     // partition rather than split at the first non-sticky index so a sticky item is never
     // stranded outside the section if the ordering assumption ever changes upstream.
+    //
     // The section is disabled entirely for the cross-group "My Posts" feed: sticky means
     // "pinned in its own forum", which isn't a meaningful grouping across groups — there
     // the sticky flag stays a per-card label only.
@@ -1901,7 +1906,9 @@ private fun PinnedSectionHeader(
         // while open — the folder/accordion convention, less ambiguous than up/down
         // arrows ("is down the state or the action?"). The rotation is animated so a
         // tap visibly turns the chevron rather than swapping it.
-        val chevronRotation by animateFloatAsState(if (collapsed) 0f else 90f)
+        val chevronRotation by animateFloatAsState(
+            disclosureChevronRotation(collapsed, LocalLayoutDirection.current),
+        )
         Icon(
             imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
             contentDescription = if (collapsed) "Expand pinned topics" else "Collapse pinned topics",
@@ -1910,6 +1917,20 @@ private fun PinnedSectionHeader(
         )
     }
 }
+
+/**
+ * Rotation (clockwise degrees) for a disclosure chevron — [PinnedSectionHeader]'s and the
+ * drawer's "Your Groups" section header both use this.
+ *
+ * `Icons.AutoMirrored.Filled.KeyboardArrowRight` flips horizontally in RTL layouts (it
+ * points left while folded there, matching every other directional icon in this app), but
+ * [androidx.compose.ui.Modifier.rotate] always turns clockwise in screen space regardless
+ * of layout direction. A fixed +90° would rotate the already-mirrored (left-pointing) icon
+ * up instead of down once expanded, so the sign flips for RTL to keep "expanded" pointing
+ * down in both directions.
+ */
+internal fun disclosureChevronRotation(collapsed: Boolean, layoutDirection: LayoutDirection): Float =
+    if (collapsed) 0f else if (layoutDirection == LayoutDirection.Rtl) -90f else 90f
 
 /**
  * Trailing row below the last topic card: a spinner while [loadingMore] fetches the next

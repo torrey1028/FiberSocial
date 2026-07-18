@@ -1072,4 +1072,42 @@ class FeedViewModelTest {
         assertTrue(state.myPosts)
         assertNull(state.selectedGroup)
     }
+
+    @Test
+    fun `joinSupportGroup keeps the my-posts view`() = runTest(UnconfinedTestDispatcher()) {
+        // joinSupportGroup's reload threads `myPosts` through the same way refresh does
+        // (see the test above) — this is the one other reload path that reads it.
+        val vm = FeedViewModel(
+            FeedRepository(routingApiClient { path ->
+                when {
+                    path.endsWith("/join") -> "ok"
+                    path.isEmpty() || path == "/" -> TOKEN_PAGE_HTML
+                    path.contains("/current_user") -> CURRENT_USER_JSON
+                    path.contains("memberships") -> MEMBERSHIPS_HTML
+                    path.contains("/groups/search") -> GROUPS_JSON
+                    path.contains("filtered_topics") ->
+                        """{"topics":[{"id":300,"title":"Topic 300","forum_id":42}]}"""
+                    path.contains("/forums/") -> topicsJson(100L)
+                    path.contains("/topics/") -> topicDetailJson(
+                        path.split("/topics/")[1].replace(".json", "").toLong(),
+                    )
+                    else -> error("Unexpected: $path")
+                }
+            }),
+            this,
+            FakeGroupOrderStore(),
+        )
+        vm.load()
+        awaitChildren(coroutineContext[Job]!!)
+        vm.selectMyPosts()
+        awaitChildren(coroutineContext[Job]!!)
+
+        vm.joinSupportGroup("fibersocial-app-support")
+        awaitChildren(coroutineContext[Job]!!)
+
+        assertIs<JoinState.Idle>(vm.joinState.value)
+        val state = assertIs<FeedState.Loaded>(vm.state.value)
+        assertTrue(state.myPosts)
+        assertNull(state.selectedGroup)
+    }
 }
