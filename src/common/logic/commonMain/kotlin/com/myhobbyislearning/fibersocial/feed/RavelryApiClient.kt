@@ -137,7 +137,7 @@ class RavelryApiClient(
         tokenStorage.load()?.let { token ->
             val now = Clock.System.now().toEpochMilliseconds()
             if (token.refreshToken.isNotEmpty() && token.expiresAt - now < 60_000L) {
-                runCatching { tryRefresh() }
+                runCatching { tryRefresh(token.accessToken) }
             }
         }
 
@@ -149,7 +149,11 @@ class RavelryApiClient(
             throw ForbiddenException(forbiddenMessage(response))
         }
         if (response.status == HttpStatusCode.Unauthorized) {
-            tryRefresh()
+            val tokenUsedForFailedRequest = response.request.headers[HttpHeaders.Authorization]
+                ?.removePrefix("Bearer ")
+                ?.takeIf { it.isNotBlank() }
+                ?: (tokenStorage.load()?.accessToken ?: throw SessionExpiredException("Session expired"))
+            tryRefresh(tokenUsedForFailedRequest)
             val retried = block()
             if (retried.status == HttpStatusCode.Unauthorized) {
                 throw SessionExpiredException("Session expired")
@@ -167,14 +171,13 @@ class RavelryApiClient(
     private fun forbiddenMessage(response: HttpResponse): String =
         "Permission denied for ${response.request.url.encodedPath}"
 
-    private suspend fun tryRefresh() {
+    private suspend fun tryRefresh(tokenUsedForRequest: String) {
         val doRefresh = refreshToken ?: throw SessionExpiredException("Session expired")
-        val tokenBeforeWaiting = tokenStorage.load()?.accessToken
         refreshMutex.withLock {
-            // Someone else already refreshed while we were waiting for the lock — the
-            // caller's retry will pick up that fresh token, nothing more to do here.
+            // If some other caller already refreshed away from the token that was used by
+            // the request that triggered this path, nothing more to do here.
             val currentToken = tokenStorage.load()?.accessToken
-            if (currentToken != null && currentToken != tokenBeforeWaiting) return
+            if (currentToken != null && currentToken != tokenUsedForRequest) return
             try {
                 doRefresh()
             } catch (e: SessionExpiredException) {

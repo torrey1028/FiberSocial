@@ -31,8 +31,8 @@ import kotlinx.coroutines.test.runTest
 import kotlin.time.Clock
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.delay
 import kotlinx.serialization.json.Json
 
 class RavelryApiClientTest {
@@ -725,12 +725,21 @@ class RavelryApiClientTest {
         // others' in-flight refresh.
         var refreshCount = 0
         val storage = FakeFeedTokenStorage()
-        val engine = MockEngine {
-            if (storage.load()?.accessToken != "refreshed-token") {
-                respond("", HttpStatusCode.Unauthorized, headersOf())
-            } else {
+        val first401Returned = CompletableDeferred<Unit>()
+        val allowSecond401ToReturn = CompletableDeferred<Unit>()
+        val engine = MockEngine { request ->
+            val authHeader = request.headers[HttpHeaders.Authorization]
+            if (authHeader?.contains("refreshed-token") == true) {
                 respond(CURRENT_USER_JSON, HttpStatusCode.OK,
                     headersOf("Content-Type", ContentType.Application.Json.toString()))
+            } else {
+                if (first401Returned.complete(Unit)) {
+                    respond("", HttpStatusCode.Unauthorized, headersOf())
+                } else {
+                    first401Returned.await()
+                    allowSecond401ToReturn.await()
+                    respond("", HttpStatusCode.Unauthorized, headersOf())
+                }
             }
         }
         val httpClient = HttpClient(engine) {
@@ -738,14 +747,12 @@ class RavelryApiClientTest {
         }
         val client = RavelryApiClient(httpClient, storage, refreshToken = {
             refreshCount++
-            // Widens the window so the other concurrent callers actually queue up behind
-            // the lock instead of finishing before the next one starts.
-            delay(10)
             storage.save(AuthToken("refreshed-token", "test-refresh", Long.MAX_VALUE, "sess=test"))
+            allowSecond401ToReturn.complete(Unit)
         })
 
         coroutineScope {
-            List(5) { async { client.getCurrentUser() } }.awaitAll()
+            List(2) { async { client.getCurrentUser() } }.awaitAll()
         }
 
         assertEquals(1, refreshCount)
@@ -761,12 +768,21 @@ class RavelryApiClientTest {
         // doRefresh() calls against each other; it has to be shared across every instance.
         var refreshCount = 0
         val storage = FakeFeedTokenStorage()
-        val engine = MockEngine {
-            if (storage.load()?.accessToken != "refreshed-token") {
-                respond("", HttpStatusCode.Unauthorized, headersOf())
-            } else {
+        val first401Returned = CompletableDeferred<Unit>()
+        val allowSecond401ToReturn = CompletableDeferred<Unit>()
+        val engine = MockEngine { request ->
+            val authHeader = request.headers[HttpHeaders.Authorization]
+            if (authHeader?.contains("refreshed-token") == true) {
                 respond(CURRENT_USER_JSON, HttpStatusCode.OK,
                     headersOf("Content-Type", ContentType.Application.Json.toString()))
+            } else {
+                if (first401Returned.complete(Unit)) {
+                    respond("", HttpStatusCode.Unauthorized, headersOf())
+                } else {
+                    first401Returned.await()
+                    allowSecond401ToReturn.await()
+                    respond("", HttpStatusCode.Unauthorized, headersOf())
+                }
             }
         }
         val httpClient = HttpClient(engine) {
@@ -774,8 +790,8 @@ class RavelryApiClientTest {
         }
         val refreshToken: suspend () -> Unit = {
             refreshCount++
-            delay(10)
             storage.save(AuthToken("refreshed-token", "test-refresh", Long.MAX_VALUE, "sess=test"))
+            allowSecond401ToReturn.complete(Unit)
         }
         val clientA = RavelryApiClient(httpClient, storage, refreshToken = refreshToken)
         val clientB = RavelryApiClient(httpClient, storage, refreshToken = refreshToken)
@@ -784,7 +800,6 @@ class RavelryApiClientTest {
             listOf(
                 async { clientA.getCurrentUser() },
                 async { clientB.getCurrentUser() },
-                async { clientA.getCurrentUser() },
             ).awaitAll()
         }
 
