@@ -68,6 +68,11 @@ object MyPostsNotificationPlanner {
      *   the first sync).
      * @param myTopics Topics the user has posted in, from [com.myhobbyislearning.fibersocial.feed.RavelryApiClient.getMyTopics].
      * @param groupNamesByForumId The user's groups keyed by forum, for attribution.
+     * @param mutedTopics Topic ids the user muted reply notifications for (issue #338).
+     *   A muted topic is skipped for notifying but STILL kept in [MyPostsPlan.newKnownTopics]
+     *   with a current count, so an unmute later measures growth from now rather than
+     *   firing the backlog that accrued while muted (same seed-silently philosophy as the
+     *   rest of the planner).
      * @param nowMs Current epoch millis (for last-seen stamps and pruning).
      */
     fun plan(
@@ -75,12 +80,14 @@ object MyPostsNotificationPlanner {
         myTopics: List<Topic>,
         groupNamesByForumId: Map<Long, String>,
         nowMs: Long,
+        mutedTopics: Set<Long> = emptySet(),
     ): MyPostsPlan {
         val known = knownTopics ?: emptyMap()
         val notifications = if (known.isEmpty()) {
             emptyList()
         } else {
             myTopics.mapNotNull { topic ->
+                if (topic.id in mutedTopics) return@mapNotNull null
                 val prior = known[topic.id] ?: return@mapNotNull null
                 val baseline = maxOf(prior.postCount, topic.lastRead)
                 val newCount = topic.postsCount - baseline

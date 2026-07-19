@@ -16,15 +16,15 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import kotlin.test.assertEquals
 
-/** "Mark all as read" from the topic's overflow menu (issue #227). */
+/** Per-topic reply mute from the topic's overflow menu (issue #338). */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [33])
-class TopicDetailMarkAllReadTest {
+class TopicDetailMuteTest {
 
     @get:Rule
     val compose = createAndroidComposeRule<ComponentActivity>()
 
-    private fun topic(unread: Int, postCount: Int = 10) = FeedItem(
+    private fun topic(unread: Int = 0) = FeedItem(
         id = 1L,
         groupId = 2L,
         groupName = "Test Group",
@@ -32,46 +32,47 @@ class TopicDetailMarkAllReadTest {
         author = RavelryUser(username = "tester"),
         title = "A topic",
         bodySummary = "",
-        postCount = postCount,
+        postCount = 10,
         unreadCount = unread,
-        firstUnreadPostNumber = if (unread > 0) postCount - unread + 1 else null,
+        firstUnreadPostNumber = null,
     )
 
     private val posts = listOf(Post(id = 1L, bodyHtml = "<p>one</p>", user = RavelryUser(username = "a")))
 
     @Test
-    fun `mark all as read reports the topic's full post count`() {
-        var markedTo = -1
+    fun `an unmuted topic offers Mute and tapping it toggles`() {
+        var toggles = 0
         compose.setContent {
             TopicDetailScreen(
-                topic = topic(unread = 4, postCount = 10),
+                topic = topic(),
                 postsState = TopicDetailState.Loaded(posts = posts),
                 onBack = {},
                 onVote = { _, _ -> },
-                onMarkRead = { markedTo = it },
+                isMuted = false,
+                onToggleMute = { toggles++ },
             )
         }
 
         compose.onNodeWithContentDescription("More options").performClick()
-        compose.onNodeWithText("Mark all as read").performClick()
-        compose.runOnIdle { assertEquals(10, markedTo) }
+        compose.onNodeWithText("Mute notifications").performClick()
+        compose.runOnIdle { assertEquals(1, toggles) }
     }
 
     @Test
-    fun `mark all as read is gone once everything is read but the overflow stays for mute`() {
-        // The overflow button is now always present (it always offers the mute toggle,
-        // issue #338); only the "Mark all as read" item drops out when nothing is unread.
+    fun `a muted topic offers Unmute instead`() {
         compose.setContent {
             TopicDetailScreen(
-                topic = topic(unread = 0),
+                topic = topic(),
                 postsState = TopicDetailState.Loaded(posts = posts),
                 onBack = {},
                 onVote = { _, _ -> },
+                isMuted = true,
+                onToggleMute = {},
             )
         }
 
         compose.onNodeWithContentDescription("More options").performClick()
-        compose.onNodeWithText("Mark all as read").assertDoesNotExist()
-        compose.onNodeWithText("Mute notifications").assertIsDisplayed()
+        compose.onNodeWithText("Unmute notifications").assertIsDisplayed()
+        compose.onNodeWithText("Mute notifications").assertDoesNotExist()
     }
 }

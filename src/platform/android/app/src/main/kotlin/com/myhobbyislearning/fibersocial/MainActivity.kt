@@ -36,11 +36,13 @@ import com.myhobbyislearning.fibersocial.notifications.EXTRA_EVENT_PERMALINK
 import com.myhobbyislearning.fibersocial.notifications.EXTRA_OPEN_MY_POSTS
 import com.myhobbyislearning.fibersocial.notifications.EventNotifier
 import com.myhobbyislearning.fibersocial.notifications.EventSyncWorker
+import com.myhobbyislearning.fibersocial.notifications.KeyValueMutedTopicsStore
 import com.myhobbyislearning.fibersocial.notifications.KeyValueNotificationSettingsStore
 import com.myhobbyislearning.fibersocial.settings.KeyValueThemeSettingsStore
 import com.myhobbyislearning.fibersocial.settings.ThemeMode
 import com.myhobbyislearning.fibersocial.settings.ThemeSettings
 import com.myhobbyislearning.fibersocial.storage.NOTIFICATION_SETTINGS_PREFS_NAME
+import com.myhobbyislearning.fibersocial.storage.NOTIFICATION_STATE_PREFS_NAME
 import com.myhobbyislearning.fibersocial.storage.THEME_SETTINGS_PREFS_NAME
 import com.myhobbyislearning.fibersocial.storage.plainKeyValueStore
 import com.myhobbyislearning.fibersocial.ui.FiberSocialTheme
@@ -135,6 +137,11 @@ class MainActivity : ComponentActivity() {
                                     plainKeyValueStore(this@MainActivity, NOTIFICATION_SETTINGS_PREFS_NAME),
                                 )
                             }
+                            val mutedTopicsStore = remember {
+                                KeyValueMutedTopicsStore(
+                                    plainKeyValueStore(this@MainActivity, NOTIFICATION_STATE_PREFS_NAME),
+                                )
+                            }
                             LaunchedEffect(Unit) {
                                 feedVm.load()
                                 EventSyncWorker.schedulePeriodic(
@@ -180,6 +187,7 @@ class MainActivity : ComponentActivity() {
                                     themeScope.launch { themeStore.save(ThemeSettings(mode = mode)) }
                                 },
                                 notificationSettingsStore = notificationSettingsStore,
+                                mutedTopicsStore = mutedTopicsStore,
                                 // UPDATE policy re-registers the periodic sync at the new cadence.
                                 onPollCadenceChanged = { cadence ->
                                     EventSyncWorker.schedulePeriodic(this@MainActivity, cadence)
