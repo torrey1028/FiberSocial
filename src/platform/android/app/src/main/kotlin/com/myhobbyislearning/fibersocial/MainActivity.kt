@@ -193,7 +193,7 @@ class MainActivity : ComponentActivity() {
                                     EventSyncWorker.schedulePeriodic(this@MainActivity, cadence)
                                 },
                                 debugPanelEnabled = BuildConfig.DEBUG,
-                                onRunEventSync = { EventSyncWorker.runOnce(this@MainActivity) },
+                                onRunEventSync = { EventSyncWorker.runDebugSyncNow(this@MainActivity) },
                                 deviceInfo = deviceContext(),
                             )
                             }

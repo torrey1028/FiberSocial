@@ -154,8 +154,23 @@ class EventSyncWorker(
             println("FiberSocial: EventSyncWorker scheduled every ${hours}h ($cadence)")
         }
 
-        /** Runs one sync immediately; used by the debug panel. */
-        fun runOnce(context: Context) {
+        /**
+         * Runs one sync immediately; used by ordinary in-app triggers (e.g. an RSVP
+         * change) that want fresh state right away but must still respect foreground
+         * suppression (issue #339) like any other sync — an RSVP toggle is a routine
+         * foreground action, not a request to force a banner over it.
+         */
+        fun runOnce(context: Context) = enqueueOnce(context, force = false)
+
+        /**
+         * Runs one sync immediately and forces real banners even while foregrounded, so
+         * the notification pipeline stays verifiable on-device. Debug panel only — an
+         * ordinary caller wanting an immediate resync should use [runOnce], which
+         * respects foreground suppression like any other sync.
+         */
+        fun runDebugSyncNow(context: Context) = enqueueOnce(context, force = true)
+
+        private fun enqueueOnce(context: Context, force: Boolean) {
             // Same network constraint as the periodic work: offline, an unconstrained
             // request would enter the retry path and keep rescheduling in the
             // background — surprising for a manual debug tap.
@@ -167,9 +182,7 @@ class EventSyncWorker(
                 UNIQUE_ONCE_WORK_NAME,
                 ExistingWorkPolicy.REPLACE,
                 OneTimeWorkRequestBuilder<EventSyncWorker>()
-                    // Debug sync-now posts real banners even when foregrounded, so the
-                    // notification pipeline can be verified on-device (issue #339).
-                    .setInputData(workDataOf(KEY_FORCE_NOTIFICATIONS to true))
+                    .setInputData(workDataOf(KEY_FORCE_NOTIFICATIONS to force))
                     .setConstraints(
                         Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build(),
                     )
