@@ -888,7 +888,7 @@ fun FeedScreen(
     CloseDrawerOnBack(drawerState)
 
     val title = when {
-        showingMyPosts -> "Your Posts"
+        showingMyPosts -> "Posts"
         else -> loaded?.selectedGroup?.name ?: "FiberSocial"
     }
     val selectedGroup = loaded?.selectedGroup
@@ -1205,7 +1205,7 @@ internal fun <T> moveItem(list: List<T>, from: Int, to: Int): List<T> =
     else list.toMutableList().apply { add(to, removeAt(from)) }
 
 // Lazy items before the first group row in the drawer (the "My Posts" entry and the
-// "Your Groups" header). The drag-reorder math offsets lazy-item indices by this to get
+// "Groups" header). The drag-reorder math offsets lazy-item indices by this to get
 // group-list indices — keep it in sync with the items above `items(localGroups, ...)`.
 private const val DRAWER_ITEMS_BEFORE_GROUPS = 2
 
@@ -1381,7 +1381,7 @@ internal fun GroupDrawer(
     // immediately from the handle, or via long-press anywhere on the row.
     var reorderMode by remember { mutableStateOf(false) }
 
-    // Folds the "Your Groups" section (list + "Find groups") behind its header pill.
+    // Folds the "Groups" section (list + "Find groups") behind its header pill.
     // Session-scoped like the feed's pinnedCollapsed: a standing preference, not
     // persisted. Toggling is locked during reorder mode — collapsing mid-drag would
     // tear the rows being dragged out of composition.
@@ -1475,12 +1475,24 @@ internal fun GroupDrawer(
                     modifier = Modifier.fillMaxSize().testTag("GroupList"),
                 ) {
                     // The cross-group "My Posts" feed entry, above the group list — it
-                    // isn't a group, so it sits outside the "Your Groups" section (and
+                    // isn't a group, so it sits outside the "Groups" section (and
                     // outside reorder mode: there's nothing to drag it against).
+                    //
+                    // Issue #347: this row and the "Groups" header below it are bracketed
+                    // by HorizontalDividers, the same treatment the "Send feedback" row
+                    // gets at the bottom of the sheet. Unselected NavigationDrawerItems
+                    // paint no pill, so on their own they read as flat text on the sheet
+                    // surface and don't look tappable; the rules bind them into one
+                    // visible navigation cluster. The dividers live INSIDE the existing
+                    // item lambdas on purpose — adding new item {} entries here would
+                    // shift the lazy indices that DRAWER_ITEMS_BEFORE_GROUPS compensates
+                    // for and silently break drag-to-reorder.
                     item(key = "my-posts") {
                         Spacer(Modifier.height(16.dp))
+                        HorizontalDivider(Modifier.testTag("DrawerNavClusterTop"))
+                        Spacer(Modifier.height(8.dp))
                         NavigationDrawerItem(
-                            label = { Text("Your Posts") },
+                            label = { Text("Posts") },
                             selected = myPostsSelected,
                             onClick = { if (!reorderMode) onMyPostsSelected() },
                             icon = { Icon(Icons.Default.Person, contentDescription = null) },
@@ -1488,7 +1500,10 @@ internal fun GroupDrawer(
                         )
                     }
                     item(key = "drawer-header") {
-                        Spacer(Modifier.height(16.dp))
+                        // Tighter than the old 16.dp: now that a divider brackets the pair,
+                        // "Posts" and "Groups" should read as one cluster rather than two
+                        // separate islands.
+                        Spacer(Modifier.height(4.dp))
                         // The section header is a NavigationDrawerItem so its pill matches
                         // the "My Posts" row above, and it folds the group list like the
                         // feed's pinned section: same rotating disclosure chevron (right =
@@ -1499,7 +1514,7 @@ internal fun GroupDrawer(
                             disclosureChevronRotation(groupsCollapsed, LocalLayoutDirection.current),
                         )
                         NavigationDrawerItem(
-                            label = { Text("Your Groups") },
+                            label = { Text("Groups") },
                             selected = groupsCollapsed && selectedGroup != null,
                             onClick = { if (!reorderMode) groupsCollapsed = !groupsCollapsed },
                             icon = {
@@ -1528,6 +1543,9 @@ internal fun GroupDrawer(
                             },
                             modifier = Modifier.padding(horizontal = 12.dp),
                         )
+                        Spacer(Modifier.height(8.dp))
+                        HorizontalDivider(Modifier.testTag("DrawerNavClusterBottom"))
+                        Spacer(Modifier.height(8.dp))
                     }
                     if (!groupsCollapsed) {
                     items(localGroups, key = { it.id }) { group ->
@@ -1641,7 +1659,7 @@ internal fun GroupDrawer(
                         modifier = Modifier.padding(horizontal = 12.dp),
                     )
                 }
-                } // end of the collapsible "Your Groups" section (groupsCollapsed)
+                } // end of the collapsible "Groups" section (groupsCollapsed)
                 item(key = "drawer-footer-spacer") { Spacer(Modifier.height(16.dp)) }
                 }
             }
@@ -1980,7 +1998,7 @@ private fun PinnedSectionHeader(
 
 /**
  * Rotation (clockwise degrees) for a disclosure chevron — [PinnedSectionHeader]'s and the
- * drawer's "Your Groups" section header both use this.
+ * drawer's "Groups" section header both use this.
  *
  * `Icons.AutoMirrored.Filled.KeyboardArrowRight` flips horizontally in RTL layouts (it
  * points left while folded there, matching every other directional icon in this app), but

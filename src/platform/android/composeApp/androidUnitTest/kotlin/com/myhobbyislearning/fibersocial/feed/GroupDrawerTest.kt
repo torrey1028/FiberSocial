@@ -75,13 +75,19 @@ class GroupDrawerTest {
                 onSettingsClick = {},
             )
         }
-        compose.onNodeWithText("Your Posts").assertIsDisplayed()
-        compose.onNodeWithText("Your Posts").performClick()
+        compose.onNodeWithText("Posts").assertIsDisplayed()
+        compose.onNodeWithText("Posts").performClick()
         compose.runOnIdle { assertEquals(1, myPostsClicks) }
     }
 
+    /**
+     * Issue #347: unselected NavigationDrawerItems paint no pill, so the Posts/Groups rows
+     * read as flat text on the sheet. The bracketing dividers are what make them look like a
+     * tappable navigation cluster — assert they render so the treatment can't be dropped
+     * silently.
+     */
     @Test
-    fun `collapsing Your Groups hides the group rows but keeps Your Posts`() {
+    fun `posts and groups are bracketed by dividers`() {
         compose.setContent {
             GroupDrawer(
                 groups = twoGroups,
@@ -94,12 +100,32 @@ class GroupDrawerTest {
             )
         }
 
-        compose.onNodeWithText("Your Groups").performClick()
+        compose.onNodeWithTag("DrawerNavClusterTop").assertIsDisplayed()
+        compose.onNodeWithTag("DrawerNavClusterBottom").assertIsDisplayed()
+        compose.onNodeWithText("Posts").assertIsDisplayed()
+        compose.onNodeWithText("Groups").assertIsDisplayed()
+    }
+
+    @Test
+    fun `collapsing Groups hides the group rows but keeps Posts`() {
+        compose.setContent {
+            GroupDrawer(
+                groups = twoGroups,
+                selectedGroup = twoGroups.first(),
+                eventCounts = emptyMap(),
+                user = user,
+                onGroupSelected = {},
+                onGroupEventsClick = {},
+                onSettingsClick = {},
+            )
+        }
+
+        compose.onNodeWithText("Groups").performClick()
 
         compose.onNodeWithText(twoGroups[0].name).assertDoesNotExist()
         compose.onNodeWithText(twoGroups[1].name).assertDoesNotExist()
         compose.onNodeWithText("Find groups").assertDoesNotExist()
-        compose.onNodeWithText("Your Posts").assertIsDisplayed()
+        compose.onNodeWithText("Posts").assertIsDisplayed()
         // Folded: the Edit affordance yields to the hidden-group count.
         compose.onNodeWithText("Edit").assertDoesNotExist()
         compose.onNodeWithText("2").assertIsDisplayed()
@@ -107,7 +133,7 @@ class GroupDrawerTest {
     }
 
     @Test
-    fun `expanding Your Groups restores the group rows`() {
+    fun `expanding Groups restores the group rows`() {
         compose.setContent {
             GroupDrawer(
                 groups = twoGroups,
@@ -120,8 +146,8 @@ class GroupDrawerTest {
             )
         }
 
-        compose.onNodeWithText("Your Groups").performClick()
-        compose.onNodeWithText("Your Groups").performClick()
+        compose.onNodeWithText("Groups").performClick()
+        compose.onNodeWithText("Groups").performClick()
 
         compose.onNodeWithText(twoGroups[0].name).assertIsDisplayed()
         compose.onNodeWithText("Find groups").assertIsDisplayed()
