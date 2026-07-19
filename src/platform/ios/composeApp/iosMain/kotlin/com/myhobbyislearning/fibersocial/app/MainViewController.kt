@@ -180,8 +180,7 @@ private fun IosApp(authModel: IosAuthModel, feedModel: IosFeedModel) {
                             authModel.auth.logout()
                         }
                     }
-                    val deepLink by deepLinkEvent.collectAsState()
-                    val deepLinkPosts by deepLinkMyPosts.collectAsState()
+                    val pendingDeepLink by deepLink.collectAsState()
                     // Project links tapped in post content open the in-app project page
                     // (issue #103); tapping a username opens the profile (issue #194).
                     CompositionLocalProvider(
@@ -197,10 +196,8 @@ private fun IosApp(authModel: IosAuthModel, feedModel: IosFeedModel) {
                                 feedModel.reset()
                                 authModel.auth.logout()
                             },
-                            deepLinkEventPermalink = deepLink,
-                            onDeepLinkConsumed = { deepLinkEvent.value = null },
-                            deepLinkMyPosts = deepLinkPosts,
-                            onDeepLinkMyPostsConsumed = { deepLinkMyPosts.value = false },
+                            deepLink = pendingDeepLink,
+                            onDeepLinkConsumed = { deepLink.value = null },
                             themeMode = themeMode,
                             onThemeModeSelected = { mode ->
                                 themeMode = mode

@@ -1,8 +1,11 @@
 package com.myhobbyislearning.fibersocial.app
 
+import com.myhobbyislearning.fibersocial.notifications.DeepLink
 import com.myhobbyislearning.fibersocial.notifications.EventSync
+import com.myhobbyislearning.fibersocial.notifications.NOTIFICATION_EVENT_GROUP_ID_KEY
 import com.myhobbyislearning.fibersocial.notifications.NOTIFICATION_EVENT_PERMALINK_KEY
 import com.myhobbyislearning.fibersocial.notifications.NOTIFICATION_OPEN_MY_POSTS_KEY
+import com.myhobbyislearning.fibersocial.notifications.NOTIFICATION_TOPIC_ID_KEY
 import kotlinx.coroutines.flow.MutableStateFlow
 import platform.Foundation.NSNotificationCenter
 import platform.Foundation.NSOperationQueue
@@ -18,13 +21,10 @@ import platform.UserNotifications.UNUserNotificationCenterDelegateProtocol
 import platform.darwin.NSObject
 
 /**
- * Event permalink from a tapped notification; consumed by FeedScreen's deep link —
- * the iOS analog of MainActivity's `deepLinkEvent` intent-extra flow.
+ * Destination from a tapped notification; consumed once by FeedScreen — the iOS analog
+ * of MainActivity's `deepLink` intent-extra flow (issue #351).
  */
-val deepLinkEvent = MutableStateFlow<String?>(null)
-
-/** Set by a tapped reply notification; FeedScreen opens the My Posts feed. */
-val deepLinkMyPosts = MutableStateFlow(false)
+val deepLink = MutableStateFlow<DeepLink?>(null)
 
 // The delegate property on UNUserNotificationCenter is weak; keep the strong ref here.
 private val notificationDelegate = NotificationDelegate()
@@ -62,19 +62,36 @@ fun onAppLaunch() {
 
 private class NotificationDelegate : NSObject(), UNUserNotificationCenterDelegateProtocol {
 
-    /** Notification tapped: surface its event to the UI's deep-link flow. */
+    /** Notification tapped: surface its destination to the UI's deep-link flow. */
     override fun userNotificationCenter(
         center: UNUserNotificationCenter,
         didReceiveNotificationResponse: UNNotificationResponse,
         withCompletionHandler: () -> Unit,
     ) {
         val userInfo = didReceiveNotificationResponse.notification.request.content.userInfo
-        val permalink = userInfo[NOTIFICATION_EVENT_PERMALINK_KEY] as? String
-        val openMyPosts = userInfo[NOTIFICATION_OPEN_MY_POSTS_KEY] != null
-        println("FiberSocial: notification tapped, event=$permalink myPosts=$openMyPosts")
-        if (permalink != null) deepLinkEvent.value = permalink
-        if (openMyPosts) deepLinkMyPosts.value = true
+        val link = userInfo.toDeepLink()
+        println("FiberSocial: notification tapped, deep link = $link")
+        if (link != null) deepLink.value = link
         withCompletionHandler()
+    }
+
+    /**
+     * Reads a tapped notification's destination out of its userInfo, most-specific first.
+     *
+     * The bare My Posts key is still honoured last so a reply notification delivered by a
+     * pre-#351 build — one that may still be sitting in Notification Center across the
+     * upgrade — keeps working instead of tapping to nothing.
+     */
+    private fun Map<Any?, *>.toDeepLink(): DeepLink? {
+        (this[NOTIFICATION_EVENT_PERMALINK_KEY] as? String)?.let { permalink ->
+            return DeepLink.Event(
+                permalink = permalink,
+                groupId = (this[NOTIFICATION_EVENT_GROUP_ID_KEY] as? String)?.toLongOrNull(),
+            )
+        }
+        (this[NOTIFICATION_TOPIC_ID_KEY] as? String)?.toLongOrNull()?.let { return DeepLink.Topic(it) }
+        if (this[NOTIFICATION_OPEN_MY_POSTS_KEY] != null) return DeepLink.MyPosts
+        return null
     }
 
     /** Notifications arriving while the app is foregrounded still show as banners
