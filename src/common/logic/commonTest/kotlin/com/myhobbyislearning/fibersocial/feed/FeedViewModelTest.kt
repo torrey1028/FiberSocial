@@ -11,6 +11,8 @@ import kotlin.test.assertTrue
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
 
@@ -149,20 +151,25 @@ class FeedViewModelTest {
     @Test
     fun `refreshDrawerUnread cancels a still in-flight call rather than letting it clobber a newer result`() =
         runTest(UnconfinedTestDispatcher()) {
-            // getDrawerUnread() fires exactly 2 concurrent requests (reading + posting legs)
-            // per call. Gate only the first call's pair so it's still suspended when the
-            // second call starts; the second call's own pair (uncounted below) resolves
-            // immediately. If the second call didn't cancel the first, releasing the gate
-            // afterward would let the first (stale, forum 999) result overwrite the second
-            // (fresh, forum 42) one — "last write wins" instead of "last call wins".
+            // Ktor engines — including MockEngine — dispatch request handling via
+            // withContext(Dispatchers.IO) regardless of the calling coroutine's own
+            // dispatcher (see FakeFeedTokenStorage's KDoc), so requests from the two
+            // refreshDrawerUnread() calls below genuinely race on real threads; the
+            // Mutex keeps the shared counter's read-then-increment atomic across them
+            // (a plain var here previously caused a Robolectric-only CI flake).
+            val requestCountMutex = Mutex()
+            var requestsSeen = 0
             val firstCallGate = CompletableDeferred<Unit>()
-            var firstCallRequestsSeen = 0
             val repo = FeedRepository(
                 suspendableRoutingApiClient { _ ->
-                    if (firstCallRequestsSeen < 2) {
-                        firstCallRequestsSeen++
+                    val isFirstCallRequest = requestCountMutex.withLock {
+                        (requestsSeen < 2).also { if (it) requestsSeen++ }
+                    }
+                    if (isFirstCallRequest) {
+                        // Never released: the first call is cancelled before this could
+                        // ever resolve, so nothing needs to un-gate it.
                         firstCallGate.await()
-                        """{"topics":[{"id":1,"title":"T","forum_id":999,"forum_posts_count":5,"last_read":3}]}"""
+                        error("unreachable — cancelled before the gate could open")
                     } else {
                         """{"topics":[{"id":2,"title":"T2","forum_id":42,"forum_posts_count":5,"last_read":3}]}"""
                     }
@@ -170,14 +177,16 @@ class FeedViewModelTest {
             )
             val vm = FeedViewModel(repo, this, FakeGroupOrderStore())
 
+            // getDrawerUnread() fires exactly 2 concurrent requests (reading + posting
+            // legs) per call. The first call's pair blocks on firstCallGate forever; the
+            // second call cancels it (the fix under test) before starting its own pair,
+            // which resolves immediately. Without the fix, the first call's requests
+            // would still be in flight (not cancelled) when the test ends, and this
+            // would hang / fail as an uncompleted coroutine instead of asserting wrong
+            // data — which is itself evidence the cancellation is what makes this test
+            // (and the real bug scenario) terminate cleanly at all.
             vm.refreshDrawerUnread()
             vm.refreshDrawerUnread()
-            awaitChildren(coroutineContext[Job]!!)
-            assertEquals(setOf(42L), vm.drawerUnread.value.unreadGroupForumIds)
-
-            // Release the first call's gate — its coroutine was already cancelled when the
-            // second call started, so this must not resurrect its stale forum-999 result.
-            firstCallGate.complete(Unit)
             awaitChildren(coroutineContext[Job]!!)
 
             assertEquals(setOf(42L), vm.drawerUnread.value.unreadGroupForumIds)
