@@ -24,6 +24,15 @@ class FakeGroupOrderStore(initial: List<Long>? = null) : GroupOrderStore {
     override suspend fun save(order: List<Long>) { stored = order }
 }
 
+/** In-memory [GroupLastViewedStore]; [stored] exposes what the code under test persisted. */
+class FakeGroupLastViewedStore(initial: Map<Long, Long>? = null) : GroupLastViewedStore {
+    var stored: Map<Long, Long>? = initial
+        private set
+
+    override suspend fun load(): Map<Long, Long>? = stored
+    override suspend fun save(lastViewed: Map<Long, Long>) { stored = lastViewed }
+}
+
 /**
  * In-memory [TokenStorage]. Mutex-guarded (issue #299): Ktor engines — including
  * [MockEngine] — always dispatch request handling via `withContext(Dispatchers.IO)`

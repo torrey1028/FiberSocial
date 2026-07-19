@@ -48,6 +48,7 @@ const val NOTIFICATION_STATE_STORE_NAME = "notification_state"
 const val NOTIFICATION_SETTINGS_STORE_NAME = "notification_settings"
 const val THEME_SETTINGS_STORE_NAME = "theme_settings"
 const val GROUP_ORDER_STORE_NAME = "group_order"
+const val GROUP_LAST_VIEWED_STORE_NAME = "group_last_viewed"
 
 /**
  * `NSUserDefaults`-backed [KeyValueStore] for non-secret state and settings — the iOS

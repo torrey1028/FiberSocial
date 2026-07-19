@@ -866,45 +866,6 @@ class RavelryApiClient(
     }
 
     /**
-     * Returns a page of topics the authenticated user is *reading* — the topics they
-     * follow (have opened / are tracking) across ALL forums/groups —
-     * `/forums/filtered_topics.json?status=reading`. Unlike [getMyTopics]'s `posting`
-     * status (topics you replied to or started), `reading` is the broader set where an
-     * unread marker is meaningful, so it backs the drawer's per-group "has unread" dots
-     * (issue: unread indicators). Each entry carries [Topic.forumId] (maps to a [Group])
-     * and [Topic.lastRead] vs [Topic.postsCount] (unread = the latter exceeds the former).
-     *
-     * Same bare-`replied` sort as [getMyTopics] (newest activity first; see its SORT TRAP
-     * note) and the same [TopicsResponse] envelope.
-     *
-     * @param page 1-based page number.
-     * @param pageSize Topics per page (Ravelry caps this endpoint at 100).
-     */
-    suspend fun getReadingTopics(
-        page: Int = 1,
-        pageSize: Int = DEFAULT_FEED_PAGE_SIZE,
-    ): TopicsPage {
-        val raw = authenticatedRequest {
-            httpClient.get("$BASE_URL/forums/filtered_topics.json") {
-                header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
-                url.parameters.apply {
-                    append("status", "reading")
-                    append("sort", "replied")
-                    append("page", page.toString())
-                    append("page_size", pageSize.toString())
-                }
-            }
-        }
-        val response = lenientJson.decodeFromString<TopicsResponse>(raw)
-        val paginator = response.paginator
-        return TopicsPage(
-            topics = response.topics,
-            page = paginator?.page ?: page,
-            hasMore = paginator != null && paginator.page < paginator.pageCount,
-        )
-    }
-
-    /**
      * Returns one page of a topic's posts (replies), ordered oldest-first, so post
      * position within the accumulated list matches Ravelry's 1-based post number (which
      * [Topic.lastRead] indexes into). Each post's [Post.voteTotals] and [Post.userVotes]

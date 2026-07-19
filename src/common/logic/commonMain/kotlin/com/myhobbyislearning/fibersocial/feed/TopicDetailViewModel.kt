@@ -316,16 +316,25 @@ class TopicDetailViewModel(
      * outlives leaving the screen), so it still syncs after the user backs out. No-ops for
      * a non-positive [lastRead] (nothing was seen). Ravelry only advances the marker, so
      * re-marking a lower value than the server already has is harmless.
+     *
+     * @param onMarked Invoked once the marker has actually advanced server-side (not on
+     *   failure). Anything that re-reads unread state from Ravelry has to be sequenced
+     *   behind this rather than fired alongside it: the POST and a concurrent GET race,
+     *   and a GET that wins reports the *pre-read* state (issue #350 part 2).
      */
-    fun markRead(topicId: Long, lastRead: Int) {
+    fun markRead(topicId: Long, lastRead: Int, onMarked: () -> Unit = {}) {
         if (lastRead <= 0) return
-        scope.launch { markReadBestEffort(topicId, lastRead) }
+        scope.launch { if (markReadBestEffort(topicId, lastRead)) onMarked() }
     }
 
-    /** Advances Ravelry's read marker for [topicId] to [lastRead]; swallows failures. */
-    private suspend fun markReadBestEffort(topicId: Long, lastRead: Int) {
+    /**
+     * Advances Ravelry's read marker for [topicId] to [lastRead]; swallows failures.
+     * @return Whether the marker actually advanced.
+     */
+    private suspend fun markReadBestEffort(topicId: Long, lastRead: Int): Boolean {
         try {
             apiClient.markTopicRead(topicId, lastRead)
+            return true
         } catch (e: CancellationException) {
             throw e
         } catch (e: SessionExpiredException) {
@@ -338,6 +347,7 @@ class TopicDetailViewModel(
         } catch (e: Exception) {
             println("FiberSocial: markTopicRead($topicId) failed: ${e.message}")
         }
+        return false
     }
 
     /**

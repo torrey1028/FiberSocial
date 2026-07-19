@@ -48,6 +48,9 @@ fun onAppLaunch() {
         queue = NSOperationQueue.mainQueue,
     ) { _ ->
         EventSync.runOnce()
+        // Same activation drives the drawer's unread dots (issue #350 part 1) — reuse
+        // this observer rather than registering a second one for the same notification.
+        ForegroundActivations.notifyForegrounded()
     }
     // Ask for the next background slot whenever we leave the foreground; each grant
     // consumes the request, and re-submitting keeps exactly one pending.

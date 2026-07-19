@@ -1,5 +1,7 @@
 package com.myhobbyislearning.fibersocial.feed
 
+import com.myhobbyislearning.fibersocial.auth.SessionExpiredException
+import com.myhobbyislearning.fibersocial.feed.models.Group
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
@@ -10,6 +12,7 @@ import io.ktor.http.headersOf
 import io.ktor.serialization.kotlinx.json.json
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -500,14 +503,48 @@ class FeedRepositoryTest {
         assertEquals(listOf(100L), page.items.map { it.id })
     }
 
-    private fun unreadRepo(readingJson: String, postingJson: String): FeedRepository {
+    // ---- getDrawerUnread (issue #350 part 3) ----
+
+    /** Group 1 sits on forum 42; group 2 on forum 77. */
+    private val dotGroups = listOf(
+        Group(id = 1, name = "Alpha", permalink = "alpha", forumId = 42),
+        Group(id = 2, name = "Beta", permalink = "beta", forumId = 77),
+    )
+
+    /** A topics-list entry with a Ravelry-format `replied_at`. */
+    private fun activityTopic(id: Long, repliedAt: String?, sticky: Boolean = false) =
+        """{"id":$id,"title":"T$id","sticky":$sticky,"replied_at":${
+            if (repliedAt != null) "\"$repliedAt\"" else "null"
+        }}"""
+
+    /** Epoch millis for a UTC Ravelry timestamp, so tests can express "before/after". */
+    private fun at(timestamp: String): Long =
+        parseRavelryTimestamp(timestamp)!!.toEpochMilliseconds()
+
+    /**
+     * A repo whose per-forum topic lists come from [topicsByForumId] and whose
+     * `filtered_topics?status=posting` leg returns [postingJson].
+     *
+     * A forum absent from [topicsByForumId] responds 500, which is how the
+     * "a failing group is simply omitted" case is exercised.
+     */
+    private fun drawerRepo(
+        topicsByForumId: Map<Long, String>,
+        postingJson: String = """{"topics":[]}""",
+    ): FeedRepository {
         val engine = MockEngine { request ->
-            // Both legs hit /forums/filtered_topics.json — route by the status filter.
-            val body = when (request.url.parameters["status"]) {
-                "reading" -> readingJson
-                "posting" -> postingJson
-                else -> error("Unexpected status: ${request.url}")
+            val path = request.url.encodedPath
+            // filtered_topics lives under /forums/ too, so it must be matched first.
+            if (path.contains("filtered_topics")) {
+                return@MockEngine respond(
+                    postingJson,
+                    HttpStatusCode.OK,
+                    headersOf("Content-Type", ContentType.Application.Json.toString()),
+                )
             }
+            val forumId = Regex("""/forums/(\d+)/topics""").find(path)?.groupValues?.get(1)?.toLong()
+            val body = topicsByForumId[forumId]
+                ?: return@MockEngine respond("boom", HttpStatusCode.InternalServerError)
             respond(body, HttpStatusCode.OK, headersOf("Content-Type", ContentType.Application.Json.toString()))
         }
         val client = HttpClient(engine) {
@@ -517,33 +554,204 @@ class FeedRepositoryTest {
     }
 
     @Test
-    fun `getDrawerUnread flags only the forums and your-posts with unread`() = runTest {
-        val repo = unreadRepo(
-            // forum 42 has unread (5 > 3); forum 77 is fully read (4 == 4).
-            readingJson = """{"topics":[
-                {"id":1,"title":"A","forum_id":42,"forum_posts_count":5,"last_read":3},
-                {"id":2,"title":"B","forum_id":77,"forum_posts_count":4,"last_read":4}
-            ]}""",
-            // a posted-in topic with unread replies.
+    fun `getDrawerUnread dots a group whose latest activity is newer than the last view`() = runTest {
+        val repo = drawerRepo(
+            mapOf(
+                42L to """{"topics":[${activityTopic(1, "2026/07/10 12:00:00 +0000")}]}""",
+                77L to """{"topics":[${activityTopic(2, "2026/07/01 12:00:00 +0000")}]}""",
+            ),
+        )
+
+        val result = repo.getDrawerUnread(
+            groups = dotGroups,
+            // Both groups viewed on the 5th: group 1's activity is after it, group 2's before.
+            groupLastViewed = mapOf(1L to at("2026/07/05 00:00:00 +0000"), 2L to at("2026/07/05 00:00:00 +0000")),
+            now = at("2026/07/19 00:00:00 +0000"),
+        )
+
+        assertEquals(setOf(42L), result.unread.unreadGroupForumIds)
+    }
+
+    /**
+     * A per-group fetch failure is deliberately soft (one bad group must not blank every
+     * other group's dot) but session expiry must NOT be softened: swallowed, an expired
+     * session is indistinguishable from "no group has any new activity", so the drawer
+     * quietly goes dark instead of the app prompting a re-login.
+     */
+    @Test
+    fun `getDrawerUnread propagates session expiry from a group fetch rather than hiding it`() = runTest {
+        val engine = MockEngine { request ->
+            if (request.url.encodedPath.contains("filtered_topics")) {
+                // The "Your Posts" leg succeeds, so only the per-group leg sees the expiry.
+                respond(
+                    """{"topics":[]}""",
+                    HttpStatusCode.OK,
+                    headersOf("Content-Type", ContentType.Application.Json.toString()),
+                )
+            } else {
+                throw SessionExpiredException("Token expired")
+            }
+        }
+        val client = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val repo = FeedRepository(RavelryApiClient(client, FakeFeedTokenStorage()))
+
+        assertFailsWith<SessionExpiredException> {
+            repo.getDrawerUnread(
+                groups = dotGroups,
+                groupLastViewed = mapOf(1L to at("2026/07/05 00:00:00 +0000")),
+                now = at("2026/07/19 00:00:00 +0000"),
+            )
+        }
+    }
+
+    @Test
+    fun `getDrawerUnread seeds an unseen group silently instead of lighting it`() = runTest {
+        // A fresh install (or a newly joined group) has no stored timestamp. Lighting every
+        // row at once would be noise, so the first pass records "now" and shows nothing.
+        val repo = drawerRepo(
+            mapOf(
+                42L to """{"topics":[${activityTopic(1, "2026/07/10 12:00:00 +0000")}]}""",
+                77L to """{"topics":[${activityTopic(2, "2026/07/11 12:00:00 +0000")}]}""",
+            ),
+        )
+        val now = at("2026/07/19 00:00:00 +0000")
+
+        val result = repo.getDrawerUnread(dotGroups, groupLastViewed = emptyMap(), now = now)
+
+        assertTrue(result.unread.unreadGroupForumIds.isEmpty())
+        assertEquals(mapOf(1L to now, 2L to now), result.groupLastViewed)
+    }
+
+    @Test
+    fun `getDrawerUnread takes the newest topic on the page rather than the first`() = runTest {
+        // THE TRAP this design guards against: getGroupTopics sends no explicit sort, and
+        // forums pin sticky topics (issue #332), so slot 1 can hold a pinned thread whose
+        // last reply is ancient while a genuinely new reply sits below it. A pageSize=1
+        // "take the first topic" implementation would report the stale timestamp and miss
+        // the new activity entirely.
+        val repo = drawerRepo(
+            mapOf(
+                42L to """{"topics":[
+                    ${activityTopic(1, "2026/01/01 00:00:00 +0000", sticky = true)},
+                    ${activityTopic(2, "2026/07/10 12:00:00 +0000")}
+                ]}""",
+            ),
+        )
+
+        val result = repo.getDrawerUnread(
+            groups = listOf(dotGroups.first()),
+            groupLastViewed = mapOf(1L to at("2026/07/05 00:00:00 +0000")),
+            now = at("2026/07/19 00:00:00 +0000"),
+        )
+
+        assertEquals(setOf(42L), result.unread.unreadGroupForumIds)
+    }
+
+    @Test
+    fun `getDrawerUnread requests only a small page per group`() = runTest {
+        // This is one request PER GROUP, so the page has to stay small; only the newest
+        // timestamp is wanted, never the topics themselves.
+        var capturedPageSize: String? = null
+        val engine = MockEngine { request ->
+            if (!request.url.encodedPath.contains("filtered_topics")) {
+                capturedPageSize = request.url.parameters["page_size"]
+            }
+            respond(
+                """{"topics":[]}""",
+                HttpStatusCode.OK,
+                headersOf("Content-Type", ContentType.Application.Json.toString()),
+            )
+        }
+        val client = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val repo = FeedRepository(RavelryApiClient(client, FakeFeedTokenStorage()))
+
+        repo.getDrawerUnread(listOf(dotGroups.first()), emptyMap(), now = 0L)
+
+        // Small, and emphatically not 1 — see the sticky-topic test above.
+        assertEquals("10", capturedPageSize)
+    }
+
+    @Test
+    fun `getDrawerUnread shows no dot for a group whose fetch failed`() = runTest {
+        // Forum 77 is absent from the map, so its request 500s. A transient failure must
+        // not invent a dot — nor take the healthy group down with it (awaitAll would).
+        val repo = drawerRepo(
+            mapOf(42L to """{"topics":[${activityTopic(1, "2026/07/10 12:00:00 +0000")}]}"""),
+        )
+
+        val result = repo.getDrawerUnread(
+            groups = dotGroups,
+            groupLastViewed = mapOf(1L to at("2026/07/05 00:00:00 +0000"), 2L to at("2026/07/05 00:00:00 +0000")),
+            now = at("2026/07/19 00:00:00 +0000"),
+        )
+
+        assertEquals(setOf(42L), result.unread.unreadGroupForumIds)
+    }
+
+    @Test
+    fun `getDrawerUnread shows no dot when no topic carries a parseable timestamp`() = runTest {
+        val repo = drawerRepo(
+            mapOf(
+                42L to """{"topics":[
+                    ${activityTopic(1, null)},
+                    ${activityTopic(2, "not-a-timestamp")}
+                ]}""",
+            ),
+        )
+
+        val result = repo.getDrawerUnread(
+            groups = listOf(dotGroups.first()),
+            groupLastViewed = mapOf(1L to at("2026/01/01 00:00:00 +0000")),
+            now = at("2026/07/19 00:00:00 +0000"),
+        )
+
+        assertTrue(result.unread.unreadGroupForumIds.isEmpty())
+    }
+
+    @Test
+    fun `getDrawerUnread still reports the read-marker-based Your Posts dot`() = runTest {
+        // The "Your Posts" dot is cross-group and deliberately unchanged by part 3: it
+        // stays read-marker based, since the user has by definition opened those topics.
+        val repo = drawerRepo(
+            topicsByForumId = mapOf(42L to """{"topics":[]}""", 77L to """{"topics":[]}"""),
             postingJson = """{"topics":[
                 {"id":3,"title":"C","forum_id":42,"forum_posts_count":9,"last_read":2}
             ]}""",
         )
 
-        val unread = repo.getDrawerUnread()
+        val result = repo.getDrawerUnread(dotGroups, emptyMap(), now = 0L)
 
-        assertEquals(setOf(42L), unread.unreadGroupForumIds)
-        assertTrue(unread.yourPostsHasUnread)
+        assertTrue(result.unread.yourPostsHasUnread)
     }
 
     @Test
-    fun `getDrawerUnread reports no unread when everything is at the read marker`() = runTest {
-        val allRead = """{"topics":[{"id":1,"title":"A","forum_id":42,"forum_posts_count":3,"last_read":3}]}"""
-        val repo = unreadRepo(readingJson = allRead, postingJson = allRead)
+    fun `getYourPostsUnread is false when every posted-in topic is at its read marker`() = runTest {
+        val repo = drawerRepo(
+            topicsByForumId = emptyMap(),
+            postingJson = """{"topics":[
+                {"id":1,"title":"A","forum_id":42,"forum_posts_count":3,"last_read":3}
+            ]}""",
+        )
 
-        val unread = repo.getDrawerUnread()
+        assertFalse(repo.getYourPostsUnread())
+    }
 
-        assertTrue(unread.unreadGroupForumIds.isEmpty())
-        assertFalse(unread.yourPostsHasUnread)
+    @Test
+    fun `getDrawerUnread prunes last-viewed entries for groups the user left`() = runTest {
+        // Otherwise the map grows forever — same maintenance rule as reconcileGroupOrder.
+        val repo = drawerRepo(mapOf(42L to """{"topics":[]}"""))
+        val viewedAt = at("2026/07/05 00:00:00 +0000")
+
+        val result = repo.getDrawerUnread(
+            groups = listOf(dotGroups.first()),
+            groupLastViewed = mapOf(1L to viewedAt, 999L to viewedAt),
+            now = at("2026/07/19 00:00:00 +0000"),
+        )
+
+        assertEquals(mapOf(1L to viewedAt), result.groupLastViewed)
     }
 }
