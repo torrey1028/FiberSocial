@@ -55,7 +55,7 @@ class NewEventPlanningTest {
     }
 
     @Test
-    fun `unknown events notify with group and time context`() {
+    fun `unknown events notify with group identity and time context`() {
         val state = plan(state = null, upcoming = listOf(upcoming("a"))).newState
         val result = plan(state = state, upcoming = listOf(upcoming("a"), upcoming("b", "Lace Knitters")))
         assertEquals(
@@ -64,6 +64,9 @@ class NewEventPlanningTest {
                     eventPermalink = "b",
                     eventTitle = "b",
                     groupName = "Lace Knitters",
+                    // Carried so a tap can put this group's events list under the
+                    // opened event detail (issue #351).
+                    groupId = group("Lace Knitters").id,
                     whenText = "July 10, 2026 @ 5:30 PM",
                 ),
             ),

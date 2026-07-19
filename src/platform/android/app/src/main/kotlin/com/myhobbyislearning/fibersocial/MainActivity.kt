@@ -33,9 +33,9 @@ import com.myhobbyislearning.fibersocial.profile.LocalProfileOpener
 import com.myhobbyislearning.fibersocial.login.AuthAndroidViewModel
 import com.myhobbyislearning.fibersocial.login.LoginScreen
 import com.myhobbyislearning.fibersocial.login.WebViewLoginScreen
-import com.myhobbyislearning.fibersocial.notifications.EXTRA_EVENT_PERMALINK
-import com.myhobbyislearning.fibersocial.notifications.EXTRA_OPEN_MY_POSTS
+import com.myhobbyislearning.fibersocial.notifications.DeepLink
 import com.myhobbyislearning.fibersocial.notifications.EventNotifier
+import com.myhobbyislearning.fibersocial.notifications.toDeepLink
 import com.myhobbyislearning.fibersocial.notifications.EventSyncWorker
 import com.myhobbyislearning.fibersocial.notifications.KeyValueMutedTopicsStore
 import com.myhobbyislearning.fibersocial.notifications.KeyValueNotificationSettingsStore
@@ -55,11 +55,8 @@ class MainActivity : ComponentActivity() {
     private val authVm: AuthAndroidViewModel by viewModels()
     private val feedVm: FeedAndroidViewModel by viewModels()
 
-    /** Event permalink from a tapped notification; consumed by FeedScreen's deep link. */
-    private val deepLinkEvent = MutableStateFlow<String?>(null)
-
-    /** Set by a tapped reply notification; FeedScreen opens the My Posts feed. */
-    private val deepLinkMyPosts = MutableStateFlow(false)
+    /** Destination from a tapped notification; consumed once by FeedScreen (issue #351). */
+    private val deepLink = MutableStateFlow<DeepLink?>(null)
 
     private val notificationPermissionRequest =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
@@ -77,8 +74,7 @@ class MainActivity : ComponentActivity() {
         // (rotation, process restore) the retained launch intent would replay a deep
         // link the user already consumed and dismissed.
         if (savedInstanceState == null) {
-            deepLinkEvent.value = intent.getStringExtra(EXTRA_EVENT_PERMALINK)
-            deepLinkMyPosts.value = intent.getBooleanExtra(EXTRA_OPEN_MY_POSTS, false)
+            deepLink.value = intent.toDeepLink()
         }
         setContent {
             // Hoisted above the theme so the Settings screen's override applies
@@ -162,8 +158,7 @@ class MainActivity : ComponentActivity() {
                                     authVm.auth.logout()
                                 }
                             }
-                            val deepLink by deepLinkEvent.collectAsState()
-                            val deepLinkPosts by deepLinkMyPosts.collectAsState()
+                            val pendingDeepLink by deepLink.collectAsState()
                             // Project links tapped in post content open the in-app project
                             // page (issue #103); tapping a username opens the profile (#194).
                             CompositionLocalProvider(
@@ -178,10 +173,8 @@ class MainActivity : ComponentActivity() {
                                     feedVm.reset()
                                     authVm.auth.logout()
                                 },
-                                deepLinkEventPermalink = deepLink,
-                                onDeepLinkConsumed = { deepLinkEvent.value = null },
-                                deepLinkMyPosts = deepLinkPosts,
-                                onDeepLinkMyPostsConsumed = { deepLinkMyPosts.value = false },
+                                deepLink = pendingDeepLink,
+                                onDeepLinkConsumed = { deepLink.value = null },
                                 themeMode = themeMode,
                                 onThemeModeSelected = { mode ->
                                     themeMode = mode
@@ -220,8 +213,7 @@ class MainActivity : ComponentActivity() {
         // Adopt the new intent so a later recreation doesn't resurrect the extras of
         // whatever intent originally launched the activity.
         setIntent(intent)
-        deepLinkEvent.value = intent.getStringExtra(EXTRA_EVENT_PERMALINK)
-        deepLinkMyPosts.value = intent.getBooleanExtra(EXTRA_OPEN_MY_POSTS, false)
+        deepLink.value = intent.toDeepLink()
     }
 
     private fun requestNotificationPermissionIfNeeded() {

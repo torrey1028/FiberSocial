@@ -11,6 +11,7 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
@@ -52,6 +53,26 @@ class EventNotifierTest {
         assertEquals("Cozy Meetup", shadowOf(posted).contentText)
         val tapIntent = shadowOf(posted.contentIntent).savedIntent
         assertEquals("cozy-meetup", tapIntent.getStringExtra(EXTRA_EVENT_PERMALINK))
+        // Reminders are planned from the RSVP'd-events scrape, which records no group,
+        // so back from the opened event goes straight to the feed (issue #351).
+        assertFalse(tapIntent.hasExtra(EXTRA_EVENT_GROUP_ID))
+    }
+
+    @Test
+    fun `new-event notifications carry the group so back lands on its events list`() {
+        notifier.showNewEvent(
+            NewEventNotification(
+                eventPermalink = "cozy-meetup",
+                eventTitle = "Cozy Meetup",
+                groupName = "Kirkland Fiber Arts Circle",
+                groupId = 4242L,
+                whenText = "July 10, 2026 @ 5:30 PM",
+            ),
+        )
+
+        val tapIntent = shadowOf(shadowOf(manager).allNotifications.single().contentIntent).savedIntent
+        assertEquals("cozy-meetup", tapIntent.getStringExtra(EXTRA_EVENT_PERMALINK))
+        assertEquals(4242L, tapIntent.getLongExtra(EXTRA_EVENT_GROUP_ID, 0L))
     }
 
     @Test
@@ -70,6 +91,7 @@ class EventNotifierTest {
                 eventPermalink = "cozy-meetup",
                 eventTitle = "Cozy Meetup",
                 groupName = "Kirkland Fiber Arts Circle",
+                groupId = 4242L,
                 whenText = "July 10, 2026 @ 5:30 PM",
             ),
         )
@@ -91,7 +113,7 @@ class EventNotifierTest {
             .first { it.hashCode() and EventNotifier.NEW_EVENT_ID_MASK != 0 }
         notifier.showReminder(trickyPermalink, "T", ReminderKind.SOON)
         notifier.showNewEvent(
-            NewEventNotification("plain-event", "T", "Group", "July 10"),
+            NewEventNotification("plain-event", "T", "Group", 1L, "July 10"),
         )
 
         val ids = manager.activeNotifications.map { it.id }
@@ -163,11 +185,43 @@ class EventNotifierTest {
     }
 
     @Test
-    fun `reply notifications deep-link to the My Posts feed`() {
-        notifier.showNewReplies(listOf(reply(1L, 2)))
+    fun `a reply child deep-links to its own topic, not just the feed`() {
+        notifier.showNewReplies(listOf(reply(7L, 2)))
 
-        val child = manager.activeNotifications.single { it.tag == "topic-1" }
+        val child = manager.activeNotifications.single { it.tag == "topic-7" }
         val tapIntent = shadowOf(child.notification.contentIntent).savedIntent
+        assertEquals(7L, tapIntent.getLongExtra(EXTRA_TOPIC_ID, 0L))
+        // The child names a topic, so it must NOT also ask for the bare feed — the
+        // host reads the extras most-specific-first and topic wins, but carrying both
+        // would make the two notification kinds indistinguishable.
+        assertFalse(tapIntent.getBooleanExtra(EXTRA_OPEN_MY_POSTS, false))
+    }
+
+    @Test
+    fun `the group summary still opens the My Posts feed`() {
+        // A summary spans several topics, so there is no single right one to open.
+        notifier.showNewReplies(listOf(reply(1L, 2), reply(2L, 3)))
+
+        val summary = manager.activeNotifications.single { it.tag == MY_POSTS_SUMMARY_TAG }
+        val tapIntent = shadowOf(summary.notification.contentIntent).savedIntent
         assertTrue(tapIntent.getBooleanExtra(EXTRA_OPEN_MY_POSTS, false))
+        assertFalse(tapIntent.hasExtra(EXTRA_TOPIC_ID))
+    }
+
+    @Test
+    fun `two topics' children get distinct PendingIntents`() {
+        // PendingIntents are matched by Intent.filterEquals, which ignores extras: if
+        // both children shared a data URI they would collapse onto one PendingIntent and
+        // FLAG_UPDATE_CURRENT would rewrite the first one's topic id, so tapping either
+        // notification would open the same (wrong) topic.
+        notifier.showNewReplies(listOf(reply(1L, 2), reply(2L, 3)))
+
+        val first = manager.activeNotifications.single { it.tag == "topic-1" }.notification.contentIntent
+        val second = manager.activeNotifications.single { it.tag == "topic-2" }.notification.contentIntent
+        assertNotEquals(first, second)
+        assertNotEquals(
+            shadowOf(first).savedIntent.data,
+            shadowOf(second).savedIntent.data,
+        )
     }
 }
