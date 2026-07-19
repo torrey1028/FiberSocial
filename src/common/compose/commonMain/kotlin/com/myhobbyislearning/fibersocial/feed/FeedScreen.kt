@@ -45,6 +45,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Search
@@ -265,6 +266,9 @@ internal fun FeedTopBar(
     onOpenDrawer: () -> Unit,
     showUnreadOnly: Boolean = false,
     onToggleUnreadOnly: () -> Unit = {},
+    // Hidden on destinations that aren't the topic feed (currently Messages, #369), where the
+    // filter would have nothing to act on. Defaults to true so the feed keeps its behaviour.
+    showFilter: Boolean = true,
 ) {
     TopAppBar(
         title = {
@@ -304,7 +308,7 @@ internal fun FeedTopBar(
             // The icon itself still tints to the theme's primary color while a filter is
             // active, so the state is visible without opening the menu.
             var filterMenuExpanded by remember { mutableStateOf(false) }
-            Box {
+            if (showFilter) Box {
                 IconButton(onClick = { filterMenuExpanded = true }) {
                     Icon(
                         imageVector = FilterListIcon,
@@ -442,6 +446,25 @@ fun FeedScreen(
     // deliberately carries across group switches — folding the pinned section away is a
     // standing "I don't need these" preference, not a per-group choice.
     var pinnedCollapsed by remember { mutableStateOf(false) }
+    // THE Messages destination flag (issue #369, epic #365). This single boolean is how
+    // Messages is selected — programmatically, set it to `true` (and it wins over whatever
+    // the feed's own selection is, without disturbing it). Later work in this epic — the
+    // drawer unread dot (#372) and the message-notification deep link (#375) — should drive
+    // this flag rather than inventing a second mechanism.
+    //
+    // Why a screen-level flag and NOT a third field on FeedState.Loaded: Messages doesn't
+    // share the feed's item pipeline at all, so threading it through FeedState would mean
+    // touching every copy(...) in selectGroup/selectMyPosts/refresh/fetchFeed to carry a
+    // value none of them can act on — and it would put a third mode into the feedListState
+    // key (:433), which currently distinguishes "My Posts" from a group id and would collide
+    // with the no-groups null case exactly as the comment above that key warns.
+    //
+    // Why it renders INSIDE the Scaffold rather than as a top-level early return like
+    // eventsGroup/showSettings: those are pushed sub-screens with their own back arrow.
+    // Messages is a peer drawer destination, so it has to keep the drawer and the top bar —
+    // otherwise the user would land somewhere with no way back to Posts or Groups. Selecting
+    // Posts or a group clears it (see the drawer call site below), which is the "back" here.
+    var showingMessages by rememberSaveable { mutableStateOf(false) }
     var selectedTopic by remember { mutableStateOf<FeedItem?>(null) }
     var selectedEventPermalink by remember { mutableStateOf<String?>(null) }
     var eventsGroup by remember { mutableStateOf<Group?>(null) }
@@ -506,6 +529,7 @@ fun FeedScreen(
         showAbout = false
         showDebugPanel = false
         eventsGroup = null
+        showingMessages = false
         composingTopic = false
         composingEventGroup = null
         sendingFeedback = false
@@ -1061,22 +1085,37 @@ fun FeedScreen(
     CloseDrawerOnBack(drawerState)
 
     val title = when {
+        showingMessages -> "Messages"
         showingMyPosts -> "Posts"
         else -> loaded?.selectedGroup?.name ?: "FiberSocial"
     }
     val selectedGroup = loaded?.selectedGroup
+    // What the chrome treats as the active feed selection. Messages overrides the feed's own
+    // selection without clearing it (see showingMessages above), so while it's up neither the
+    // group rows nor "Posts" may paint as selected and the top bar must drop the group badge —
+    // otherwise two destinations look active at once and the badge contradicts the title.
+    val chromeSelectedGroup = if (showingMessages) null else selectedGroup
 
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
             GroupDrawer(
                 groups = groups,
-                selectedGroup = selectedGroup,
-                myPostsSelected = showingMyPosts,
+                selectedGroup = chromeSelectedGroup,
+                myPostsSelected = showingMyPosts && !showingMessages,
                 onMyPostsSelected = {
                     scope.launch { drawerState.close() }
+                    showingMessages = false
                     viewModel.feed.selectMyPosts()
                 },
+                messagesSelected = showingMessages,
+                onMessagesSelected = {
+                    scope.launch { drawerState.close() }
+                    showingMessages = true
+                },
+                // Wired but always false until the drawer unread-dot issue (#372) gives
+                // DrawerUnread a third leg for messages.
+                messagesHasUnread = false,
                 unreadGroupForumIds = drawerUnread.unreadGroupForumIds,
                 myPostsHasUnread = drawerUnread.yourPostsHasUnread,
                 eventCounts = eventCounts,
@@ -1090,6 +1129,7 @@ fun FeedScreen(
                 onJoinFeedbackGroup = { viewModel.feed.joinSupportGroup(SupportGroup.PERMALINK) },
                 onGroupSelected = { group ->
                     scope.launch { drawerState.close() }
+                    showingMessages = false
                     viewModel.feed.selectGroup(group)
                 },
                 onReorder = { viewModel.feed.reorderGroups(it) },
@@ -1119,17 +1159,23 @@ fun FeedScreen(
             topBar = {
                 FeedTopBar(
                     title = title,
-                    selectedGroup = selectedGroup,
+                    selectedGroup = chromeSelectedGroup,
                     onOpenDrawer = {
                         viewModel.feed.acknowledgeJoinError()
                         scope.launch { drawerState.open() }
                     },
                     showUnreadOnly = showUnreadOnly,
                     onToggleUnreadOnly = { showUnreadOnly = !showUnreadOnly },
+                    // The unread filter acts on the topic feed, which isn't what's on screen
+                    // while Messages is up — leaving it there would offer a control that
+                    // silently does nothing.
+                    showFilter = !showingMessages,
                 )
             },
             floatingActionButton = {
-                if (loaded != null && groups.isNotEmpty()) {
+                // No feed FABs over Messages — "New topic" and the events shortcut both act
+                // on the topic feed that Messages has replaced.
+                if (loaded != null && groups.isNotEmpty() && !showingMessages) {
                     FeedFabs(
                         selectedGroup = loaded.selectedGroup,
                         onGroupEventsClick = { group -> eventsGroup = group },
@@ -1146,7 +1192,11 @@ fun FeedScreen(
                 }
             },
         ) { padding ->
-            when (val s = state) {
+            // Messages replaces the feed content while keeping the drawer and top bar, so the
+            // user can navigate back out to Posts or a group. Placeholder for now — the real
+            // inbox arrives with the messages API work in epic #365.
+            if (showingMessages) MessagesPlaceholder(modifier = Modifier.padding(padding))
+            else when (val s = state) {
                 // Loading is handled by the full-page LaunchLoadingScreen early-return
                 // above (issue #233), so it never reaches the Scaffold; this arm only
                 // keeps the sealed `when` exhaustive.
@@ -1517,6 +1567,30 @@ internal fun UnreadFilterEmptyState(
     }
 }
 
+/**
+ * Placeholder body for the Messages destination (issue #369).
+ *
+ * This PR is deliberately navigation-only — it lands the drawer row, the destination flag and
+ * the chrome behaviour without touching the API, so it can merge independently of the messages
+ * endpoints being built in parallel (epic #365). The real inbox replaces this composable.
+ */
+@Composable
+internal fun MessagesPlaceholder(modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier.fillMaxSize().testTag("MessagesPlaceholder"),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Text(
+            text = "No messages yet",
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(horizontal = 32.dp),
+        )
+    }
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun GroupDrawer(
@@ -1524,10 +1598,15 @@ internal fun GroupDrawer(
     selectedGroup: Group?,
     myPostsSelected: Boolean = false,
     onMyPostsSelected: () -> Unit = {},
+    messagesSelected: Boolean = false,
+    onMessagesSelected: () -> Unit = {},
     // Unread indicators (unread dots): forum ids of groups with unread posts, and whether
     // the user's own posts have unread replies. A dot appears on the matching rows.
     unreadGroupForumIds: Set<Long> = emptySet(),
     myPostsHasUnread: Boolean = false,
+    // Always false today: the caller has nothing to derive it from until DrawerUnread grows a
+    // messages leg (#372). The slot exists now so lighting it up is a one-line change there.
+    messagesHasUnread: Boolean = false,
     eventCounts: Map<Long, Int>,
     user: RavelryUser?,
     isFeedbackGroupMember: Boolean = false,
@@ -1678,16 +1757,20 @@ internal fun GroupDrawer(
             // now start at lazy index 0, which is why DRAWER_ITEMS_BEFORE_GROUPS (formerly
             // 2, compensating for these two items) is gone from the drag-to-reorder math.
             //
-            // "Posts" and "Groups" each get a HorizontalDivider ABOVE them, the same
-            // treatment the "Send feedback" row gets at the bottom of the sheet. Unselected
-            // NavigationDrawerItems paint no pill, so on their own they read as flat text
-            // on the sheet surface and don't look tappable; a rule above each one reads as
-            // a list of discrete tappable rows, which bracketing the pair as a single block
-            // did not. There is deliberately NO rule below "Groups" — it heads the group
-            // list beneath it, so a line there would cut the header off from its own
-            // children rather than separating two peers.
+            // "Posts", "Messages" and "Groups" each get a HorizontalDivider ABOVE them, the
+            // same treatment the "Send feedback" row gets at the bottom of the sheet.
+            // Unselected NavigationDrawerItems paint no pill, so on their own they read as
+            // flat text on the sheet surface and don't look tappable; a rule above each one
+            // reads as a list of discrete tappable rows, which bracketing the group as a
+            // single block did not. There is deliberately NO rule below "Groups" — it heads
+            // the group list beneath it, so a line there would cut the header off from its
+            // own children rather than separating two peers.
+            //
+            // The test tags name the row each rule sits above, so adding a destination is a
+            // matter of adding one more "AboveX" tag rather than renumbering Top/Middle/Bottom
+            // (which is what these were before Messages landed between Posts and Groups).
             Spacer(Modifier.height(16.dp))
-            HorizontalDivider(Modifier.testTag("DrawerNavClusterTop"))
+            HorizontalDivider(Modifier.testTag("DrawerNavDividerAbovePosts"))
             Spacer(Modifier.height(8.dp))
             NavigationDrawerItem(
                 label = { Text("Posts") },
@@ -1701,7 +1784,23 @@ internal fun GroupDrawer(
                 modifier = Modifier.padding(horizontal = 12.dp),
             )
             Spacer(Modifier.height(8.dp))
-            HorizontalDivider(Modifier.testTag("DrawerNavClusterMiddle"))
+            HorizontalDivider(Modifier.testTag("DrawerNavDividerAboveMessages"))
+            Spacer(Modifier.height(8.dp))
+            // Direct messages (#369). A peer of "Posts" rather than a group-list entry, so it
+            // gets the same row treatment, including the unread-dot slot.
+            NavigationDrawerItem(
+                label = { Text("Messages") },
+                selected = messagesSelected,
+                onClick = { if (!reorderMode) onMessagesSelected() },
+                icon = {
+                    IconWithUnreadDot(hasUnread = messagesHasUnread) {
+                        Icon(Icons.Default.Email, contentDescription = null)
+                    }
+                },
+                modifier = Modifier.padding(horizontal = 12.dp),
+            )
+            Spacer(Modifier.height(8.dp))
+            HorizontalDivider(Modifier.testTag("DrawerNavDividerAboveGroups"))
             Spacer(Modifier.height(8.dp))
             // The section header is a NavigationDrawerItem so its pill matches the "Posts"
             // row above, and it folds the group list like the feed's pinned section: same

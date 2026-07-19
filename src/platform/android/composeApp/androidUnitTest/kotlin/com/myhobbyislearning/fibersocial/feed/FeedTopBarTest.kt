@@ -109,4 +109,24 @@ class FeedTopBarTest {
 
         compose.onNodeWithContentDescription("Filter: showing unread topics only. Tap to change.").assertIsDisplayed()
     }
+
+    /**
+     * Issue #369: the Messages destination reuses this top bar, but the unread filter acts on
+     * the topic feed Messages has replaced — showing it there would offer a dead control.
+     */
+    @Test
+    fun `the filter is hidden when showFilter is off`() {
+        compose.setContent {
+            FeedTopBar(
+                title = "Messages",
+                selectedGroup = null,
+                onOpenDrawer = {},
+                showFilter = false,
+            )
+        }
+
+        compose.onNodeWithText("Messages").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Filter: showing all topics. Tap to change.")
+            .assertDoesNotExist()
+    }
 }
