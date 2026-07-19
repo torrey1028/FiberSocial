@@ -150,6 +150,45 @@ class TopicDetailViewModelTest {
     }
 
     @Test
+    fun `markRead runs onMarked only after the read POST has landed`() =
+        runTest(UnconfinedTestDispatcher()) {
+            // The drawer's unread-dot re-check hangs off this callback (issue #350 part 2).
+            // getDrawerUnread() is a GET that races this POST, so firing it alongside the
+            // POST rather than after it would read the PRE-read state and re-light the very
+            // dot the read just cleared — the ordering below is the whole contract.
+            var postSeen = false
+            var markedAfterPost: Boolean? = null
+            val engine = MockEngine {
+                postSeen = true
+                respond("", HttpStatusCode.OK,
+                    headersOf("Content-Type", ContentType.Application.Json.toString()))
+            }
+            val httpClient = HttpClient(engine) {
+                install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+            }
+            val vm = TopicDetailViewModel(RavelryApiClient(httpClient, FakeFeedTokenStorage()), this)
+
+            vm.markRead(42L, 7) { markedAfterPost = postSeen }
+            awaitChildren(coroutineContext[Job]!!)
+
+            assertEquals(true, markedAfterPost)
+        }
+
+    @Test
+    fun `markRead does not run onMarked when the read POST fails`() =
+        runTest(UnconfinedTestDispatcher()) {
+            // The marker never moved, so re-reading unread state would only re-confirm the
+            // dot at the cost of two network calls.
+            var marked = false
+            val vm = TopicDetailViewModel(errorApiClient(), this)
+
+            vm.markRead(42L, 3) { marked = true }
+            awaitChildren(coroutineContext[Job]!!)
+
+            assertFalse(marked)
+        }
+
+    @Test
     fun `markRead swallows failures`() = runTest(UnconfinedTestDispatcher()) {
         // Best-effort: a failed read POST must not crash or surface anywhere.
         val vm = TopicDetailViewModel(errorApiClient(), this)

@@ -113,6 +113,7 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import com.myhobbyislearning.fibersocial.about.AboutScreen
+import com.myhobbyislearning.fibersocial.app.ForegroundActivations
 import com.myhobbyislearning.fibersocial.debug.DebugPanel
 import com.myhobbyislearning.fibersocial.events.EventDetailScreen
 import com.myhobbyislearning.fibersocial.events.EventsScreen
@@ -380,9 +381,17 @@ fun FeedScreen(
     val leaveError by viewModel.feed.leaveError.collectAsState()
     val drawerUnread by viewModel.feed.drawerUnread.collectAsState()
     // Fetch the drawer's unread dots once the authenticated feed is showing (issue: unread
-    // indicators). Kept a UI-driven side channel — not folded into load()/refresh() — so it
-    // never blocks or interferes with the feed fetch; drawer pull-to-refresh re-fires it.
-    LaunchedEffect(Unit) { viewModel.feed.refreshDrawerUnread() }
+    // indicators), and again on every real foreground resume (issue #350 part 1). Kept a
+    // UI-driven side channel — not folded into load()/refresh() — so it never blocks or
+    // interferes with the feed fetch; drawer pull-to-refresh re-fires it too.
+    //
+    // Keyed on the activation counter rather than Unit: ForegroundActivations is a
+    // StateFlow, so this effect runs immediately on first composition with whatever value
+    // is current (cold start / login) AND restarts on each later resume. A separate
+    // LaunchedEffect(Unit) for the initial fetch would be redundant — and would double
+    // the cold-start network pass — so it is deliberately gone.
+    val foregroundTick by ForegroundActivations.ticks.collectAsState()
+    LaunchedEffect(foregroundTick) { viewModel.feed.refreshDrawerUnread() }
     // Hoisted above the topic-detail early-return below so the feed's scroll position
     // survives opening a topic and coming back (issue #204): FeedList is removed from
     // composition while a topic is open, so a list state owned by it would reset to top.
@@ -739,7 +748,12 @@ fun FeedScreen(
             // Leaving the thread: sync Ravelry's read marker to how far the user scrolled
             // and mirror it in the feed card's unread badge (issue #206).
             onMarkRead = { lastRead ->
-                viewModel.topicDetail.markRead(topic.id, lastRead)
+                // The drawer-dot re-check is sequenced behind the mark-read (issue #350
+                // part 2), not fired next to it: getDrawerUnread() is a GET that would
+                // race this POST and, on winning, report the pre-read state.
+                viewModel.topicDetail.markRead(topic.id, lastRead) {
+                    viewModel.feed.refreshDrawerUnreadAfterReading(topic.id)
+                }
                 viewModel.feed.markTopicReadUpTo(topic.id, lastRead)
             },
             currentUsername = currentUsername,

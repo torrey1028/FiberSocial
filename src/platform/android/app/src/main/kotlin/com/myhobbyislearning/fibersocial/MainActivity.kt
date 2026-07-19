@@ -22,6 +22,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import com.myhobbyislearning.fibersocial.app.ForegroundActivations
 import com.myhobbyislearning.fibersocial.auth.AuthState
 import com.myhobbyislearning.fibersocial.feed.FeedAndroidViewModel
 import androidx.compose.runtime.CompositionLocalProvider
@@ -202,6 +203,16 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // FiberSocial is a single-Activity app, so this Activity resuming IS the process
+        // coming to the foreground — enough to drive the shared activation signal without
+        // adding androidx.lifecycle-process for ProcessLifecycleOwner (issue #350 part 1).
+        // Also fires on the cold-start resume and on config-change recreation; both are
+        // harmless, since the consumer (drawer unread dots) cancels any in-flight refresh.
+        ForegroundActivations.notifyForegrounded()
     }
 
     override fun onNewIntent(intent: Intent) {

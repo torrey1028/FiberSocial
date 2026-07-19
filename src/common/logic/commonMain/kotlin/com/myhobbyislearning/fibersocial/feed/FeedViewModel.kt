@@ -290,6 +290,10 @@ class FeedViewModel(
      * moment the user backs out, without waiting for a refetch. Only ever lowers the
      * count (Ravelry's marker also only advances), and no-ops if the feed isn't loaded
      * or nothing would change.
+     *
+     * Only touches the in-memory card. Re-checking the drawer's dots after a read is
+     * [refreshDrawerUnreadAfterReading], which has to run *after* Ravelry's marker has
+     * actually advanced — see its doc.
      */
     fun markTopicReadUpTo(topicId: Long, readUpTo: Int) {
         val current = _state.value as? FeedState.Loaded ?: return
@@ -308,6 +312,57 @@ class FeedViewModel(
                 }
             },
         )
+    }
+
+    /**
+     * Re-checks the drawer's unread dots after [topicId] has been read (issue #350 part 2).
+     *
+     * Reading is the only natural moment a dot can go *out* — [markTopicReadUpTo] updates
+     * just the in-memory card, and drawer-open deliberately doesn't refresh — so without
+     * this a group whose every topic has been read keeps its dot lit until a manual pull.
+     *
+     * **Call this only once Ravelry's read marker has actually advanced**
+     * ([TopicDetailViewModel.markRead]'s `onMarked`), never alongside the POST that
+     * advances it: [FeedRepository.getDrawerUnread] is a GET that races such a POST, and
+     * a GET that wins reports the pre-read state — re-lighting the very dot this exists
+     * to clear.
+     *
+     * Gated by [shouldRefreshDrawerUnreadAfterReading] so the common case (backing out of
+     * a topic with no relevant dot lit) costs nothing.
+     */
+    fun refreshDrawerUnreadAfterReading(topicId: Long) {
+        val current = _state.value as? FeedState.Loaded ?: return
+        val target = current.items.firstOrNull { it.id == topicId } ?: return
+        if (shouldRefreshDrawerUnreadAfterReading(current, target)) refreshDrawerUnread()
+    }
+
+    /**
+     * Whether reading [target] in [current] could have turned a currently-lit drawer dot
+     * off, and is therefore worth paying a [refreshDrawerUnread] for. True when either:
+     *
+     * - the topic's own group row has a dot — its forum is in
+     *   [DrawerUnread.unreadGroupForumIds] (matched via the loaded [Group.forumId], since
+     *   [FeedItem] carries the group id, not the forum id); or
+     * - the "Your Posts" dot is lit *and* the My Posts feed is what's showing — there,
+     *   every topic is by definition one the user posted in, so reading one can clear it.
+     *
+     * Reading from a *group* feed is deliberately not treated as a "Your Posts" candidate:
+     * whether the user has posted in that topic isn't known without another fetch, and the
+     * "Your Posts" dot is lit often enough that guessing yes would make the gate almost
+     * unconditional — exactly the cost this avoids. That dot instead settles on the next
+     * foreground activation or drawer pull-to-refresh.
+     *
+     * When no relevant dot is lit there is nothing to clear, so the refresh would be pure
+     * waste and is skipped.
+     */
+    private fun shouldRefreshDrawerUnreadAfterReading(
+        current: FeedState.Loaded,
+        target: FeedItem,
+    ): Boolean {
+        val unread = _drawerUnread.value
+        val forumId = current.groups.firstOrNull { it.id == target.groupId }?.forumId
+        if (forumId != null && forumId in unread.unreadGroupForumIds) return true
+        return unread.yourPostsHasUnread && current.myPosts
     }
 
     /**

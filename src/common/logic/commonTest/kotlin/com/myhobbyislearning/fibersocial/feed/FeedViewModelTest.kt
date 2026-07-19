@@ -9,6 +9,7 @@ import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.sync.Mutex
@@ -1046,6 +1047,152 @@ class FeedViewModelTest {
             val item = assertIs<FeedState.Loaded>(vm.state.value).items.single()
             assertEquals(4, item.unreadCount)
             assertEquals(7, item.firstUnreadPostNumber)
+        }
+
+    /**
+     * A feed repo whose `filtered_topics` route (both [FeedRepository.getDrawerUnread]
+     * legs and the My Posts feed) serves whatever [payload] currently holds, so a test can
+     * change the drawer-unread answer mid-test and detect from the resulting
+     * [FeedViewModel.drawerUnread] whether a refresh actually re-fetched.
+     *
+     * [payload] is a [MutableStateFlow], not a plain `var`: MockEngine dispatches request
+     * handling on [kotlinx.coroutines.Dispatchers.IO] regardless of the calling coroutine's
+     * dispatcher (see [FakeFeedTokenStorage]'s KDoc), so the route body genuinely runs on
+     * another thread — a StateFlow's volatile-backed value guarantees it observes the
+     * test thread's write, where an unsynchronized field would be a CI-only flake.
+     *
+     * `filtered_topics` is routed BEFORE the generic `/forums/` branch: it lives under
+     * `/forums/` too, so the order is load-bearing.
+     */
+    private fun drawerDotRepo(
+        payload: MutableStateFlow<String>,
+        postsCount: Int = 10,
+    ): FeedRepository = FeedRepository(routingApiClient { path ->
+        when {
+            path.contains("/current_user") -> CURRENT_USER_JSON
+            path.contains("memberships") -> MEMBERSHIPS_HTML
+            path.contains("/groups/search") -> GROUPS_JSON
+            path.contains("filtered_topics") -> payload.value
+            path.contains("/forums/") -> topicsJson(100L)
+            path.contains("/topics/") -> topicDetailJson(100L, postsCount = postsCount)
+            else -> error("Unexpected: $path")
+        }
+    })
+
+    /** One unread topic in [forumId] — lights that group's dot and the "Your Posts" dot. */
+    private fun unreadTopicJson(forumId: Long) =
+        """{"topics":[{"id":1,"title":"T","forum_id":$forumId,"forum_posts_count":5,"last_read":3}]}"""
+
+    /** One fully-read topic — lights nothing. */
+    private val readTopicJson =
+        """{"topics":[{"id":1,"title":"T","forum_id":42,"forum_posts_count":5,"last_read":5}]}"""
+
+    @Test
+    fun `refreshDrawerUnreadAfterReading refetches when the read topic's group dot is lit`() =
+        runTest(UnconfinedTestDispatcher()) {
+            // Reading is the one natural moment a dot can go out (issue #350 part 2), so a
+            // read inside a group that currently shows a dot must re-check it.
+            val payload = MutableStateFlow(unreadTopicJson(forumId = 42L))
+            val vm = FeedViewModel(drawerDotRepo(payload), this, FakeGroupOrderStore())
+            vm.load()
+            vm.refreshDrawerUnread()
+            awaitChildren(coroutineContext[Job]!!)
+            // KAL Hub (group 10) sits on forum 42, so its row's dot is lit.
+            assertEquals(setOf(42L), vm.drawerUnread.value.unreadGroupForumIds)
+
+            // Ravelry now reports nothing unread; only an actual re-fetch can observe that.
+            payload.value = readTopicJson
+            vm.markTopicReadUpTo(100L, readUpTo = 10)
+            vm.refreshDrawerUnreadAfterReading(100L)
+            awaitChildren(coroutineContext[Job]!!)
+
+            assertEquals(emptySet(), vm.drawerUnread.value.unreadGroupForumIds)
+            assertFalse(vm.drawerUnread.value.yourPostsHasUnread)
+        }
+
+    @Test
+    fun `refreshDrawerUnreadAfterReading skips the refetch when no dot is lit`() =
+        runTest(UnconfinedTestDispatcher()) {
+            // getDrawerUnread() is two network calls and backing out of a topic is very
+            // common; with no dot lit there is nothing a read could clear, so the refresh
+            // would be pure waste.
+            val payload = MutableStateFlow(readTopicJson)
+            val vm = FeedViewModel(drawerDotRepo(payload), this, FakeGroupOrderStore())
+            vm.load()
+            vm.refreshDrawerUnread()
+            awaitChildren(coroutineContext[Job]!!)
+            assertEquals(DrawerUnread(), vm.drawerUnread.value)
+
+            // If a refresh fired, it would pick this up and light forum 42's dot.
+            payload.value = unreadTopicJson(forumId = 42L)
+            vm.markTopicReadUpTo(100L, readUpTo = 10)
+            vm.refreshDrawerUnreadAfterReading(100L)
+            awaitChildren(coroutineContext[Job]!!)
+
+            assertEquals(DrawerUnread(), vm.drawerUnread.value)
+            // The in-memory badge update still happened — only the network refresh is gated.
+            assertEquals(0, assertIs<FeedState.Loaded>(vm.state.value).items.single().unreadCount)
+        }
+
+    @Test
+    fun `refreshDrawerUnreadAfterReading refetches from my-posts when the Your Posts dot is lit`() =
+        runTest(UnconfinedTestDispatcher()) {
+            // Forum 999 belongs to none of the user's groups, so the group-dot branch can't
+            // fire — this isolates the "Your Posts" branch of the gate.
+            val payload = MutableStateFlow(unreadTopicJson(forumId = 999L))
+            val vm = FeedViewModel(drawerDotRepo(payload), this, FakeGroupOrderStore())
+            vm.load()
+            awaitChildren(coroutineContext[Job]!!)
+            vm.selectMyPosts()
+            vm.refreshDrawerUnread()
+            awaitChildren(coroutineContext[Job]!!)
+            assertTrue(vm.drawerUnread.value.yourPostsHasUnread)
+            val item = assertIs<FeedState.Loaded>(vm.state.value).items.single()
+            // Attributed to no group (forum 999 matches no membership), so the only reason
+            // to refresh is the lit "Your Posts" dot.
+            assertTrue(item.unreadCount > 0)
+
+            payload.value = readTopicJson
+            vm.markTopicReadUpTo(item.id, readUpTo = item.postCount)
+            vm.refreshDrawerUnreadAfterReading(item.id)
+            awaitChildren(coroutineContext[Job]!!)
+
+            assertFalse(vm.drawerUnread.value.yourPostsHasUnread)
+        }
+
+    @Test
+    fun `refreshDrawerUnreadAfterReading is a no-op when the topic is no longer in the feed`() =
+        runTest(UnconfinedTestDispatcher()) {
+            // This runs on a callback fired when the read POST lands, so the feed can have
+            // been reloaded or switched to another group in the meantime — the just-read
+            // topic need not still be on screen. Nothing to attribute to a group, so no
+            // refetch (and no crash).
+            val payload = MutableStateFlow(unreadTopicJson(forumId = 42L))
+            val vm = FeedViewModel(drawerDotRepo(payload), this, FakeGroupOrderStore())
+            vm.load()
+            vm.refreshDrawerUnread()
+            awaitChildren(coroutineContext[Job]!!)
+            assertEquals(setOf(42L), vm.drawerUnread.value.unreadGroupForumIds)
+
+            payload.value = readTopicJson
+            vm.refreshDrawerUnreadAfterReading(999L)
+            awaitChildren(coroutineContext[Job]!!)
+
+            assertEquals(setOf(42L), vm.drawerUnread.value.unreadGroupForumIds)
+        }
+
+    @Test
+    fun `refreshDrawerUnreadAfterReading is a no-op when the feed is not loaded`() =
+        runTest(UnconfinedTestDispatcher()) {
+            // Same callback timing: a session expiry or reset() can have dropped the feed
+            // out of Loaded before the read POST landed.
+            val vm = FeedViewModel(drawerDotRepo(MutableStateFlow(readTopicJson)), this, FakeGroupOrderStore())
+
+            vm.refreshDrawerUnreadAfterReading(100L)
+            awaitChildren(coroutineContext[Job]!!)
+
+            assertIs<FeedState.Loading>(vm.state.value)
+            assertEquals(DrawerUnread(), vm.drawerUnread.value)
         }
 
     @Test
