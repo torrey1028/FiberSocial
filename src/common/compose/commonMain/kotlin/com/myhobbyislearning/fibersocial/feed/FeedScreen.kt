@@ -1816,7 +1816,7 @@ internal fun FeedFabs(
 
 /**
  * A small filled dot marking unread activity — the drawer's unread indicator, shown via
- * [IconWithUnreadDot] on a "Your Posts" / group row whose posts have unread replies.
+ * [IconWithUnreadDot] on a "Posts" / group row whose posts have unread replies.
  */
 @Composable
 private fun UnreadDot(modifier: Modifier = Modifier) {
