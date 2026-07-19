@@ -16,20 +16,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
-        with:
-          java-version: "17"
-          distribution: "temurin"
-
-      - name: Write local.properties
-        run: |
-          echo "sdk.dir=$ANDROID_HOME" > src/platform/android/local.properties
-          echo "ravelry.client_id=" >> src/platform/android/local.properties
-          echo "ravelry.client_secret=" >> src/platform/android/local.properties
-
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
+      # JDK + local.properties + Gradle from the shared composite action (#274).
+      # No credentials are passed: the test jobs never needed real ones, and the
+      # action's empty defaults reproduce the blank ravelry.* values these jobs
+      # have always written.
+      - name: Set up Android build environment
+        uses: ./.github/actions/setup-android-build
 
       - name: Run JVM tests and generate coverage report
         working-directory: src/platform/android
@@ -90,20 +82,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
-        with:
-          java-version: "17"
-          distribution: "temurin"
-
-      - name: Write local.properties
-        run: |
-          echo "sdk.dir=$ANDROID_HOME" > src/platform/android/local.properties
-          echo "ravelry.client_id=" >> src/platform/android/local.properties
-          echo "ravelry.client_secret=" >> src/platform/android/local.properties
-
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
+      # JDK + local.properties + Gradle from the shared composite action (#274).
+      # No credentials are passed: the test jobs never needed real ones, and the
+      # action's empty defaults reproduce the blank ravelry.* values these jobs
+      # have always written.
+      - name: Set up Android build environment
+        uses: ./.github/actions/setup-android-build
 
       - name: Run Android unit tests and generate coverage report
         working-directory: src/platform/android
@@ -164,12 +148,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
-        with:
-          java-version: "17"
-          distribution: "temurin"
-
       # Compose Multiplatform 1.11's ui-uikit links against iOS 26 SDK symbols
       # (UIViewLayoutRegion / the UIUtilities framework); the runner's default
       # Xcode 16.4 SDK lacks them and the framework link fails.
@@ -179,21 +157,16 @@ jobs:
           sudo xcode-select -s "$(ls -d /Applications/Xcode_26*.app | sort -V | tail -1)"
           xcodebuild -version
 
-      # The build applies AGP even for Native-only tasks (:common is also an
-      # Android library), and macOS arm64 runner images don't ship an Android SDK.
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      # JDK + Android SDK + local.properties + Gradle from the shared composite
+      # action (#274). The SDK install belongs inside it because $ANDROID_HOME
+      # has to exist before it's written into sdk.dir. Xcode selection stays
+      # here (macOS-only, unrelated to the Android toolchain); it now runs
+      # before the JDK install rather than after, which is inert — neither step
+      # reads anything the other produces.
+      - name: Set up Android build environment
+        uses: ./.github/actions/setup-android-build
         with:
-          packages: "platforms;android-34 platforms;android-36"
-
-      - name: Write local.properties
-        run: |
-          echo "sdk.dir=$ANDROID_HOME" > src/platform/android/local.properties
-          echo "ravelry.client_id=" >> src/platform/android/local.properties
-          echo "ravelry.client_secret=" >> src/platform/android/local.properties
-
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
+          android-sdk-packages: "platforms;android-34 platforms;android-36"
 
       - name: Run commonTest on the iOS simulator target
         working-directory: src/platform/android
@@ -214,31 +187,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
-        with:
-          java-version: "17"
-          distribution: "temurin"
-
       # See the twin comment in common-ios-tests.
       - name: Select Xcode 26
         run: |
           sudo xcode-select -s "$(ls -d /Applications/Xcode_26*.app | sort -V | tail -1)"
           xcodebuild -version
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      # JDK + Android SDK + local.properties + Gradle from the shared composite
+      # action (#274). The SDK install belongs inside it because $ANDROID_HOME
+      # has to exist before it's written into sdk.dir. Xcode selection stays
+      # here (macOS-only, unrelated to the Android toolchain); it now runs
+      # before the JDK install rather than after, which is inert — neither step
+      # reads anything the other produces.
+      - name: Set up Android build environment
+        uses: ./.github/actions/setup-android-build
         with:
-          packages: "platforms;android-34 platforms;android-36"
-
-      - name: Write local.properties
-        run: |
-          echo "sdk.dir=$ANDROID_HOME" > src/platform/android/local.properties
-          echo "ravelry.client_id=" >> src/platform/android/local.properties
-          echo "ravelry.client_secret=" >> src/platform/android/local.properties
-
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
+          android-sdk-packages: "platforms;android-34 platforms;android-36"
 
       # Proves the standalone XCFramework export (#115) still links.
       - name: Assemble the XCFramework
