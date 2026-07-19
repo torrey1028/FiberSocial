@@ -432,6 +432,9 @@ fun FeedScreen(
     // a scope remembered in there would be cancelled with it, killing an in-flight settings
     // save mid-write and silently reverting the toggle the user just flipped.
     val settingsScope = rememberCoroutineScope()
+    // Same reasoning as settingsScope above, for the topic-detail mute toggle's early-return
+    // block: hoisted here so tapping Back right after toggling mute doesn't cancel the write.
+    val muteScope = rememberCoroutineScope()
     // Opened from the Settings block below without clearing showSettings, so backing out
     // of About returns to the still-open Settings screen (issue #289).
     var showAbout by remember { mutableStateOf(false) }
@@ -708,7 +711,6 @@ fun FeedScreen(
         LaunchedEffect(topic.id) {
             mutedTopicsStore?.let { topicMuted = topic.id in it.load() }
         }
-        val muteScope = rememberCoroutineScope()
         TopicDetailRoute(
             topic = topic,
             postsState = topicDetailState,
@@ -722,8 +724,10 @@ fun FeedScreen(
                     // pruning can run concurrently, and separate load/save calls here
                     // could race it and silently lose this toggle (or resurrect a mute
                     // the sync just pruned).
-                    store.mutate { current ->
-                        if (nowMuted) current + topic.id else current - topic.id
+                    withContext(NonCancellable) {
+                        store.mutate { current ->
+                            if (nowMuted) current + topic.id else current - topic.id
+                        }
                     }
                 }
             },
