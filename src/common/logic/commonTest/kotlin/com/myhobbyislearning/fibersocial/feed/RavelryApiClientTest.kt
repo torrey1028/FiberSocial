@@ -31,8 +31,8 @@ import kotlinx.coroutines.test.runTest
 import kotlin.time.Clock
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.delay
 import kotlinx.serialization.json.Json
 
 class RavelryApiClientTest {
@@ -351,6 +351,34 @@ class RavelryApiClientTest {
     fun `getMyTopics reports hasMore false when the paginator is absent`() = runTest {
         val client = routingApiClient { topicsJson(100L) }
         assertFalse(client.getMyTopics().hasMore)
+    }
+
+    @Test
+    fun `getReadingTopics requests the reading filter sorted newest-reply-first`() = runTest {
+        var capturedUrl: io.ktor.http.Url? = null
+        val client = routingApiClientCapturing(onRequest = { capturedUrl = it }) { topicsJson(100L) }
+        client.getReadingTopics(page = 2, pageSize = 100)
+        assertEquals("/forums/filtered_topics.json", capturedUrl?.encodedPath)
+        // "reading" (topics the user follows) is broader than getMyTopics' "posting" —
+        // it's the set that backs the drawer's per-group unread dots.
+        assertEquals("reading", capturedUrl?.parameters?.get("status"))
+        // Same bare-"replied" (no underscore) newest-first sort as getMyTopics.
+        assertEquals("replied", capturedUrl?.parameters?.get("sort"))
+        assertEquals("2", capturedUrl?.parameters?.get("page"))
+        assertEquals("100", capturedUrl?.parameters?.get("page_size"))
+    }
+
+    @Test
+    fun `getReadingTopics returns topics with forum ids and read markers`() = runTest {
+        val client = routingApiClient {
+            """{"topics":[
+                {"id":100,"title":"T","forum_id":42,"forum_posts_count":5,"last_read":3}
+            ]}"""
+        }
+        val topic = client.getReadingTopics().topics.single()
+        assertEquals(42L, topic.forumId)
+        assertEquals(5, topic.postsCount)
+        assertEquals(3, topic.lastRead)
     }
 
     @Test
@@ -725,12 +753,21 @@ class RavelryApiClientTest {
         // others' in-flight refresh.
         var refreshCount = 0
         val storage = FakeFeedTokenStorage()
-        val engine = MockEngine {
-            if (storage.load()?.accessToken != "refreshed-token") {
-                respond("", HttpStatusCode.Unauthorized, headersOf())
-            } else {
+        val first401Returned = CompletableDeferred<Unit>()
+        val allowSecond401ToReturn = CompletableDeferred<Unit>()
+        val engine = MockEngine { request ->
+            val authHeader = request.headers[HttpHeaders.Authorization]
+            if (authHeader?.contains("refreshed-token") == true) {
                 respond(CURRENT_USER_JSON, HttpStatusCode.OK,
                     headersOf("Content-Type", ContentType.Application.Json.toString()))
+            } else {
+                if (first401Returned.complete(Unit)) {
+                    respond("", HttpStatusCode.Unauthorized, headersOf())
+                } else {
+                    first401Returned.await()
+                    allowSecond401ToReturn.await()
+                    respond("", HttpStatusCode.Unauthorized, headersOf())
+                }
             }
         }
         val httpClient = HttpClient(engine) {
@@ -738,14 +775,12 @@ class RavelryApiClientTest {
         }
         val client = RavelryApiClient(httpClient, storage, refreshToken = {
             refreshCount++
-            // Widens the window so the other concurrent callers actually queue up behind
-            // the lock instead of finishing before the next one starts.
-            delay(10)
             storage.save(AuthToken("refreshed-token", "test-refresh", Long.MAX_VALUE, "sess=test"))
+            allowSecond401ToReturn.complete(Unit)
         })
 
         coroutineScope {
-            List(5) { async { client.getCurrentUser() } }.awaitAll()
+            List(2) { async { client.getCurrentUser() } }.awaitAll()
         }
 
         assertEquals(1, refreshCount)
@@ -761,12 +796,21 @@ class RavelryApiClientTest {
         // doRefresh() calls against each other; it has to be shared across every instance.
         var refreshCount = 0
         val storage = FakeFeedTokenStorage()
-        val engine = MockEngine {
-            if (storage.load()?.accessToken != "refreshed-token") {
-                respond("", HttpStatusCode.Unauthorized, headersOf())
-            } else {
+        val first401Returned = CompletableDeferred<Unit>()
+        val allowSecond401ToReturn = CompletableDeferred<Unit>()
+        val engine = MockEngine { request ->
+            val authHeader = request.headers[HttpHeaders.Authorization]
+            if (authHeader?.contains("refreshed-token") == true) {
                 respond(CURRENT_USER_JSON, HttpStatusCode.OK,
                     headersOf("Content-Type", ContentType.Application.Json.toString()))
+            } else {
+                if (first401Returned.complete(Unit)) {
+                    respond("", HttpStatusCode.Unauthorized, headersOf())
+                } else {
+                    first401Returned.await()
+                    allowSecond401ToReturn.await()
+                    respond("", HttpStatusCode.Unauthorized, headersOf())
+                }
             }
         }
         val httpClient = HttpClient(engine) {
@@ -774,8 +818,8 @@ class RavelryApiClientTest {
         }
         val refreshToken: suspend () -> Unit = {
             refreshCount++
-            delay(10)
             storage.save(AuthToken("refreshed-token", "test-refresh", Long.MAX_VALUE, "sess=test"))
+            allowSecond401ToReturn.complete(Unit)
         }
         val clientA = RavelryApiClient(httpClient, storage, refreshToken = refreshToken)
         val clientB = RavelryApiClient(httpClient, storage, refreshToken = refreshToken)
@@ -784,7 +828,6 @@ class RavelryApiClientTest {
             listOf(
                 async { clientA.getCurrentUser() },
                 async { clientB.getCurrentUser() },
-                async { clientA.getCurrentUser() },
             ).awaitAll()
         }
 
