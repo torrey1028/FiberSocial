@@ -22,22 +22,43 @@ data class FeedItemsPage(
 )
 
 /**
- * A lightweight "is there any unread" signal for the drawer's indicators (unread dots):
- * whether unread posts exist, not how many.
+ * A lightweight signal for the drawer's indicators (unread dots): whether there is
+ * anything worth looking at, not how much.
  *
- * @property unreadGroupForumIds Forum ids ([Group.forumId]) of groups with at least one
- *   unread topic — a group row shows a dot when its forum id is in this set.
- * @property yourPostsHasUnread Whether any topic the user posted in has unread replies —
- *   drives the "Your Posts" row's dot.
+ * The two dots deliberately mean different things (issue #350 part 3):
+ *
+ * @property unreadGroupForumIds Forum ids ([Group.forumId]) of groups with **activity
+ *   since the user last opened them** — see [resolveGroupDots]. Not a strict unread
+ *   count: it is derived from each group's latest post time versus a locally stored
+ *   last-viewed timestamp, because Ravelry's read markers only exist for topics the user
+ *   has already opened (so a brand-new topic nobody has opened produced no dot at all)
+ *   and could only be cleared by reading every unread topic in the group.
+ * @property yourPostsHasUnread Whether any topic the user posted in has unread replies.
+ *   This one IS read-marker based — the user has by definition opened those topics, so
+ *   the marker exists — and is cross-group, so the last-viewed rule doesn't apply.
  */
 data class DrawerUnread(
     val unreadGroupForumIds: Set<Long> = emptySet(),
     val yourPostsHasUnread: Boolean = false,
 )
 
-// One page of most-recently-active tracked topics is enough for a yes/no unread signal;
+/**
+ * [FeedRepository.getDrawerUnread]'s result: the dots to show plus the last-viewed map to
+ * persist (unseen groups get seeded, departed groups pruned — see [resolveGroupDots]).
+ */
+data class DrawerUnreadResult(
+    val unread: DrawerUnread,
+    val groupLastViewed: Map<Long, Long>,
+)
+
+// One page of most-recently-active posted-in topics is enough for a yes/no unread signal;
 // 100 is Ravelry's cap for the filtered_topics endpoint.
 private const val UNREAD_SCAN_PAGE_SIZE = 100
+
+// Topics fetched per group when looking for its latest activity. Small on purpose: this
+// is one request PER GROUP, and only the newest timestamp is wanted. It is deliberately
+// not 1 — see getGroupActivity for why taking the max over a short page matters.
+private const val GROUP_ACTIVITY_PAGE_SIZE = 10
 
 /**
  * Translates raw Ravelry API data into [FeedItem]s ready for display.
@@ -69,20 +90,101 @@ class FeedRepository(private val apiClient: RavelryApiClient) {
     suspend fun leaveGroup(permalink: String) = apiClient.leaveGroup(permalink)
 
     /**
-     * Fetches the drawer's unread indicators (the unread dots) in one cheap pass: one page
-     * of the topics the user is *reading* (grouped by forum, for the per-group dots) and
-     * one page of the topics they've *posted in* (for the "Your Posts" dot). Only whether
-     * ANY unread exists is derived — no per-topic counting and no per-group feed loads.
-     * Both legs run concurrently; page 1, newest-activity-first, up to
-     * [UNREAD_SCAN_PAGE_SIZE] topics, is plenty for a yes/no "is there anything new" signal.
+     * Fetches the drawer's indicators (the unread dots) — see [DrawerUnread] for what the
+     * two dots mean.
+     *
+     * Two kinds of leg, all run concurrently:
+     *
+     * - one page of the topics the user has *posted in*, for the "Your Posts" dot;
+     * - one small page of topics per group in [groups], for the per-group activity dots,
+     *   compared against [groupLastViewed] as of [now].
+     *
+     * That makes this `1 + groups.size` requests, up from the 2 it used to be — the price
+     * of dots that are both complete (a brand-new topic nobody has opened still counts)
+     * and dismissible. The per-group fan-out shares the same concurrency cap as the feed's
+     * detail fetches, and callers fire this on foreground activation and after a feed
+     * load, NOT on every drawer open (issue #349's lazy design).
+     *
+     * @param groups The user's groups, in drawer order.
+     * @param groupLastViewed Group id → epoch millis when the group was last opened.
+     * @param now Current epoch millis, used to seed groups that have no entry yet.
      */
-    suspend fun getDrawerUnread(): DrawerUnread = coroutineScope {
-        val reading = async { apiClient.getReadingTopics(pageSize = UNREAD_SCAN_PAGE_SIZE).topics }
-        val posting = async { apiClient.getMyTopics(pageSize = UNREAD_SCAN_PAGE_SIZE).topics }
-        DrawerUnread(
-            unreadGroupForumIds = reading.await().filter { it.hasUnread }.map { it.forumId }.toSet(),
-            yourPostsHasUnread = posting.await().any { it.hasUnread },
+    suspend fun getDrawerUnread(
+        groups: List<Group>,
+        groupLastViewed: Map<Long, Long>,
+        now: Long,
+    ): DrawerUnreadResult = coroutineScope {
+        val posting = async { getYourPostsUnread() }
+        val activity = async { getGroupActivity(groups) }
+        val dots = resolveGroupDots(
+            groups = groups,
+            activity = activity.await(),
+            lastViewed = groupLastViewed,
+            now = now,
         )
+        DrawerUnreadResult(
+            unread = DrawerUnread(
+                unreadGroupForumIds = dots.unreadGroupForumIds,
+                yourPostsHasUnread = posting.await(),
+            ),
+            groupLastViewed = dots.lastViewed,
+        )
+    }
+
+    /**
+     * Whether any topic the user has posted in has replies past their read marker — the
+     * "Your Posts" dot on its own, without the per-group fan-out. Exposed separately so
+     * re-checking that dot after a read costs one request instead of a full
+     * [getDrawerUnread] pass.
+     */
+    suspend fun getYourPostsUnread(): Boolean =
+        apiClient.getMyTopics(pageSize = UNREAD_SCAN_PAGE_SIZE).topics.any { it.hasUnread }
+
+    /**
+     * Latest activity per group: group id → the newest reply timestamp (epoch millis)
+     * across a short page of the group's topics. Groups whose fetch failed, or where no
+     * topic carried a parseable timestamp, are simply absent — the caller shows no dot for
+     * them rather than guessing (a transient failure must not invent activity).
+     *
+     * **The maximum over a page, deliberately — not the first topic of a `pageSize = 1`
+     * fetch.** [RavelryApiClient.getGroupTopics] relies on Ravelry's default ordering and
+     * sends no explicit sort, and forums have pinned/sticky topics (issue #332), so the
+     * first slot can hold a *pinned* thread whose last reply is months old while a genuinely
+     * new reply sits below it. Taking the max over [GROUP_ACTIVITY_PAGE_SIZE] topics is
+     * robust to both. Sticky topics counting toward the max is correct, not a leak: a reply
+     * to a pinned thread is real new activity.
+     *
+     * Failures are isolated per group with `runCatching` rather than left to `awaitAll`'s
+     * fail-fast — one inaccessible group must not blank every other group's dot.
+     */
+    private suspend fun getGroupActivity(groups: List<Group>): Map<Long, Long> = coroutineScope {
+        groups
+            .map { group ->
+                async {
+                    topicFetchConcurrency.withPermit {
+                        runCatching {
+                            apiClient
+                                .getGroupTopics(
+                                    group.forumId,
+                                    page = 1,
+                                    pageSize = GROUP_ACTIVITY_PAGE_SIZE,
+                                )
+                                .topics
+                                .mapNotNull {
+                                    parseRavelryTimestamp(it.repliedAt)?.toEpochMilliseconds()
+                                }
+                                .maxOrNull()
+                        }.onFailure {
+                            println(
+                                "FiberSocial: getGroupActivity: skipping group ${group.id} (${it.message})",
+                            )
+                        }.getOrNull()?.let { group.id to it }
+                    }
+                }
+            }
+            .awaitAll()
+            .filterNotNull()
+            .toMap()
     }
 
     /** A topic has unread posts when its post count is beyond the user's read marker. */

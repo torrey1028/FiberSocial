@@ -38,7 +38,12 @@ class FeedAndroidViewModel(app: Application) : AndroidViewModel(app), FeedScreen
     )
     private val apiClient = ravelryApiClient(httpClient, tokenStorage, authRepository)
     private val repository = FeedRepository(apiClient)
-    override val feed = FeedViewModel(repository, viewModelScope, AndroidGroupOrderStore(app))
+    override val feed = FeedViewModel(
+        repository,
+        viewModelScope,
+        AndroidGroupOrderStore(app),
+        AndroidGroupLastViewedStore(app),
+    )
     override val topicDetail = TopicDetailViewModel(apiClient, viewModelScope)
     override val newTopic = NewTopicViewModel(apiClient, viewModelScope)
 

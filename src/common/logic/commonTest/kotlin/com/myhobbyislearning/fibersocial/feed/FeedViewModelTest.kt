@@ -76,13 +76,13 @@ class FeedViewModelTest {
 
     @Test
     fun `initial state is Loading`() = runTest(UnconfinedTestDispatcher()) {
-        val vm = FeedViewModel(successRepo(), this, FakeGroupOrderStore())
+        val vm = FeedViewModel(successRepo(), this, FakeGroupOrderStore(), FakeGroupLastViewedStore())
         assertIs<FeedState.Loading>(vm.state.value)
     }
 
     @Test
     fun `reset clears a loaded feed back to Loading`() = runTest(UnconfinedTestDispatcher()) {
-        val vm = FeedViewModel(successRepo(), this, FakeGroupOrderStore())
+        val vm = FeedViewModel(successRepo(), this, FakeGroupOrderStore(), FakeGroupLastViewedStore())
         vm.load()
         awaitChildren(coroutineContext[Job]!!)
         assertIs<FeedState.Loaded>(vm.state.value)
@@ -92,7 +92,7 @@ class FeedViewModelTest {
 
     @Test
     fun `load transitions to Loaded on success`() = runTest(UnconfinedTestDispatcher()) {
-        val vm = FeedViewModel(successRepo(), this, FakeGroupOrderStore())
+        val vm = FeedViewModel(successRepo(), this, FakeGroupOrderStore(), FakeGroupLastViewedStore())
         vm.load()
         awaitChildren(coroutineContext[Job]!!)
         val state = assertIs<FeedState.Loaded>(vm.state.value)
@@ -102,30 +102,32 @@ class FeedViewModelTest {
     }
 
     @Test
-    fun `refreshDrawerUnread populates the drawer unread state`() = runTest(UnconfinedTestDispatcher()) {
-        // Both legs (reading + posting) hit /forums/filtered_topics.json; the fake serves an
-        // unread topic (5 posts, read to 3) in forum 42.
-        val repo = FeedRepository(routingApiClient { path ->
-            when {
-                path.contains("filtered_topics") ->
-                    """{"topics":[{"id":1,"title":"T","forum_id":42,"forum_posts_count":5,"last_read":3}]}"""
-                else -> error("Unexpected: $path")
-            }
-        })
-        val vm = FeedViewModel(repo, this, FakeGroupOrderStore())
+    fun `refreshDrawerUnread populates the Your Posts dot before the feed has loaded`() =
+        runTest(UnconfinedTestDispatcher()) {
+            // The per-group leg needs the user's groups, which don't exist yet — but the
+            // "Your Posts" dot is group-independent, so it still resolves. The fake serves
+            // a posted-in topic with unread replies (5 posts, read to 3).
+            val repo = FeedRepository(routingApiClient { path ->
+                when {
+                    path.contains("filtered_topics") ->
+                        """{"topics":[{"id":1,"title":"T","forum_id":42,"forum_posts_count":5,"last_read":3}]}"""
+                    else -> error("Unexpected: $path")
+                }
+            })
+            val vm = FeedViewModel(repo, this, FakeGroupOrderStore(), FakeGroupLastViewedStore())
 
-        vm.refreshDrawerUnread()
-        awaitChildren(coroutineContext[Job]!!)
+            vm.refreshDrawerUnread()
+            awaitChildren(coroutineContext[Job]!!)
 
-        assertEquals(setOf(42L), vm.drawerUnread.value.unreadGroupForumIds)
-        assertTrue(vm.drawerUnread.value.yourPostsHasUnread)
-    }
+            assertTrue(vm.drawerUnread.value.yourPostsHasUnread)
+            assertTrue(vm.drawerUnread.value.unreadGroupForumIds.isEmpty())
+        }
 
     @Test
     fun `refreshDrawerUnread keeps the previous value when the fetch fails`() =
         runTest(UnconfinedTestDispatcher()) {
             val repo = FeedRepository(routingApiClient { error("boom") })
-            val vm = FeedViewModel(repo, this, FakeGroupOrderStore())
+            val vm = FeedViewModel(repo, this, FakeGroupOrderStore(), FakeGroupLastViewedStore())
 
             vm.refreshDrawerUnread()
             awaitChildren(coroutineContext[Job]!!)
@@ -141,7 +143,12 @@ class FeedViewModelTest {
             // This can be the only in-flight request (e.g. a drawer pull-to-refresh while
             // otherwise idle on an already-loaded feed) — nothing else is guaranteed to
             // notice the expired session if this swallows it too.
-            val vm = FeedViewModel(FeedRepository(sessionExpiredApiClient()), this, FakeGroupOrderStore())
+            val vm = FeedViewModel(
+                FeedRepository(sessionExpiredApiClient()),
+                this,
+                FakeGroupOrderStore(),
+                FakeGroupLastViewedStore(),
+            )
 
             vm.refreshDrawerUnread()
             awaitChildren(coroutineContext[Job]!!)
@@ -164,7 +171,7 @@ class FeedViewModelTest {
             val repo = FeedRepository(
                 suspendableRoutingApiClient { _ ->
                     val isFirstCallRequest = requestCountMutex.withLock {
-                        (requestsSeen < 2).also { if (it) requestsSeen++ }
+                        (requestsSeen < 1).also { if (it) requestsSeen++ }
                     }
                     if (isFirstCallRequest) {
                         // Never released: the first call is cancelled before this could
@@ -176,28 +183,28 @@ class FeedViewModelTest {
                     }
                 },
             )
-            val vm = FeedViewModel(repo, this, FakeGroupOrderStore())
+            val vm = FeedViewModel(repo, this, FakeGroupOrderStore(), FakeGroupLastViewedStore())
 
-            // getDrawerUnread() fires exactly 2 concurrent requests (reading + posting
-            // legs) per call. The first call's pair blocks on firstCallGate forever; the
-            // second call cancels it (the fix under test) before starting its own pair,
-            // which resolves immediately. Without the fix, the first call's requests
-            // would still be in flight (not cancelled) when the test ends, and this
-            // would hang / fail as an uncompleted coroutine instead of asserting wrong
-            // data — which is itself evidence the cancellation is what makes this test
-            // (and the real bug scenario) terminate cleanly at all.
+            // With no feed loaded there are no groups to fan out over, so getDrawerUnread()
+            // fires exactly 1 request (the "Your Posts" leg) per call. The first call's
+            // request blocks on firstCallGate forever; the second call cancels it (the fix
+            // under test) before starting its own, which resolves immediately. Without the
+            // fix, the first call's request would still be in flight (not cancelled) when
+            // the test ends, and this would hang / fail as an uncompleted coroutine instead
+            // of asserting wrong data — which is itself evidence the cancellation is what
+            // makes this test (and the real bug scenario) terminate cleanly at all.
             vm.refreshDrawerUnread()
             vm.refreshDrawerUnread()
             awaitChildren(coroutineContext[Job]!!)
 
-            assertEquals(setOf(42L), vm.drawerUnread.value.unreadGroupForumIds)
+            assertTrue(vm.drawerUnread.value.yourPostsHasUnread)
         }
 
     @Test
     fun `load selects the sole group as default and seeds the stored order`() =
         runTest(UnconfinedTestDispatcher()) {
             val store = FakeGroupOrderStore()
-            val vm = FeedViewModel(successRepo(), this, store)
+            val vm = FeedViewModel(successRepo(), this, store, FakeGroupLastViewedStore())
             vm.load()
             awaitChildren(coroutineContext[Job]!!)
             val state = assertIs<FeedState.Loaded>(vm.state.value)
@@ -210,7 +217,7 @@ class FeedViewModelTest {
         runTest(UnconfinedTestDispatcher()) {
             // Fetched order is [10, 11]; the user put Sock Society (11) first.
             val store = FakeGroupOrderStore(listOf(11L, 10L))
-            val vm = FeedViewModel(twoGroupRepo(), this, store)
+            val vm = FeedViewModel(twoGroupRepo(), this, store, FakeGroupLastViewedStore())
             vm.load()
             awaitChildren(coroutineContext[Job]!!)
             val state = assertIs<FeedState.Loaded>(vm.state.value)
@@ -223,7 +230,7 @@ class FeedViewModelTest {
         runTest(UnconfinedTestDispatcher()) {
             // 99 was left; 11 is newly joined and must land at the bottom.
             val store = FakeGroupOrderStore(listOf(99L, 10L))
-            val vm = FeedViewModel(twoGroupRepo(), this, store)
+            val vm = FeedViewModel(twoGroupRepo(), this, store, FakeGroupLastViewedStore())
             vm.load()
             awaitChildren(coroutineContext[Job]!!)
             val state = assertIs<FeedState.Loaded>(vm.state.value)
@@ -242,7 +249,7 @@ class FeedViewModelTest {
                     else -> error("Unexpected: $path")
                 }
             })
-            val vm = FeedViewModel(repo, this, FakeGroupOrderStore())
+            val vm = FeedViewModel(repo, this, FakeGroupOrderStore(), FakeGroupLastViewedStore())
             vm.load()
             awaitChildren(coroutineContext[Job]!!)
             val state = assertIs<FeedState.Loaded>(vm.state.value)
@@ -252,7 +259,7 @@ class FeedViewModelTest {
 
     @Test
     fun `forceError drops the feed into the Error state`() = runTest(UnconfinedTestDispatcher()) {
-        val vm = FeedViewModel(successRepo(), this, FakeGroupOrderStore())
+        val vm = FeedViewModel(successRepo(), this, FakeGroupOrderStore(), FakeGroupLastViewedStore())
         vm.forceError()
         assertIs<FeedState.Error>(vm.state.value)
     }
@@ -260,7 +267,7 @@ class FeedViewModelTest {
     @Test
     fun `load recovers from a forced Error state`() = runTest(UnconfinedTestDispatcher()) {
         // The Retry button's contract: load() must work from Error (refresh() does not).
-        val vm = FeedViewModel(successRepo(), this, FakeGroupOrderStore())
+        val vm = FeedViewModel(successRepo(), this, FakeGroupOrderStore(), FakeGroupLastViewedStore())
         vm.forceError()
         vm.load()
         awaitChildren(coroutineContext[Job]!!)
@@ -269,7 +276,12 @@ class FeedViewModelTest {
 
     @Test
     fun `load transitions to Error when api fails`() = runTest(UnconfinedTestDispatcher()) {
-        val vm = FeedViewModel(FeedRepository(errorApiClient()), this, FakeGroupOrderStore())
+        val vm = FeedViewModel(
+            FeedRepository(errorApiClient()),
+            this,
+            FakeGroupOrderStore(),
+            FakeGroupLastViewedStore(),
+        )
         vm.load()
         awaitChildren(coroutineContext[Job]!!)
         val state = assertIs<FeedState.Error>(vm.state.value)
@@ -278,7 +290,7 @@ class FeedViewModelTest {
 
     @Test
     fun `refresh transitions through Refreshing to Loaded`() = runTest(UnconfinedTestDispatcher()) {
-        val vm = FeedViewModel(successRepo(), this, FakeGroupOrderStore())
+        val vm = FeedViewModel(successRepo(), this, FakeGroupOrderStore(), FakeGroupLastViewedStore())
         vm.load()
         awaitChildren(coroutineContext[Job]!!)
         assertIs<FeedState.Loaded>(vm.state.value)
@@ -290,7 +302,7 @@ class FeedViewModelTest {
 
     @Test
     fun `refresh is a no-op when state is not Loaded`() = runTest(UnconfinedTestDispatcher()) {
-        val vm = FeedViewModel(successRepo(), this, FakeGroupOrderStore())
+        val vm = FeedViewModel(successRepo(), this, FakeGroupOrderStore(), FakeGroupLastViewedStore())
         // State is Loading — refresh should silently do nothing
         vm.refresh()
         awaitChildren(coroutineContext[Job]!!)
@@ -301,7 +313,12 @@ class FeedViewModelTest {
     fun `selectGroup filters feed to the chosen group`() = runTest(UnconfinedTestDispatcher()) {
         val group2 = Group(id = 11L, name = "Sock Society", permalink = "sock", forumId = 43L)
         var topicsForumId = 0L
-        val vm = FeedViewModel(twoGroupRepo { topicsForumId = it }, this, FakeGroupOrderStore())
+        val vm = FeedViewModel(
+            twoGroupRepo { topicsForumId = it },
+            this,
+            FakeGroupOrderStore(),
+            FakeGroupLastViewedStore(),
+        )
         vm.load()
         awaitChildren(coroutineContext[Job]!!)
         assertIs<FeedState.Loaded>(vm.state.value)
@@ -343,7 +360,7 @@ class FeedViewModelTest {
                 },
             )
             val group2 = Group(id = 11L, name = "Sock Society", permalink = "sock", forumId = 43L)
-            val vm = FeedViewModel(repo, this, FakeGroupOrderStore())
+            val vm = FeedViewModel(repo, this, FakeGroupOrderStore(), FakeGroupLastViewedStore())
             vm.load()
             awaitChildren(coroutineContext[Job]!!)
             assertIs<FeedState.Loaded>(vm.state.value)
@@ -366,7 +383,7 @@ class FeedViewModelTest {
     fun `reorderGroups reorders the drawer and persists the new order`() =
         runTest(UnconfinedTestDispatcher()) {
             val store = FakeGroupOrderStore()
-            val vm = FeedViewModel(twoGroupRepo(), this, store)
+            val vm = FeedViewModel(twoGroupRepo(), this, store, FakeGroupLastViewedStore())
             vm.load()
             awaitChildren(coroutineContext[Job]!!)
             val loaded = assertIs<FeedState.Loaded>(vm.state.value)
@@ -386,7 +403,7 @@ class FeedViewModelTest {
     fun `reorderGroups ignores a list that isn't a permutation of the current groups`() =
         runTest(UnconfinedTestDispatcher()) {
             val store = FakeGroupOrderStore()
-            val vm = FeedViewModel(twoGroupRepo(), this, store)
+            val vm = FeedViewModel(twoGroupRepo(), this, store, FakeGroupLastViewedStore())
             vm.load()
             awaitChildren(coroutineContext[Job]!!)
             val loaded = assertIs<FeedState.Loaded>(vm.state.value)
@@ -406,7 +423,7 @@ class FeedViewModelTest {
     fun `reorderGroups is a no-op when state is not Loaded`() =
         runTest(UnconfinedTestDispatcher()) {
             val store = FakeGroupOrderStore(listOf(10L))
-            val vm = FeedViewModel(successRepo(), this, store)
+            val vm = FeedViewModel(successRepo(), this, store, FakeGroupLastViewedStore())
             vm.reorderGroups(listOf(group))
             awaitChildren(coroutineContext[Job]!!)
             assertIs<FeedState.Loading>(vm.state.value)
@@ -415,7 +432,7 @@ class FeedViewModelTest {
 
     @Test
     fun `selectGroup is a no-op when state is not Loaded`() = runTest(UnconfinedTestDispatcher()) {
-        val vm = FeedViewModel(successRepo(), this, FakeGroupOrderStore())
+        val vm = FeedViewModel(successRepo(), this, FakeGroupOrderStore(), FakeGroupLastViewedStore())
         vm.selectGroup(group)
         awaitChildren(coroutineContext[Job]!!)
         assertIs<FeedState.Loading>(vm.state.value)
@@ -424,7 +441,12 @@ class FeedViewModelTest {
     @Test
     fun `load signals sessionExpired and stays Loading when session expires`() =
         runTest(UnconfinedTestDispatcher()) {
-            val vm = FeedViewModel(FeedRepository(sessionExpiredApiClient()), this, FakeGroupOrderStore())
+            val vm = FeedViewModel(
+                FeedRepository(sessionExpiredApiClient()),
+                this,
+                FakeGroupOrderStore(),
+                FakeGroupLastViewedStore(),
+            )
             vm.load()
             awaitChildren(coroutineContext[Job]!!)
             assertIs<FeedState.Loading>(vm.state.value)
@@ -451,7 +473,7 @@ class FeedViewModelTest {
                     else -> error("Unexpected: $path")
                 }
             })
-            val vm = FeedViewModel(repo, this, FakeGroupOrderStore())
+            val vm = FeedViewModel(repo, this, FakeGroupOrderStore(), FakeGroupLastViewedStore())
             vm.load()
             awaitChildren(coroutineContext[Job]!!)
             assertIs<FeedState.Loaded>(vm.state.value)
@@ -465,7 +487,12 @@ class FeedViewModelTest {
     @Test
     fun `load error falls back to default message when exception has no message`() =
         runTest(UnconfinedTestDispatcher()) {
-            val vm = FeedViewModel(FeedRepository(nullMessageApiClient()), this, FakeGroupOrderStore())
+            val vm = FeedViewModel(
+                FeedRepository(nullMessageApiClient()),
+                this,
+                FakeGroupOrderStore(),
+                FakeGroupLastViewedStore(),
+            )
             vm.load()
             awaitChildren(coroutineContext[Job]!!)
             val state = assertIs<FeedState.Error>(vm.state.value)
@@ -475,7 +502,7 @@ class FeedViewModelTest {
     @Test
     fun `refresh re-fetches with the current group filter`() =
         runTest(UnconfinedTestDispatcher()) {
-            val vm = FeedViewModel(successRepo(), this, FakeGroupOrderStore())
+            val vm = FeedViewModel(successRepo(), this, FakeGroupOrderStore(), FakeGroupLastViewedStore())
             vm.load()
             awaitChildren(coroutineContext[Job]!!)
             vm.selectGroup(group)
@@ -509,7 +536,7 @@ class FeedViewModelTest {
     @Test
     fun `joinSupportGroup joins then reloads ending Idle and Loaded`() =
         runTest(UnconfinedTestDispatcher()) {
-            val vm = FeedViewModel(joinRepo(), this, FakeGroupOrderStore())
+            val vm = FeedViewModel(joinRepo(), this, FakeGroupOrderStore(), FakeGroupLastViewedStore())
             vm.load()
             awaitChildren(coroutineContext[Job]!!)
             assertIs<FeedState.Loaded>(vm.state.value)
@@ -523,7 +550,12 @@ class FeedViewModelTest {
     @Test
     fun `joinSupportGroup surfaces a failure as JoinState Error`() =
         runTest(UnconfinedTestDispatcher()) {
-            val vm = FeedViewModel(FeedRepository(errorApiClient()), this, FakeGroupOrderStore())
+            val vm = FeedViewModel(
+                FeedRepository(errorApiClient()),
+                this,
+                FakeGroupOrderStore(),
+                FakeGroupLastViewedStore(),
+            )
             vm.joinSupportGroup("fibersocial-app-support")
             awaitChildren(coroutineContext[Job]!!)
             assertIs<JoinState.Error>(vm.joinState.value)
@@ -535,7 +567,12 @@ class FeedViewModelTest {
     @Test
     fun `joinSupportGroup routes a session expiry to login`() =
         runTest(UnconfinedTestDispatcher()) {
-            val vm = FeedViewModel(FeedRepository(sessionExpiredApiClient()), this, FakeGroupOrderStore())
+            val vm = FeedViewModel(
+                FeedRepository(sessionExpiredApiClient()),
+                this,
+                FakeGroupOrderStore(),
+                FakeGroupLastViewedStore(),
+            )
             vm.joinSupportGroup("fibersocial-app-support")
             awaitChildren(coroutineContext[Job]!!)
             assertIs<JoinState.Idle>(vm.joinState.value)
@@ -569,7 +606,7 @@ class FeedViewModelTest {
                     }
                 },
             )
-            val vm = FeedViewModel(repo, this, FakeGroupOrderStore())
+            val vm = FeedViewModel(repo, this, FakeGroupOrderStore(), FakeGroupLastViewedStore())
             vm.load()
             awaitChildren(coroutineContext[Job]!!)
 
@@ -611,7 +648,7 @@ class FeedViewModelTest {
                     }
                 },
             )
-            val vm = FeedViewModel(repo, this, FakeGroupOrderStore())
+            val vm = FeedViewModel(repo, this, FakeGroupOrderStore(), FakeGroupLastViewedStore())
             vm.load()
             awaitChildren(coroutineContext[Job]!!)
             val loaded = assertIs<FeedState.Loaded>(vm.state.value)
@@ -660,7 +697,12 @@ class FeedViewModelTest {
     fun `leaveGroup drops the left group and falls back to default when it was the selected one`() =
         runTest(UnconfinedTestDispatcher()) {
             val sock = Group(id = 11L, name = "Sock Society", permalink = "sock", forumId = 43L)
-            val vm = FeedViewModel(leaveRepo(remainingAfterLeave = listOf("kal-hub")), this, FakeGroupOrderStore())
+            val vm = FeedViewModel(
+                leaveRepo(remainingAfterLeave = listOf("kal-hub")),
+                this,
+                FakeGroupOrderStore(),
+                FakeGroupLastViewedStore(),
+            )
             vm.load()
             awaitChildren(coroutineContext[Job]!!)
             vm.selectGroup(sock)
@@ -680,7 +722,12 @@ class FeedViewModelTest {
         runTest(UnconfinedTestDispatcher()) {
             val kal = Group(id = 10L, name = "KAL Hub", permalink = "kal-hub", forumId = 42L)
             val sock = Group(id = 11L, name = "Sock Society", permalink = "sock", forumId = 43L)
-            val vm = FeedViewModel(leaveRepo(remainingAfterLeave = listOf("sock")), this, FakeGroupOrderStore())
+            val vm = FeedViewModel(
+                leaveRepo(remainingAfterLeave = listOf("sock")),
+                this,
+                FakeGroupOrderStore(),
+                FakeGroupLastViewedStore(),
+            )
             vm.load()
             awaitChildren(coroutineContext[Job]!!)
             vm.selectGroup(sock)
@@ -695,7 +742,7 @@ class FeedViewModelTest {
 
     @Test
     fun `leaveGroup is ignored when the feed is not loaded`() = runTest(UnconfinedTestDispatcher()) {
-        val vm = FeedViewModel(successRepo(), this, FakeGroupOrderStore())
+        val vm = FeedViewModel(successRepo(), this, FakeGroupOrderStore(), FakeGroupLastViewedStore())
         vm.leaveGroup(Group(id = 1L, name = "x", permalink = "x", forumId = 1L))
         awaitChildren(coroutineContext[Job]!!)
         assertIs<FeedState.Loading>(vm.state.value)
@@ -716,7 +763,7 @@ class FeedViewModelTest {
                 else -> error("Unexpected: $path")
             }
         })
-        val vm = FeedViewModel(repo, this, FakeGroupOrderStore())
+        val vm = FeedViewModel(repo, this, FakeGroupOrderStore(), FakeGroupLastViewedStore())
         vm.load()
         awaitChildren(coroutineContext[Job]!!)
         val group = (vm.state.value as FeedState.Loaded).groups.first()
@@ -745,7 +792,7 @@ class FeedViewModelTest {
                 else -> error("Unexpected: $path")
             }
         })
-        val vm = FeedViewModel(repo, this, FakeGroupOrderStore())
+        val vm = FeedViewModel(repo, this, FakeGroupOrderStore(), FakeGroupLastViewedStore())
         vm.load()
         awaitChildren(coroutineContext[Job]!!)
         val group = (vm.state.value as FeedState.Loaded).groups.first()
@@ -786,7 +833,7 @@ class FeedViewModelTest {
     @Test
     fun `load reports hasMore true when the first page is not the last`() =
         runTest(UnconfinedTestDispatcher()) {
-            val vm = FeedViewModel(twoPageRepo(), this, FakeGroupOrderStore())
+            val vm = FeedViewModel(twoPageRepo(), this, FakeGroupOrderStore(), FakeGroupLastViewedStore())
             vm.load()
             awaitChildren(coroutineContext[Job]!!)
             val state = assertIs<FeedState.Loaded>(vm.state.value)
@@ -797,7 +844,7 @@ class FeedViewModelTest {
     @Test
     fun `loadMore appends the next page and clears hasMore once exhausted`() =
         runTest(UnconfinedTestDispatcher()) {
-            val vm = FeedViewModel(twoPageRepo(), this, FakeGroupOrderStore())
+            val vm = FeedViewModel(twoPageRepo(), this, FakeGroupOrderStore(), FakeGroupLastViewedStore())
             vm.load()
             awaitChildren(coroutineContext[Job]!!)
 
@@ -811,7 +858,7 @@ class FeedViewModelTest {
 
     @Test
     fun `loadMore is a no-op when hasMore is false`() = runTest(UnconfinedTestDispatcher()) {
-        val vm = FeedViewModel(successRepo(), this, FakeGroupOrderStore())
+        val vm = FeedViewModel(successRepo(), this, FakeGroupOrderStore(), FakeGroupLastViewedStore())
         vm.load()
         awaitChildren(coroutineContext[Job]!!)
         val before = assertIs<FeedState.Loaded>(vm.state.value)
@@ -824,7 +871,7 @@ class FeedViewModelTest {
 
     @Test
     fun `loadMore is a no-op when state is not Loaded`() = runTest(UnconfinedTestDispatcher()) {
-        val vm = FeedViewModel(twoPageRepo(), this, FakeGroupOrderStore())
+        val vm = FeedViewModel(twoPageRepo(), this, FakeGroupOrderStore(), FakeGroupLastViewedStore())
         vm.loadMore()
         awaitChildren(coroutineContext[Job]!!)
         assertIs<FeedState.Loading>(vm.state.value)
@@ -838,7 +885,7 @@ class FeedViewModelTest {
             // that's platform-dependent (observed to differ between the JVM and
             // Robolectric test targets) and made this assertion flaky.
             val gate = CompletableDeferred<Unit>()
-            val vm = FeedViewModel(gatedTwoPageRepo(gate), this, FakeGroupOrderStore())
+            val vm = FeedViewModel(gatedTwoPageRepo(gate), this, FakeGroupOrderStore(), FakeGroupLastViewedStore())
             vm.load()
             awaitChildren(coroutineContext[Job]!!)
 
@@ -887,7 +934,7 @@ class FeedViewModelTest {
     fun `loadMore discards its stale page if a refresh completes first`() =
         runTest(UnconfinedTestDispatcher()) {
             val gate = CompletableDeferred<Unit>()
-            val vm = FeedViewModel(gatedTwoPageRepo(gate), this, FakeGroupOrderStore())
+            val vm = FeedViewModel(gatedTwoPageRepo(gate), this, FakeGroupOrderStore(), FakeGroupLastViewedStore())
             val parentJob = coroutineContext[Job]!!
             vm.load()
             awaitChildren(parentJob)
@@ -957,7 +1004,7 @@ class FeedViewModelTest {
                     }
                 },
             )
-            val vm = FeedViewModel(repo, this, FakeGroupOrderStore())
+            val vm = FeedViewModel(repo, this, FakeGroupOrderStore(), FakeGroupLastViewedStore())
             val parentJob = coroutineContext[Job]!!
             vm.load()
             awaitChildren(parentJob)
@@ -1007,7 +1054,7 @@ class FeedViewModelTest {
     fun `markTopicReadUpTo lowers the unread badge and moves the first-unread marker`() =
         runTest(UnconfinedTestDispatcher()) {
             // 10 posts, never read → the card starts fully unread (issue #185).
-            val vm = FeedViewModel(unreadRepo(postsCount = 10), this, FakeGroupOrderStore())
+            val vm = FeedViewModel(unreadRepo(postsCount = 10), this, FakeGroupOrderStore(), FakeGroupLastViewedStore())
             vm.load()
             awaitChildren(coroutineContext[Job]!!)
             val before = assertIs<FeedState.Loaded>(vm.state.value).items.single()
@@ -1023,7 +1070,7 @@ class FeedViewModelTest {
     @Test
     fun `markTopicReadUpTo clears the badge and marker once the whole topic is read`() =
         runTest(UnconfinedTestDispatcher()) {
-            val vm = FeedViewModel(unreadRepo(postsCount = 10), this, FakeGroupOrderStore())
+            val vm = FeedViewModel(unreadRepo(postsCount = 10), this, FakeGroupOrderStore(), FakeGroupLastViewedStore())
             vm.load()
             awaitChildren(coroutineContext[Job]!!)
 
@@ -1038,7 +1085,7 @@ class FeedViewModelTest {
         runTest(UnconfinedTestDispatcher()) {
             // Ravelry's marker only advances; a lower readUpTo than an earlier one must
             // not bump the badge back up.
-            val vm = FeedViewModel(unreadRepo(postsCount = 10), this, FakeGroupOrderStore())
+            val vm = FeedViewModel(unreadRepo(postsCount = 10), this, FakeGroupOrderStore(), FakeGroupLastViewedStore())
             vm.load()
             awaitChildren(coroutineContext[Job]!!)
 
@@ -1048,12 +1095,290 @@ class FeedViewModelTest {
             assertEquals(4, item.unreadCount)
             assertEquals(7, item.firstUnreadPostNumber)
         }
+    // ---- drawer dots: per-group activity (issue #350 part 3) ----
+
+    private val july1 = "2026/07/01 12:00:00 +0000"
+    private val july5 = "2026/07/05 12:00:00 +0000"
+    private val july10 = "2026/07/10 12:00:00 +0000"
+    private val july19 = "2026/07/19 12:00:00 +0000"
+
+    /** Epoch millis for a Ravelry-format timestamp, so tests can express "before/after". */
+    private fun ms(timestamp: String): Long =
+        parseRavelryTimestamp(timestamp)!!.toEpochMilliseconds()
 
     /**
-     * A feed repo whose `filtered_topics` route (both [FeedRepository.getDrawerUnread]
-     * legs and the My Posts feed) serves whatever [payload] currently holds, so a test can
-     * change the drawer-unread answer mid-test and detect from the resulting
-     * [FeedViewModel.drawerUnread] whether a refresh actually re-fetched.
+     * Two groups — KAL Hub (id 10, forum 42) and Sock Society (id 11, forum 43) — whose
+     * topic lists report [repliedAtByForumId] as their newest reply, plus a
+     * `filtered_topics?status=posting` leg serving [postingJson].
+     *
+     * KAL Hub is first in fetch order, so it is the default group `load()` opens (and
+     * therefore marks viewed); Sock Society stays unvisited, which is what lets a test
+     * observe a dot at all.
+     *
+     * `filtered_topics` is routed BEFORE the generic `/forums/` branch: it lives under
+     * `/forums/` too, so the order is load-bearing.
+     */
+    private fun activityRepo(
+        repliedAtByForumId: Map<Long, String>,
+        postingJson: String = """{"topics":[]}""",
+    ): FeedRepository = FeedRepository(routingApiClient { path ->
+        when {
+            path.contains("/current_user") -> CURRENT_USER_JSON
+            path.contains("memberships") ->
+                """<html><body>
+                <a href="https://www.ravelry.com/groups/kal-hub">KAL Hub</a>
+                <a href="https://www.ravelry.com/groups/sock">Sock Society</a>
+                </body></html>"""
+            path.contains("/groups/search") ->
+                """{"groups":[
+                    {"id":10,"name":"KAL Hub","permalink":"kal-hub","forum_id":42},
+                    {"id":11,"name":"Sock Society","permalink":"sock","forum_id":43}
+                ]}"""
+            path.contains("filtered_topics") -> postingJson
+            path.contains("/forums/") -> {
+                val forumId = path.split("/forums/")[1].split("/")[0].toLong()
+                val repliedAt = repliedAtByForumId[forumId]
+                """{"topics":[{"id":${forumId * 10},"title":"T","replied_at":${
+                    if (repliedAt != null) "\"$repliedAt\"" else "null"
+                }}]}"""
+            }
+            path.contains("/topics/") -> topicDetailJson(
+                path.split("/topics/")[1].replace(".json", "").toLong()
+            )
+            else -> error("Unexpected: $path")
+        }
+    })
+
+    @Test
+    fun `a group with activity since it was last viewed gets a dot`() =
+        runTest(UnconfinedTestDispatcher()) {
+            // The headline of Option A: the dot means "something happened here since you
+            // looked", derived from the group's newest post vs a stored last-viewed time —
+            // NOT from read markers, which don't exist for topics nobody has opened.
+            val lastViewed = FakeGroupLastViewedStore(mapOf(10L to ms(july5), 11L to ms(july5)))
+            val vm = FeedViewModel(
+                // Sock Society (forum 43) has a reply after the 5th; KAL Hub's is before it.
+                activityRepo(mapOf(42L to july1, 43L to july10)),
+                this,
+                FakeGroupOrderStore(),
+                lastViewed,
+                now = { ms(july19) },
+            )
+            vm.load()
+            // The real screen only refreshes once the feed is loaded (the per-group leg
+            // needs the user's groups), so sequence it the same way here.
+            awaitChildren(coroutineContext[Job]!!)
+            vm.refreshDrawerUnread()
+            awaitChildren(coroutineContext[Job]!!)
+
+            assertEquals(setOf(43L), vm.drawerUnread.value.unreadGroupForumIds)
+        }
+
+    @Test
+    fun `opening a group clears its dot and records the visit`() =
+        runTest(UnconfinedTestDispatcher()) {
+            // The other half of Option A, and the whole point of it: under the old
+            // read-marker rule the only way to clear a group's dot was to open EVERY unread
+            // topic and read to the end, which in a busy group meant the dot never went out.
+            val lastViewed = FakeGroupLastViewedStore(mapOf(10L to ms(july5), 11L to ms(july5)))
+            val vm = FeedViewModel(
+                activityRepo(mapOf(42L to july1, 43L to july10)),
+                this,
+                FakeGroupOrderStore(),
+                lastViewed,
+                now = { ms(july19) },
+            )
+            vm.load()
+            // The real screen only refreshes once the feed is loaded (the per-group leg
+            // needs the user's groups), so sequence it the same way here.
+            awaitChildren(coroutineContext[Job]!!)
+            vm.refreshDrawerUnread()
+            awaitChildren(coroutineContext[Job]!!)
+            assertEquals(setOf(43L), vm.drawerUnread.value.unreadGroupForumIds)
+
+            val sock = assertIs<FeedState.Loaded>(vm.state.value).groups.first { it.id == 11L }
+            vm.selectGroup(sock)
+            awaitChildren(coroutineContext[Job]!!)
+
+            assertTrue(vm.drawerUnread.value.unreadGroupForumIds.isEmpty())
+            assertEquals(ms(july19), lastViewed.stored?.get(11L))
+        }
+
+    @Test
+    fun `a re-check after opening a group does not re-light its dot`() =
+        runTest(UnconfinedTestDispatcher()) {
+            // The visit has to be PERSISTED, not just cleared in memory — otherwise the
+            // next foreground refresh would compare against the old timestamp and the dot
+            // would come straight back.
+            val lastViewed = FakeGroupLastViewedStore(mapOf(10L to ms(july5), 11L to ms(july5)))
+            val vm = FeedViewModel(
+                activityRepo(mapOf(42L to july1, 43L to july10)),
+                this,
+                FakeGroupOrderStore(),
+                lastViewed,
+                now = { ms(july19) },
+            )
+            vm.load()
+            // The real screen only refreshes once the feed is loaded (the per-group leg
+            // needs the user's groups), so sequence it the same way here.
+            awaitChildren(coroutineContext[Job]!!)
+            vm.refreshDrawerUnread()
+            awaitChildren(coroutineContext[Job]!!)
+            val sock = assertIs<FeedState.Loaded>(vm.state.value).groups.first { it.id == 11L }
+            vm.selectGroup(sock)
+            awaitChildren(coroutineContext[Job]!!)
+
+            vm.refreshDrawerUnread()
+            awaitChildren(coroutineContext[Job]!!)
+
+            assertTrue(vm.drawerUnread.value.unreadGroupForumIds.isEmpty())
+        }
+
+    @Test
+    fun `the group shown on load is not dotted for activity the user is looking at`() =
+        runTest(UnconfinedTestDispatcher()) {
+            // KAL Hub's newest reply (the 10th) is after its stored last view (the 1st),
+            // but load() opens it, so the user is staring at that very activity.
+            val lastViewed = FakeGroupLastViewedStore(mapOf(10L to ms(july1), 11L to ms(july19)))
+            val vm = FeedViewModel(
+                activityRepo(mapOf(42L to july10, 43L to july1)),
+                this,
+                FakeGroupOrderStore(),
+                lastViewed,
+                now = { ms(july19) },
+            )
+            vm.load()
+            // The real screen only refreshes once the feed is loaded (the per-group leg
+            // needs the user's groups), so sequence it the same way here.
+            awaitChildren(coroutineContext[Job]!!)
+            vm.refreshDrawerUnread()
+            awaitChildren(coroutineContext[Job]!!)
+
+            assertTrue(vm.drawerUnread.value.unreadGroupForumIds.isEmpty())
+            assertEquals(ms(july19), lastViewed.stored?.get(10L))
+        }
+
+    @Test
+    fun `a first run seeds every group silently instead of lighting them all`() =
+        runTest(UnconfinedTestDispatcher()) {
+            // Nothing stored (fresh install). Both groups have recent activity, but a
+            // drawer that lights up everywhere on first launch is noise, not signal.
+            val lastViewed = FakeGroupLastViewedStore()
+            val vm = FeedViewModel(
+                activityRepo(mapOf(42L to july10, 43L to july10)),
+                this,
+                FakeGroupOrderStore(),
+                lastViewed,
+                now = { ms(july19) },
+            )
+            vm.load()
+            // The real screen only refreshes once the feed is loaded (the per-group leg
+            // needs the user's groups), so sequence it the same way here.
+            awaitChildren(coroutineContext[Job]!!)
+            vm.refreshDrawerUnread()
+            awaitChildren(coroutineContext[Job]!!)
+
+            assertTrue(vm.drawerUnread.value.unreadGroupForumIds.isEmpty())
+            assertEquals(mapOf(10L to ms(july19), 11L to ms(july19)), lastViewed.stored)
+        }
+
+    @Test
+    fun `a group opened while a refresh is in flight keeps its cleared dot`() =
+        runTest(UnconfinedTestDispatcher()) {
+            // The refresh computes its last-viewed map from the snapshot it STARTED with,
+            // and it is slow (1 + groups.size requests). If persisting that map plainly
+            // overwrote the store, a group the user opened meanwhile would be rolled back
+            // to its old timestamp and its dot would light straight back up. The persist
+            // merges by taking the later timestamp per group, which this pins down.
+            var clock = ms(july5)
+            val gate = CompletableDeferred<Unit>()
+            val groupTopicsGateMutex = Mutex()
+            var groupTopicsSeen = 0
+            val repo = FeedRepository(
+                suspendableRoutingApiClient { url ->
+                    val path = url.encodedPath
+                    when {
+                        path.contains("/current_user") -> CURRENT_USER_JSON
+                        path.contains("memberships") ->
+                            """<html><body>
+                            <a href="https://www.ravelry.com/groups/kal-hub">KAL Hub</a>
+                            <a href="https://www.ravelry.com/groups/sock">Sock Society</a>
+                            </body></html>"""
+                        path.contains("/groups/search") ->
+                            """{"groups":[
+                                {"id":10,"name":"KAL Hub","permalink":"kal-hub","forum_id":42},
+                                {"id":11,"name":"Sock Society","permalink":"sock","forum_id":43}
+                            ]}"""
+                        path.contains("filtered_topics") -> """{"topics":[]}"""
+                        path.contains("/forums/43/") -> {
+                            // Hold ONLY the refresh's fan-out request for forum 43 (the
+                            // first one the feed load doesn't make), opening the window.
+                            val hold = groupTopicsGateMutex.withLock {
+                                (groupTopicsSeen == 0).also { groupTopicsSeen++ }
+                            }
+                            if (hold) gate.await()
+                            """{"topics":[{"id":430,"title":"T","replied_at":"$july10"}]}"""
+                        }
+                        path.contains("/forums/") ->
+                            """{"topics":[{"id":420,"title":"T","replied_at":"$july1"}]}"""
+                        path.contains("/topics/") -> topicDetailJson(
+                            path.split("/topics/")[1].replace(".json", "").toLong()
+                        )
+                        else -> error("Unexpected: $path")
+                    }
+                },
+            )
+            val lastViewed = FakeGroupLastViewedStore(mapOf(10L to ms(july5), 11L to ms(july5)))
+            val vm = FeedViewModel(repo, this, FakeGroupOrderStore(), lastViewed, now = { clock })
+            vm.load()
+            // load() only fetches the default group (forum 42), so the gate can't hold it.
+            awaitChildren(coroutineContext[Job]!!)
+
+            // Refresh starts and blocks mid-fan-out on forum 43.
+            vm.refreshDrawerUnread()
+            // ...meanwhile the user opens Sock Society, at a LATER time than the snapshot.
+            clock = ms(july19)
+            val sock = assertIs<FeedState.Loaded>(vm.state.value).groups.first { it.id == 11L }
+            vm.selectGroup(sock)
+            gate.complete(Unit)
+            awaitChildren(coroutineContext[Job]!!)
+
+            // Forum 43's activity (the 10th) is older than the visit (the 19th): no dot,
+            // and the visit survived in the store.
+            assertTrue(vm.drawerUnread.value.unreadGroupForumIds.isEmpty())
+            assertEquals(ms(july19), lastViewed.stored?.get(11L))
+        }
+
+    @Test
+    fun `a group whose activity fetch fails shows no dot`() =
+        runTest(UnconfinedTestDispatcher()) {
+            // No timestamp on any topic is the same "unknown" case as a failed request:
+            // don't invent a dot out of missing data.
+            val lastViewed = FakeGroupLastViewedStore(mapOf(10L to ms(july1), 11L to ms(july1)))
+            val vm = FeedViewModel(
+                activityRepo(repliedAtByForumId = emptyMap()),
+                this,
+                FakeGroupOrderStore(),
+                lastViewed,
+                now = { ms(july19) },
+            )
+            vm.load()
+            // The real screen only refreshes once the feed is loaded (the per-group leg
+            // needs the user's groups), so sequence it the same way here.
+            awaitChildren(coroutineContext[Job]!!)
+            vm.refreshDrawerUnread()
+            awaitChildren(coroutineContext[Job]!!)
+
+            assertTrue(vm.drawerUnread.value.unreadGroupForumIds.isEmpty())
+        }
+
+    // ---- the "Your Posts" dot after reading (issue #350 part 2, as revised by part 3) ----
+
+    /**
+     * A feed repo whose `filtered_topics` route (the "Your Posts" leg and the My Posts
+     * feed) serves whatever [payload] currently holds, so a test can change the answer
+     * mid-test and detect from the resulting [FeedViewModel.drawerUnread] whether a
+     * re-check actually re-fetched.
      *
      * [payload] is a [MutableStateFlow], not a plain `var`: MockEngine dispatches request
      * handling on [kotlinx.coroutines.Dispatchers.IO] regardless of the calling coroutine's
@@ -1079,7 +1404,7 @@ class FeedViewModelTest {
         }
     })
 
-    /** One unread topic in [forumId] — lights that group's dot and the "Your Posts" dot. */
+    /** One topic with unread replies in [forumId] — lights the "Your Posts" dot. */
     private fun unreadTopicJson(forumId: Long) =
         """{"topics":[{"id":1,"title":"T","forum_id":$forumId,"forum_posts_count":5,"last_read":3}]}"""
 
@@ -1088,59 +1413,18 @@ class FeedViewModelTest {
         """{"topics":[{"id":1,"title":"T","forum_id":42,"forum_posts_count":5,"last_read":5}]}"""
 
     @Test
-    fun `refreshDrawerUnreadAfterReading refetches when the read topic's group dot is lit`() =
+    fun `refreshDrawerUnreadAfterReading re-checks the Your Posts dot from the My Posts feed`() =
         runTest(UnconfinedTestDispatcher()) {
-            // Reading is the one natural moment a dot can go out (issue #350 part 2), so a
-            // read inside a group that currently shows a dot must re-check it.
-            val payload = MutableStateFlow(unreadTopicJson(forumId = 42L))
-            val vm = FeedViewModel(drawerDotRepo(payload), this, FakeGroupOrderStore())
-            vm.load()
-            vm.refreshDrawerUnread()
-            awaitChildren(coroutineContext[Job]!!)
-            // KAL Hub (group 10) sits on forum 42, so its row's dot is lit.
-            assertEquals(setOf(42L), vm.drawerUnread.value.unreadGroupForumIds)
-
-            // Ravelry now reports nothing unread; only an actual re-fetch can observe that.
-            payload.value = readTopicJson
-            vm.markTopicReadUpTo(100L, readUpTo = 10)
-            vm.refreshDrawerUnreadAfterReading(100L)
-            awaitChildren(coroutineContext[Job]!!)
-
-            assertEquals(emptySet(), vm.drawerUnread.value.unreadGroupForumIds)
-            assertFalse(vm.drawerUnread.value.yourPostsHasUnread)
-        }
-
-    @Test
-    fun `refreshDrawerUnreadAfterReading skips the refetch when no dot is lit`() =
-        runTest(UnconfinedTestDispatcher()) {
-            // getDrawerUnread() is two network calls and backing out of a topic is very
-            // common; with no dot lit there is nothing a read could clear, so the refresh
-            // would be pure waste.
-            val payload = MutableStateFlow(readTopicJson)
-            val vm = FeedViewModel(drawerDotRepo(payload), this, FakeGroupOrderStore())
-            vm.load()
-            vm.refreshDrawerUnread()
-            awaitChildren(coroutineContext[Job]!!)
-            assertEquals(DrawerUnread(), vm.drawerUnread.value)
-
-            // If a refresh fired, it would pick this up and light forum 42's dot.
-            payload.value = unreadTopicJson(forumId = 42L)
-            vm.markTopicReadUpTo(100L, readUpTo = 10)
-            vm.refreshDrawerUnreadAfterReading(100L)
-            awaitChildren(coroutineContext[Job]!!)
-
-            assertEquals(DrawerUnread(), vm.drawerUnread.value)
-            // The in-memory badge update still happened — only the network refresh is gated.
-            assertEquals(0, assertIs<FeedState.Loaded>(vm.state.value).items.single().unreadCount)
-        }
-
-    @Test
-    fun `refreshDrawerUnreadAfterReading refetches from my-posts when the Your Posts dot is lit`() =
-        runTest(UnconfinedTestDispatcher()) {
-            // Forum 999 belongs to none of the user's groups, so the group-dot branch can't
-            // fire — this isolates the "Your Posts" branch of the gate.
+            // The "Your Posts" dot stayed read-marker based under Option A, so reading IS
+            // still the natural moment it can go out — and on the My Posts feed every topic
+            // is by definition one the user posted in.
             val payload = MutableStateFlow(unreadTopicJson(forumId = 999L))
-            val vm = FeedViewModel(drawerDotRepo(payload), this, FakeGroupOrderStore())
+            val vm = FeedViewModel(
+                drawerDotRepo(payload),
+                this,
+                FakeGroupOrderStore(),
+                FakeGroupLastViewedStore(),
+            )
             vm.load()
             awaitChildren(coroutineContext[Job]!!)
             vm.selectMyPosts()
@@ -1148,10 +1432,9 @@ class FeedViewModelTest {
             awaitChildren(coroutineContext[Job]!!)
             assertTrue(vm.drawerUnread.value.yourPostsHasUnread)
             val item = assertIs<FeedState.Loaded>(vm.state.value).items.single()
-            // Attributed to no group (forum 999 matches no membership), so the only reason
-            // to refresh is the lit "Your Posts" dot.
             assertTrue(item.unreadCount > 0)
 
+            // Ravelry now reports nothing unread; only an actual re-fetch can observe that.
             payload.value = readTopicJson
             vm.markTopicReadUpTo(item.id, readUpTo = item.postCount)
             vm.refreshDrawerUnreadAfterReading(item.id)
@@ -1161,24 +1444,123 @@ class FeedViewModelTest {
         }
 
     @Test
+    fun `refreshDrawerUnreadAfterReading skips the re-check when the Your Posts dot is dark`() =
+        runTest(UnconfinedTestDispatcher()) {
+            // Backing out of a topic is very common; with nothing lit there is nothing a
+            // read could clear, so the request would be pure waste.
+            val payload = MutableStateFlow(readTopicJson)
+            val vm = FeedViewModel(
+                drawerDotRepo(payload),
+                this,
+                FakeGroupOrderStore(),
+                FakeGroupLastViewedStore(),
+            )
+            vm.load()
+            awaitChildren(coroutineContext[Job]!!)
+            vm.selectMyPosts()
+            vm.refreshDrawerUnread()
+            awaitChildren(coroutineContext[Job]!!)
+            assertFalse(vm.drawerUnread.value.yourPostsHasUnread)
+
+            // If a re-check fired, it would pick this up and light the dot.
+            payload.value = unreadTopicJson(forumId = 999L)
+            val item = assertIs<FeedState.Loaded>(vm.state.value).items.single()
+            vm.refreshDrawerUnreadAfterReading(item.id)
+            awaitChildren(coroutineContext[Job]!!)
+
+            assertFalse(vm.drawerUnread.value.yourPostsHasUnread)
+        }
+
+    @Test
+    fun `refreshDrawerUnreadAfterReading skips the re-check when reading from a group feed`() =
+        runTest(UnconfinedTestDispatcher()) {
+            // Deliberate narrowing: outside the My Posts feed, whether the user posted in
+            // the topic they just read isn't known without another fetch, and the dot is
+            // lit often enough that guessing yes would make the gate near-unconditional.
+            // It settles on the next foreground activation or drawer pull instead.
+            val payload = MutableStateFlow(unreadTopicJson(forumId = 999L))
+            val vm = FeedViewModel(
+                drawerDotRepo(payload),
+                this,
+                FakeGroupOrderStore(),
+                FakeGroupLastViewedStore(),
+            )
+            vm.load()
+            // The real screen only refreshes once the feed is loaded (the per-group leg
+            // needs the user's groups), so sequence it the same way here.
+            awaitChildren(coroutineContext[Job]!!)
+            vm.refreshDrawerUnread()
+            awaitChildren(coroutineContext[Job]!!)
+            assertTrue(vm.drawerUnread.value.yourPostsHasUnread)
+
+            // A group feed is showing, not My Posts, so this must not re-fetch — if it did,
+            // it would observe the now-read payload and clear the dot.
+            payload.value = readTopicJson
+            vm.markTopicReadUpTo(100L, readUpTo = 10)
+            vm.refreshDrawerUnreadAfterReading(100L)
+            awaitChildren(coroutineContext[Job]!!)
+
+            assertTrue(vm.drawerUnread.value.yourPostsHasUnread)
+        }
+
+    @Test
+    fun `reading a topic no longer touches the per-group dots`() =
+        runTest(UnconfinedTestDispatcher()) {
+            // Superseded by part 3: a group's dot is cleared by VISITING the group, not by
+            // reading its topics. This pins down that the read path leaves them alone
+            // rather than two mechanisms fighting over the same state.
+            val lastViewed = FakeGroupLastViewedStore(mapOf(10L to ms(july5), 11L to ms(july5)))
+            val vm = FeedViewModel(
+                activityRepo(
+                    mapOf(42L to july1, 43L to july10),
+                    postingJson = unreadTopicJson(forumId = 999L),
+                ),
+                this,
+                FakeGroupOrderStore(),
+                lastViewed,
+                now = { ms(july19) },
+            )
+            vm.load()
+            // The real screen only refreshes once the feed is loaded (the per-group leg
+            // needs the user's groups), so sequence it the same way here.
+            awaitChildren(coroutineContext[Job]!!)
+            vm.refreshDrawerUnread()
+            awaitChildren(coroutineContext[Job]!!)
+            assertEquals(setOf(43L), vm.drawerUnread.value.unreadGroupForumIds)
+
+            val topicId = assertIs<FeedState.Loaded>(vm.state.value).items.single().id
+            vm.markTopicReadUpTo(topicId, readUpTo = 99)
+            vm.refreshDrawerUnreadAfterReading(topicId)
+            awaitChildren(coroutineContext[Job]!!)
+
+            assertEquals(setOf(43L), vm.drawerUnread.value.unreadGroupForumIds)
+        }
+
+    @Test
     fun `refreshDrawerUnreadAfterReading is a no-op when the topic is no longer in the feed`() =
         runTest(UnconfinedTestDispatcher()) {
             // This runs on a callback fired when the read POST lands, so the feed can have
             // been reloaded or switched to another group in the meantime — the just-read
-            // topic need not still be on screen. Nothing to attribute to a group, so no
-            // refetch (and no crash).
-            val payload = MutableStateFlow(unreadTopicJson(forumId = 42L))
-            val vm = FeedViewModel(drawerDotRepo(payload), this, FakeGroupOrderStore())
+            // topic need not still be on screen. No re-fetch, and no crash.
+            val payload = MutableStateFlow(unreadTopicJson(forumId = 999L))
+            val vm = FeedViewModel(
+                drawerDotRepo(payload),
+                this,
+                FakeGroupOrderStore(),
+                FakeGroupLastViewedStore(),
+            )
             vm.load()
+            awaitChildren(coroutineContext[Job]!!)
+            vm.selectMyPosts()
             vm.refreshDrawerUnread()
             awaitChildren(coroutineContext[Job]!!)
-            assertEquals(setOf(42L), vm.drawerUnread.value.unreadGroupForumIds)
+            assertTrue(vm.drawerUnread.value.yourPostsHasUnread)
 
             payload.value = readTopicJson
-            vm.refreshDrawerUnreadAfterReading(999L)
+            vm.refreshDrawerUnreadAfterReading(999_999L)
             awaitChildren(coroutineContext[Job]!!)
 
-            assertEquals(setOf(42L), vm.drawerUnread.value.unreadGroupForumIds)
+            assertTrue(vm.drawerUnread.value.yourPostsHasUnread)
         }
 
     @Test
@@ -1186,7 +1568,12 @@ class FeedViewModelTest {
         runTest(UnconfinedTestDispatcher()) {
             // Same callback timing: a session expiry or reset() can have dropped the feed
             // out of Loaded before the read POST landed.
-            val vm = FeedViewModel(drawerDotRepo(MutableStateFlow(readTopicJson)), this, FakeGroupOrderStore())
+            val vm = FeedViewModel(
+                drawerDotRepo(MutableStateFlow(readTopicJson)),
+                this,
+                FakeGroupOrderStore(),
+                FakeGroupLastViewedStore(),
+            )
 
             vm.refreshDrawerUnreadAfterReading(100L)
             awaitChildren(coroutineContext[Job]!!)
@@ -1198,7 +1585,7 @@ class FeedViewModelTest {
     @Test
     fun `markTopicReadUpTo is a no-op when the feed is not loaded`() =
         runTest(UnconfinedTestDispatcher()) {
-            val vm = FeedViewModel(unreadRepo(), this, FakeGroupOrderStore())
+            val vm = FeedViewModel(unreadRepo(), this, FakeGroupOrderStore(), FakeGroupLastViewedStore())
             // No load(): state is still Loading, so there is nothing to update.
             vm.markTopicReadUpTo(100L, readUpTo = 5)
             assertIs<FeedState.Loading>(vm.state.value)
@@ -1207,7 +1594,7 @@ class FeedViewModelTest {
     @Test
     fun `markTopicReadUpTo is a no-op when the topic is not in the feed`() =
         runTest(UnconfinedTestDispatcher()) {
-            val vm = FeedViewModel(unreadRepo(postsCount = 10), this, FakeGroupOrderStore())
+            val vm = FeedViewModel(unreadRepo(postsCount = 10), this, FakeGroupOrderStore(), FakeGroupLastViewedStore())
             vm.load()
             awaitChildren(coroutineContext[Job]!!)
             val before = vm.state.value
@@ -1247,7 +1634,7 @@ class FeedViewModelTest {
     @Test
     fun `selectMyPosts swaps to the cross-group feed and clears the group selection`() =
         runTest(UnconfinedTestDispatcher()) {
-            val vm = FeedViewModel(myPostsRepo(), this, FakeGroupOrderStore())
+            val vm = FeedViewModel(myPostsRepo(), this, FakeGroupOrderStore(), FakeGroupLastViewedStore())
             vm.load()
             awaitChildren(coroutineContext[Job]!!)
 
@@ -1265,7 +1652,7 @@ class FeedViewModelTest {
 
     @Test
     fun `selectGroup leaves the my-posts view`() = runTest(UnconfinedTestDispatcher()) {
-        val vm = FeedViewModel(myPostsRepo(), this, FakeGroupOrderStore())
+        val vm = FeedViewModel(myPostsRepo(), this, FakeGroupOrderStore(), FakeGroupLastViewedStore())
         vm.load()
         awaitChildren(coroutineContext[Job]!!)
         vm.selectMyPosts()
@@ -1283,7 +1670,7 @@ class FeedViewModelTest {
     @Test
     fun `loadMore in the my-posts view appends the next cross-group page`() =
         runTest(UnconfinedTestDispatcher()) {
-            val vm = FeedViewModel(myPostsRepo(), this, FakeGroupOrderStore())
+            val vm = FeedViewModel(myPostsRepo(), this, FakeGroupOrderStore(), FakeGroupLastViewedStore())
             vm.load()
             awaitChildren(coroutineContext[Job]!!)
             vm.selectMyPosts()
@@ -1300,7 +1687,7 @@ class FeedViewModelTest {
 
     @Test
     fun `refresh keeps the my-posts view`() = runTest(UnconfinedTestDispatcher()) {
-        val vm = FeedViewModel(myPostsRepo(), this, FakeGroupOrderStore())
+        val vm = FeedViewModel(myPostsRepo(), this, FakeGroupOrderStore(), FakeGroupLastViewedStore())
         vm.load()
         awaitChildren(coroutineContext[Job]!!)
         vm.selectMyPosts()
@@ -1337,6 +1724,7 @@ class FeedViewModelTest {
             }),
             this,
             FakeGroupOrderStore(),
+            FakeGroupLastViewedStore(),
         )
         vm.load()
         awaitChildren(coroutineContext[Job]!!)

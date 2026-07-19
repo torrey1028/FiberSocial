@@ -354,34 +354,6 @@ class RavelryApiClientTest {
     }
 
     @Test
-    fun `getReadingTopics requests the reading filter sorted newest-reply-first`() = runTest {
-        var capturedUrl: io.ktor.http.Url? = null
-        val client = routingApiClientCapturing(onRequest = { capturedUrl = it }) { topicsJson(100L) }
-        client.getReadingTopics(page = 2, pageSize = 100)
-        assertEquals("/forums/filtered_topics.json", capturedUrl?.encodedPath)
-        // "reading" (topics the user follows) is broader than getMyTopics' "posting" —
-        // it's the set that backs the drawer's per-group unread dots.
-        assertEquals("reading", capturedUrl?.parameters?.get("status"))
-        // Same bare-"replied" (no underscore) newest-first sort as getMyTopics.
-        assertEquals("replied", capturedUrl?.parameters?.get("sort"))
-        assertEquals("2", capturedUrl?.parameters?.get("page"))
-        assertEquals("100", capturedUrl?.parameters?.get("page_size"))
-    }
-
-    @Test
-    fun `getReadingTopics returns topics with forum ids and read markers`() = runTest {
-        val client = routingApiClient {
-            """{"topics":[
-                {"id":100,"title":"T","forum_id":42,"forum_posts_count":5,"last_read":3}
-            ]}"""
-        }
-        val topic = client.getReadingTopics().topics.single()
-        assertEquals(42L, topic.forumId)
-        assertEquals(5, topic.postsCount)
-        assertEquals(3, topic.lastRead)
-    }
-
-    @Test
     fun `getTopicDetail returns full topic with author and summary`() = runTest {
         val client = routingApiClient { topicDetailJson(100L, imagesCount = 2, summary = "Great WIP!") }
         val topic = client.getTopicDetail(100L)

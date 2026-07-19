@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlin.time.Clock
 
 /**
  * Represents the group feed screen state emitted by [FeedViewModel].
@@ -90,11 +91,17 @@ sealed class JoinState {
  * @param scope Coroutine scope tied to the ViewModel's lifecycle.
  * @param groupOrderStore Persisted group display order; its first group is the default
  *   group opened on load (issue #97).
+ * @param groupLastViewedStore Persisted per-group last-viewed timestamps, backing the
+ *   drawer's activity dots (issue #350 part 3).
+ * @param now Current epoch millis. Injectable so tests can drive the last-viewed
+ *   comparison deterministically instead of racing the wall clock.
  */
 class FeedViewModel(
     private val repository: FeedRepository,
     private val scope: CoroutineScope,
     private val groupOrderStore: GroupOrderStore,
+    private val groupLastViewedStore: GroupLastViewedStore,
+    private val now: () -> Long = { Clock.System.now().toEpochMilliseconds() },
 ) {
     private val _state = MutableStateFlow<FeedState>(FeedState.Loading)
     private val sessionExpirySignal = SessionExpirySignal()
@@ -130,12 +137,65 @@ class FeedViewModel(
     private val _drawerUnread = MutableStateFlow(DrawerUnread())
     private var drawerUnreadJob: Job? = null
 
+    // In-memory mirror of groupLastViewedStore, loaded on first use. Held here (rather
+    // than re-read per call) so markGroupViewed and refreshDrawerUnread work off one
+    // authoritative value instead of racing each other through the store.
+    private var groupLastViewed: Map<Long, Long>? = null
+
+    // Forum ids marked viewed since the in-flight refresh started. That refresh computed
+    // its dots from the snapshot it began with, so when it lands it must not re-light a
+    // group the user opened in the meantime — the persist-side equivalent is the merge in
+    // persistGroupLastViewed.
+    private var forumsViewedDuringRefresh = emptySet<Long>()
+
     /**
-     * Whether the drawer's group rows and "Your Posts" row should show an unread dot
-     * (unread indicators). Updated by [refreshDrawerUnread] — see its doc for when that
-     * fires; a fetch failure leaves the previous value rather than clearing the dots.
+     * Whether the drawer's group rows and "Your Posts" row should show a dot. Updated by
+     * [refreshDrawerUnread] — see its doc for when that fires; a fetch failure leaves the
+     * previous value rather than clearing the dots. See [DrawerUnread] for what each dot
+     * actually means (the two are NOT derived the same way).
      */
     val drawerUnread: StateFlow<DrawerUnread> = _drawerUnread.asStateFlow()
+
+    private suspend fun loadGroupLastViewed(): Map<Long, Long> =
+        groupLastViewed ?: (groupLastViewedStore.load() ?: emptyMap()).also { groupLastViewed = it }
+
+    /**
+     * Persists [updated] as the new last-viewed map, merging rather than replacing: each
+     * group keeps the LATER of the incoming and currently-cached timestamp.
+     *
+     * The merge is what makes the slow, networked [refreshDrawerUnread] safe to interleave
+     * with an instant [markGroupViewed]. A refresh computes its map from the snapshot it
+     * started with; if the user opened a group while it was in flight, a plain overwrite
+     * would roll that group's timestamp back and re-light the dot they just cleared.
+     * Timestamps only ever move forward, so taking the max is exactly the right reconcile.
+     * Keys come from [updated] alone, so pruning of departed groups still applies.
+     */
+    private suspend fun persistGroupLastViewed(updated: Map<Long, Long>) {
+        val current = groupLastViewed ?: emptyMap()
+        val merged = updated.mapValues { (id, timestamp) ->
+            maxOf(timestamp, current[id] ?: Long.MIN_VALUE)
+        }
+        if (merged == current) return
+        groupLastViewed = merged
+        groupLastViewedStore.save(merged)
+    }
+
+    /**
+     * Records that the user is now looking at [group] and drops its dot (issue #350 part
+     * 3) — the action that makes the per-group dots dismissible at all.
+     *
+     * The dot is cleared from [drawerUnread] synchronously so the drawer updates on this
+     * frame; only the persist is deferred to [scope].
+     */
+    private fun markGroupViewed(group: Group) {
+        _drawerUnread.value = _drawerUnread.value.copy(
+            unreadGroupForumIds = _drawerUnread.value.unreadGroupForumIds - group.forumId,
+        )
+        forumsViewedDuringRefresh = forumsViewedDuringRefresh + group.forumId
+        scope.launch {
+            persistGroupLastViewed(loadGroupLastViewed() + (group.id to now()))
+        }
+    }
 
     /**
      * Joins the current user to the group at [permalink] (the app support group, from the
@@ -235,14 +295,19 @@ class FeedViewModel(
     }
 
     /**
-     * Best-effort refresh of the drawer's unread dots ([drawerUnread]). Driven by the UI
-     * (on first feed display and on drawer pull-to-refresh) rather than folded into
-     * [load]/[refresh], so it stays an independent, non-blocking side channel: a failure
-     * just keeps the previous value so a transient error can't wrongly clear the dots, and
-     * it never disrupts the feed itself. Session expiry IS still signalled from here,
-     * though — this can be the only in-flight request (e.g. a drawer pull-to-refresh while
-     * otherwise idle on an already-loaded feed), so it can't assume some other fetch will
-     * always notice first.
+     * Best-effort refresh of the drawer's dots ([drawerUnread]). Driven by the UI (once the
+     * feed is loaded, on every real foreground activation, and on drawer pull-to-refresh)
+     * rather than folded into [load]/[refresh], so it stays an independent, non-blocking
+     * side channel: a failure just keeps the previous value so a transient error can't
+     * wrongly clear the dots, and it never disrupts the feed itself. Session expiry IS
+     * still signalled from here, though — this can be the only in-flight request (e.g. a
+     * drawer pull-to-refresh while otherwise idle on an already-loaded feed), so it can't
+     * assume some other fetch will always notice first.
+     *
+     * The per-group leg needs the user's groups, which only exist once the feed is loaded;
+     * before that this still refreshes the (group-independent) "Your Posts" dot and leaves
+     * the group dots alone. It is deliberately NOT fired on drawer open — that stayed lazy
+     * per issue #349, and it now costs `1 + groups.size` requests.
      *
      * A new call cancels any still-in-flight previous one before starting, so responses
      * can never land out of order and let a slow, stale result overwrite a fresher one —
@@ -250,12 +315,23 @@ class FeedViewModel(
      */
     fun refreshDrawerUnread() {
         drawerUnreadJob?.cancel()
+        forumsViewedDuringRefresh = emptySet()
         drawerUnreadJob = scope.launch {
             try {
-                _drawerUnread.value = repository.getDrawerUnread()
+                val groups = loadedGroups()
+                val result = repository.getDrawerUnread(
+                    groups = groups,
+                    groupLastViewed = loadGroupLastViewed(),
+                    now = now(),
+                )
+                // Subtract groups opened while this was in flight: their dots were already
+                // cleared, and this result predates the visit that cleared them.
+                val dots = result.unread.unreadGroupForumIds - forumsViewedDuringRefresh
+                _drawerUnread.value = result.unread.copy(unreadGroupForumIds = dots)
+                persistGroupLastViewed(result.groupLastViewed)
                 println(
-                    "FiberSocial: drawer unread -> ${_drawerUnread.value.unreadGroupForumIds.size} " +
-                        "group(s), yourPosts=${_drawerUnread.value.yourPostsHasUnread}",
+                    "FiberSocial: drawer unread -> ${dots.size} " +
+                        "of ${groups.size} group(s), yourPosts=${result.unread.yourPostsHasUnread}",
                 )
             } catch (e: CancellationException) {
                 throw e
@@ -266,6 +342,13 @@ class FeedViewModel(
                 println("FiberSocial: drawer unread refresh failed: ${e.message}")
             }
         }
+    }
+
+    /** The user's groups if the feed has them, else empty (still loading / errored). */
+    private fun loadedGroups(): List<Group> = when (val s = _state.value) {
+        is FeedState.Loaded -> s.groups
+        is FeedState.Refreshing -> s.stale.groups
+        else -> emptyList()
     }
 
     /**
@@ -315,54 +398,49 @@ class FeedViewModel(
     }
 
     /**
-     * Re-checks the drawer's unread dots after [topicId] has been read (issue #350 part 2).
+     * Re-checks the **"Your Posts"** dot after [topicId] has been read (issue #350 part 2,
+     * as revised by part 3).
      *
-     * Reading is the only natural moment a dot can go *out* — [markTopicReadUpTo] updates
-     * just the in-memory card, and drawer-open deliberately doesn't refresh — so without
-     * this a group whose every topic has been read keeps its dot lit until a manual pull.
+     * That dot is read-marker based and cross-group, so reading is the only natural moment
+     * it can go out — [markTopicReadUpTo] updates just the in-memory card, and drawer-open
+     * deliberately doesn't refresh. The per-group dots no longer need this: under part 3
+     * they clear by *visiting* the group ([markGroupViewed]), not by reading.
      *
      * **Call this only once Ravelry's read marker has actually advanced**
      * ([TopicDetailViewModel.markRead]'s `onMarked`), never alongside the POST that
-     * advances it: [FeedRepository.getDrawerUnread] is a GET that races such a POST, and
-     * a GET that wins reports the pre-read state — re-lighting the very dot this exists
-     * to clear.
+     * advances it: the re-check is a GET that races such a POST, and a GET that wins
+     * reports the pre-read state — re-lighting the very dot this exists to clear.
      *
-     * Gated by [shouldRefreshDrawerUnreadAfterReading] so the common case (backing out of
-     * a topic with no relevant dot lit) costs nothing.
+     * Gated so the common case (backing out of a topic with nothing to clear) costs
+     * nothing: it fires only when the dot is actually lit *and* the My Posts feed is what's
+     * showing, where every topic is by definition one the user posted in. Reading from a
+     * *group* feed is deliberately not treated as a candidate — whether the user posted in
+     * that topic isn't known without another fetch, and the dot is lit often enough that
+     * guessing yes would make the gate near-unconditional. It settles on the next
+     * foreground activation or drawer pull-to-refresh instead.
      */
     fun refreshDrawerUnreadAfterReading(topicId: Long) {
         val current = _state.value as? FeedState.Loaded ?: return
-        val target = current.items.firstOrNull { it.id == topicId } ?: return
-        if (shouldRefreshDrawerUnreadAfterReading(current, target)) refreshDrawerUnread()
-    }
-
-    /**
-     * Whether reading [target] in [current] could have turned a currently-lit drawer dot
-     * off, and is therefore worth paying a [refreshDrawerUnread] for. True when either:
-     *
-     * - the topic's own group row has a dot — its forum is in
-     *   [DrawerUnread.unreadGroupForumIds] (matched via the loaded [Group.forumId], since
-     *   [FeedItem] carries the group id, not the forum id); or
-     * - the "Your Posts" dot is lit *and* the My Posts feed is what's showing — there,
-     *   every topic is by definition one the user posted in, so reading one can clear it.
-     *
-     * Reading from a *group* feed is deliberately not treated as a "Your Posts" candidate:
-     * whether the user has posted in that topic isn't known without another fetch, and the
-     * "Your Posts" dot is lit often enough that guessing yes would make the gate almost
-     * unconditional — exactly the cost this avoids. That dot instead settles on the next
-     * foreground activation or drawer pull-to-refresh.
-     *
-     * When no relevant dot is lit there is nothing to clear, so the refresh would be pure
-     * waste and is skipped.
-     */
-    private fun shouldRefreshDrawerUnreadAfterReading(
-        current: FeedState.Loaded,
-        target: FeedItem,
-    ): Boolean {
-        val unread = _drawerUnread.value
-        val forumId = current.groups.firstOrNull { it.id == target.groupId }?.forumId
-        if (forumId != null && forumId in unread.unreadGroupForumIds) return true
-        return unread.yourPostsHasUnread && current.myPosts
+        if (current.items.none { it.id == topicId }) return
+        if (!_drawerUnread.value.yourPostsHasUnread || !current.myPosts) return
+        scope.launch {
+            try {
+                _drawerUnread.value = _drawerUnread.value.copy(
+                    yourPostsHasUnread = repository.getYourPostsUnread(),
+                )
+                println(
+                    "FiberSocial: your-posts dot after reading -> " +
+                        "${_drawerUnread.value.yourPostsHasUnread}",
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: SessionExpiredException) {
+                println("FiberSocial: your-posts dot refresh session expired")
+                sessionExpirySignal.signal()
+            } catch (e: Exception) {
+                println("FiberSocial: your-posts dot refresh failed: ${e.message}")
+            }
+        }
     }
 
     /**
@@ -371,6 +449,8 @@ class FeedViewModel(
     fun selectGroup(group: Group) {
         val current = _state.value as? FeedState.Loaded ?: return
         println("FiberSocial: FeedViewModel.selectGroup(${group.name})")
+        // Opening a group is what clears its activity dot (issue #350 part 3).
+        markGroupViewed(group)
         // Switch to the new group immediately (issue #214): show it selected in the chrome
         // with a blank, loading content area rather than leaving the old group's topics
         // under a spinner. Set synchronously (before launching the fetch) so the chrome —
@@ -547,6 +627,10 @@ class FeedViewModel(
         } else {
             val selected = selectedGroup?.let { s -> groups.firstOrNull { it.id == s.id } }
                 ?: groups.firstOrNull()
+            // The group whose feed this load lands on is on screen, so it counts as viewed
+            // (issue #350 part 3) — otherwise the default group would show a dot for
+            // activity the user is looking at right now.
+            selected?.let { markGroupViewed(it) }
             val page = selected?.let { repository.getFeedItemsPage(it, page = 1) }
             val items = page?.items ?: emptyList()
             println("FiberSocial: fetched ${items.size} feed items")

@@ -10,6 +10,7 @@ import com.myhobbyislearning.fibersocial.feed.FeedRepository
 import com.myhobbyislearning.fibersocial.feed.FeedScreenModel
 import com.myhobbyislearning.fibersocial.feed.FeedViewModel
 import com.myhobbyislearning.fibersocial.feed.ImageAttachmentViewModel
+import com.myhobbyislearning.fibersocial.feed.KeyValueGroupLastViewedStore
 import com.myhobbyislearning.fibersocial.feed.KeyValueGroupOrderStore
 import com.myhobbyislearning.fibersocial.feed.readPickedImage
 import com.myhobbyislearning.fibersocial.feed.NewTopicViewModel
@@ -24,6 +25,7 @@ import com.myhobbyislearning.fibersocial.net.ravelryHttpClient
 import com.myhobbyislearning.fibersocial.projects.ProjectPageViewModel
 import com.myhobbyislearning.fibersocial.projects.ProjectPhotoPickerViewModel
 import com.myhobbyislearning.fibersocial.storage.AUTH_STORE_NAME
+import com.myhobbyislearning.fibersocial.storage.GROUP_LAST_VIEWED_STORE_NAME
 import com.myhobbyislearning.fibersocial.storage.GROUP_ORDER_STORE_NAME
 import com.myhobbyislearning.fibersocial.storage.NOTIFICATION_STATE_STORE_NAME
 import com.myhobbyislearning.fibersocial.storage.KeychainKeyValueStore
@@ -110,6 +112,7 @@ class IosFeedModel(scope: CoroutineScope) : FeedScreenModel {
         repository,
         scope,
         KeyValueGroupOrderStore(NsUserDefaultsKeyValueStore(GROUP_ORDER_STORE_NAME)),
+        KeyValueGroupLastViewedStore(NsUserDefaultsKeyValueStore(GROUP_LAST_VIEWED_STORE_NAME)),
     )
     override val topicDetail = TopicDetailViewModel(apiClient, scope)
     override val newTopic = NewTopicViewModel(apiClient, scope)
