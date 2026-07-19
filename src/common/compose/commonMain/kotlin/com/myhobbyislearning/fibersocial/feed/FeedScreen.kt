@@ -642,6 +642,13 @@ fun FeedScreen(
             eventRemindersEnabled = notificationSettings?.eventRemindersEnabled ?: true,
             onEventRemindersEnabledChange = { enabled ->
                 updateSettings { it.copy(eventRemindersEnabled = enabled) }
+                // Unlike the other two kinds, reminders have already-scheduled OS alarms
+                // that only get cancelled/rescheduled when a sync actually runs — and the
+                // next periodic one could be up to a day away (ONCE_A_DAY cadence). Force
+                // it now, the same way an RSVP change already does (issue #185), so turning
+                // reminders off actually silences an imminent one instead of letting it
+                // fire anyway.
+                onRunEventSync()
             },
             newGroupEventsEnabled = notificationSettings?.newGroupEventsEnabled ?: true,
             onNewGroupEventsEnabledChange = { enabled ->
