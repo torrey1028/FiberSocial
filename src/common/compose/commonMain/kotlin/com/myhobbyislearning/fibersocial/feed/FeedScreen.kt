@@ -144,7 +144,9 @@ import com.myhobbyislearning.fibersocial.ui.GroupBadge
 import com.myhobbyislearning.fibersocial.ui.PullToRefreshBox
 import com.myhobbyislearning.fibersocial.ui.appLogoResource
 import com.myhobbyislearning.fibersocial.ui.UserAvatar
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.jetbrains.compose.resources.painterResource
 import org.jetbrains.compose.resources.stringResource
 
@@ -419,6 +421,11 @@ fun FeedScreen(
     var showSettings by rememberSaveable { mutableStateOf(false) }
     // Declared here (not at the feed chrome below) so the Settings block above can open it (#207).
     var showDebugPanel by remember { mutableStateOf(false) }
+    // Declared here (not inside the Settings block above) so it outlives that subtree (#343).
+    // The block is an early return, so tapping Back drops it out of composition immediately —
+    // a scope remembered in there would be cancelled with it, killing an in-flight settings
+    // save mid-write and silently reverting the toggle the user just flipped.
+    val settingsScope = rememberCoroutineScope()
     // Opened from the Settings block below without clearing showSettings, so backing out
     // of About returns to the still-open Settings screen (issue #289).
     var showAbout by remember { mutableStateOf(false) }
@@ -622,12 +629,15 @@ fun FeedScreen(
         LaunchedEffect(Unit) {
             notificationSettingsStore?.let { notificationSettings = it.load() }
         }
-        val settingsScope = rememberCoroutineScope()
         // Optimistically update local state, then persist. Null (still loading) is a no-op.
+        // settingsScope is hoisted to FeedScreen's state block (see #343 there) so leaving
+        // Settings doesn't cancel the save; NonCancellable covers the remaining case that
+        // hoisting can't — FeedScreen itself leaving composition (logout, teardown) while a
+        // save is in flight — so a started write always runs to completion either way.
         fun updateSettings(transform: (NotificationSettings) -> NotificationSettings) {
             val updated = notificationSettings?.let(transform) ?: return
             notificationSettings = updated
-            settingsScope.launch { notificationSettingsStore?.save(updated) }
+            settingsScope.launch { withContext(NonCancellable) { notificationSettingsStore?.save(updated) } }
         }
         SettingsScreen(
             user = user,
