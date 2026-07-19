@@ -149,7 +149,7 @@ class FeedViewModel(
     private var forumsViewedDuringRefresh = emptySet<Long>()
 
     /**
-     * Whether the drawer's group rows and "Your Posts" row should show a dot. Updated by
+     * Whether the drawer's group rows and "Posts" row should show a dot. Updated by
      * [refreshDrawerUnread] — see its doc for when that fires; a fetch failure leaves the
      * previous value rather than clearing the dots. See [DrawerUnread] for what each dot
      * actually means (the two are NOT derived the same way).
@@ -305,7 +305,7 @@ class FeedViewModel(
      * assume some other fetch will always notice first.
      *
      * The per-group leg needs the user's groups, which only exist once the feed is loaded;
-     * before that this still refreshes the (group-independent) "Your Posts" dot and leaves
+     * before that this still refreshes the (group-independent) "Posts" dot and leaves
      * the group dots alone. It is deliberately NOT fired on drawer open — that stayed lazy
      * per issue #349, and it now costs `1 + groups.size` requests.
      *
@@ -398,7 +398,7 @@ class FeedViewModel(
     }
 
     /**
-     * Re-checks the **"Your Posts"** dot after [topicId] has been read (issue #350 part 2,
+     * Re-checks the **"Posts"** dot after [topicId] has been read (issue #350 part 2,
      * as revised by part 3).
      *
      * That dot is read-marker based and cross-group, so reading is the only natural moment

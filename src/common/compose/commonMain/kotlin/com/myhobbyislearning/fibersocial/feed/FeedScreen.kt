@@ -16,6 +16,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
@@ -1042,7 +1043,7 @@ fun FeedScreen(
     CloseDrawerOnBack(drawerState)
 
     val title = when {
-        showingMyPosts -> "Your Posts"
+        showingMyPosts -> "Posts"
         else -> loaded?.selectedGroup?.name ?: "FiberSocial"
     }
     val selectedGroup = loaded?.selectedGroup
@@ -1364,10 +1365,45 @@ internal fun <T> moveItem(list: List<T>, from: Int, to: Int): List<T> =
     if (from == to || from !in list.indices || to !in list.indices) list
     else list.toMutableList().apply { add(to, removeAt(from)) }
 
-// Lazy items before the first group row in the drawer (the "My Posts" entry and the
-// "Your Groups" header). The drag-reorder math offsets lazy-item indices by this to get
-// group-list indices — keep it in sync with the items above `items(localGroups, ...)`.
-private const val DRAWER_ITEMS_BEFORE_GROUPS = 2
+/**
+ * A thin scroll indicator for the drawer's group list (issue #347).
+ *
+ * Compose Multiplatform has no built-in scrollbar for `LazyColumn` on Android/iOS, so
+ * this derives one from [state]. It renders nothing when everything already fits — the
+ * point is to signal "there is more below", and a permanently-visible bar on a short
+ * list would be noise rather than information.
+ *
+ * The thumb is sized and positioned from ITEM COUNTS, not pixel offsets: exact pixel
+ * extents aren't knowable for a lazy list whose off-screen rows have never been measured.
+ * Rows here are near enough uniform height that the approximation reads correctly, and
+ * it degrades gracefully — the thumb tracks proportionally even if a row is taller.
+ */
+@Composable
+private fun GroupListScrollbar(state: LazyListState, modifier: Modifier = Modifier) {
+    val info = state.layoutInfo
+    val total = info.totalItemsCount
+    val visible = info.visibleItemsInfo.size
+    // Nothing to scroll (or nothing laid out yet) — draw nothing at all.
+    if (total == 0 || visible == 0 || visible >= total) return
+    val visibleFraction = visible.toFloat() / total
+    // The last scroll position puts the final item on screen, so the furthest the first
+    // visible index can reach is total - visible, not total.
+    val maxFirstIndex = (total - visible).coerceAtLeast(1)
+    val scrollFraction = (state.firstVisibleItemIndex.toFloat() / maxFirstIndex).coerceIn(0f, 1f)
+    BoxWithConstraints(modifier.fillMaxHeight().width(4.dp).padding(vertical = 4.dp)) {
+        val thumbHeight = maxHeight * visibleFraction
+        Box(
+            Modifier
+                .offset(y = (maxHeight - thumbHeight) * scrollFraction)
+                .height(thumbHeight)
+                .width(4.dp)
+                .background(
+                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f),
+                    RoundedCornerShape(2.dp),
+                ),
+        )
+    }
+}
 
 /** The classic six-dot drag affordance shown on rows while reordering is active. */
 @Composable
@@ -1545,7 +1581,7 @@ internal fun GroupDrawer(
     // immediately from the handle, or via long-press anywhere on the row.
     var reorderMode by remember { mutableStateOf(false) }
 
-    // Folds the "Your Groups" section (list + "Find groups") behind its header pill.
+    // Folds the "Groups" section (list + "Find groups") behind its header pill.
     // Session-scoped like the feed's pinnedCollapsed: a standing preference, not
     // persisted. Toggling is locked during reorder mode — collapsing mid-drag would
     // tear the rows being dragged out of composition.
@@ -1582,7 +1618,7 @@ internal fun GroupDrawer(
         // still describe the pre-swap order, and acting on them re-applies the same
         // swap, making the row ping-pong. Only swap when layout reflects the working
         // list.
-        if (current.index != from + DRAWER_ITEMS_BEFORE_GROUPS) return
+        if (current.index != from) return
         // The neighbor whose midpoint the dragged row covers becomes the drop slot.
         val top = current.offset + dragOffset
         val bottom = top + current.size
@@ -1590,10 +1626,9 @@ internal fun GroupDrawer(
             info.key != id &&
                 localGroups.any { it.id == info.key } &&
                 (info.offset + info.size / 2f) in top..bottom &&
-                info.index == localGroups.indexOfFirst { it.id == info.key } +
-                DRAWER_ITEMS_BEFORE_GROUPS
+                info.index == localGroups.indexOfFirst { it.id == info.key }
         } ?: return
-        val to = target.index - DRAWER_ITEMS_BEFORE_GROUPS
+        val to = target.index
         if (from != to) {
             localGroups = moveItem(localGroups, from, to)
             // The swap moves the dragged row's base slot to the target's; compensate so
@@ -1616,6 +1651,79 @@ internal fun GroupDrawer(
 
     ModalDrawerSheet {
         Column {
+            // The cross-group "My Posts" entry and the "Groups" section header. Both sit
+            // ABOVE the scrolling list, not inside it (issue #347): they are the drawer's
+            // fixed navigation, so they stay put while the group list scrolls under them
+            // rather than sliding away once a user with many groups scrolls down.
+            //
+            // Consequence worth knowing: because they left the LazyColumn, the group rows
+            // now start at lazy index 0, which is why DRAWER_ITEMS_BEFORE_GROUPS (formerly
+            // 2, compensating for these two items) is gone from the drag-to-reorder math.
+            //
+            // "Posts" and "Groups" each get a HorizontalDivider ABOVE them, the same
+            // treatment the "Send feedback" row gets at the bottom of the sheet. Unselected
+            // NavigationDrawerItems paint no pill, so on their own they read as flat text
+            // on the sheet surface and don't look tappable; a rule above each one reads as
+            // a list of discrete tappable rows, which bracketing the pair as a single block
+            // did not. There is deliberately NO rule below "Groups" — it heads the group
+            // list beneath it, so a line there would cut the header off from its own
+            // children rather than separating two peers.
+            Spacer(Modifier.height(16.dp))
+            HorizontalDivider(Modifier.testTag("DrawerNavClusterTop"))
+            Spacer(Modifier.height(8.dp))
+            NavigationDrawerItem(
+                label = { Text("Posts") },
+                selected = myPostsSelected,
+                onClick = { if (!reorderMode) onMyPostsSelected() },
+                icon = {
+                    IconWithUnreadDot(hasUnread = myPostsHasUnread) {
+                        Icon(Icons.Default.Person, contentDescription = null)
+                    }
+                },
+                modifier = Modifier.padding(horizontal = 12.dp),
+            )
+            Spacer(Modifier.height(8.dp))
+            HorizontalDivider(Modifier.testTag("DrawerNavClusterMiddle"))
+            Spacer(Modifier.height(8.dp))
+            // The section header is a NavigationDrawerItem so its pill matches the "Posts"
+            // row above, and it folds the group list like the feed's pinned section: same
+            // rotating disclosure chevron (right = folded, down = open). While open the
+            // badge slot holds the reorder Edit/Done button; folded it shows the hidden
+            // group count, and the pill highlights when the active feed is one of them.
+            val chevronRotation by animateFloatAsState(
+                disclosureChevronRotation(groupsCollapsed, LocalLayoutDirection.current),
+            )
+            NavigationDrawerItem(
+                label = { Text("Groups") },
+                selected = groupsCollapsed && selectedGroup != null,
+                onClick = { if (!reorderMode) groupsCollapsed = !groupsCollapsed },
+                icon = {
+                    Icon(
+                        Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                        contentDescription = if (groupsCollapsed) {
+                            "Expand your groups"
+                        } else {
+                            "Collapse your groups"
+                        },
+                        modifier = Modifier.rotate(chevronRotation),
+                    )
+                },
+                badge = {
+                    if (groupsCollapsed) {
+                        Text(
+                            text = groups.size.toString(),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    } else {
+                        TextButton(onClick = { reorderMode = !reorderMode }) {
+                            Text(if (reorderMode) "Done" else "Edit")
+                        }
+                    }
+                },
+                modifier = Modifier.padding(horizontal = 12.dp),
+            )
+            Spacer(Modifier.height(8.dp))
             // Issue #246: joining a group elsewhere in the app left no way to refresh the
             // drawer's list short of leaving and re-entering the app. Pull-to-refresh over
             // the group list matches every other interactable list/drawer in the app
@@ -1638,65 +1746,6 @@ internal fun GroupDrawer(
                     state = listState,
                     modifier = Modifier.fillMaxSize().testTag("GroupList"),
                 ) {
-                    // The cross-group "My Posts" feed entry, above the group list — it
-                    // isn't a group, so it sits outside the "Your Groups" section (and
-                    // outside reorder mode: there's nothing to drag it against).
-                    item(key = "my-posts") {
-                        Spacer(Modifier.height(16.dp))
-                        NavigationDrawerItem(
-                            label = { Text("Your Posts") },
-                            selected = myPostsSelected,
-                            onClick = { if (!reorderMode) onMyPostsSelected() },
-                            icon = {
-                                IconWithUnreadDot(hasUnread = myPostsHasUnread) {
-                                    Icon(Icons.Default.Person, contentDescription = null)
-                                }
-                            },
-                            modifier = Modifier.padding(horizontal = 12.dp),
-                        )
-                    }
-                    item(key = "drawer-header") {
-                        Spacer(Modifier.height(16.dp))
-                        // The section header is a NavigationDrawerItem so its pill matches
-                        // the "My Posts" row above, and it folds the group list like the
-                        // feed's pinned section: same rotating disclosure chevron (right =
-                        // folded, down = open). While open the badge slot holds the
-                        // reorder Edit/Done button; folded it shows the hidden group count,
-                        // and the pill highlights when the active feed is one of them.
-                        val chevronRotation by animateFloatAsState(
-                            disclosureChevronRotation(groupsCollapsed, LocalLayoutDirection.current),
-                        )
-                        NavigationDrawerItem(
-                            label = { Text("Your Groups") },
-                            selected = groupsCollapsed && selectedGroup != null,
-                            onClick = { if (!reorderMode) groupsCollapsed = !groupsCollapsed },
-                            icon = {
-                                Icon(
-                                    Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                                    contentDescription = if (groupsCollapsed) {
-                                        "Expand your groups"
-                                    } else {
-                                        "Collapse your groups"
-                                    },
-                                    modifier = Modifier.rotate(chevronRotation),
-                                )
-                            },
-                            badge = {
-                                if (groupsCollapsed) {
-                                    Text(
-                                        text = groups.size.toString(),
-                                        style = MaterialTheme.typography.labelMedium,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                } else {
-                                    TextButton(onClick = { reorderMode = !reorderMode }) {
-                                        Text(if (reorderMode) "Done" else "Edit")
-                                    }
-                                }
-                            },
-                            modifier = Modifier.padding(horizontal = 12.dp),
-                        )
-                    }
                     if (!groupsCollapsed) {
                     items(localGroups, key = { it.id }) { group ->
                     val eventCount = eventCounts[group.id] ?: 0
@@ -1813,9 +1862,10 @@ internal fun GroupDrawer(
                         modifier = Modifier.padding(horizontal = 12.dp),
                     )
                 }
-                } // end of the collapsible "Your Groups" section (groupsCollapsed)
+                } // end of the collapsible "Groups" section (groupsCollapsed)
                 item(key = "drawer-footer-spacer") { Spacer(Modifier.height(16.dp)) }
                 }
+                GroupListScrollbar(state = listState, modifier = Modifier.align(Alignment.CenterEnd))
             }
             HorizontalDivider()
             FeedbackDrawerAction(
@@ -1946,7 +1996,7 @@ internal fun FeedFabs(
 
 /**
  * A small filled dot marking unread activity — the drawer's unread indicator, shown via
- * [IconWithUnreadDot] on a "Your Posts" / group row whose posts have unread replies.
+ * [IconWithUnreadDot] on a "Posts" / group row whose posts have unread replies.
  */
 @Composable
 private fun UnreadDot(modifier: Modifier = Modifier) {
@@ -2185,7 +2235,7 @@ private fun PinnedSectionHeader(
 
 /**
  * Rotation (clockwise degrees) for a disclosure chevron — [PinnedSectionHeader]'s and the
- * drawer's "Your Groups" section header both use this.
+ * drawer's "Groups" section header both use this.
  *
  * `Icons.AutoMirrored.Filled.KeyboardArrowRight` flips horizontally in RTL layouts (it
  * points left while folded there, matching every other directional icon in this app), but

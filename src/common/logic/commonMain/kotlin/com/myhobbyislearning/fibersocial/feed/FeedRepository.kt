@@ -97,7 +97,7 @@ class FeedRepository(private val apiClient: RavelryApiClient) {
      *
      * Two kinds of leg, all run concurrently:
      *
-     * - one page of the topics the user has *posted in*, for the "Your Posts" dot;
+     * - one page of the topics the user has *posted in*, for the "Posts" dot;
      * - one small page of topics per group in [groups], for the per-group activity dots,
      *   compared against [groupLastViewed] as of [now].
      *
@@ -135,7 +135,7 @@ class FeedRepository(private val apiClient: RavelryApiClient) {
 
     /**
      * Whether any topic the user has posted in has replies past their read marker — the
-     * "Your Posts" dot on its own, without the per-group fan-out. Exposed separately so
+     * "Posts" dot on its own, without the per-group fan-out. Exposed separately so
      * re-checking that dot after a read costs one request instead of a full
      * [getDrawerUnread] pass.
      */
