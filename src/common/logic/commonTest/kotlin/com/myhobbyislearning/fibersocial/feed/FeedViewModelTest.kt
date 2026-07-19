@@ -162,18 +162,20 @@ class FeedViewModelTest {
             // Ktor engines — including MockEngine — dispatch request handling via
             // withContext(Dispatchers.IO) regardless of the calling coroutine's own
             // dispatcher (see FakeFeedTokenStorage's KDoc), so requests from the two
-            // refreshDrawerUnread() calls below genuinely race on real threads; the
-            // Mutex keeps the shared counter's read-then-increment atomic across them
-            // (a plain var here previously caused a Robolectric-only CI flake).
-            val requestCountMutex = Mutex()
-            var requestsSeen = 0
+            // refreshDrawerUnread() calls below genuinely run on real threads; the Mutex
+            // keeps the shared flag's read-then-clear atomic across them (a plain var
+            // here previously caused a Robolectric-only CI flake).
+            val holdMutex = Mutex()
+            var holdNextRequest = true
+            val firstRequestArrived = CompletableDeferred<Unit>()
             val firstCallGate = CompletableDeferred<Unit>()
             val repo = FeedRepository(
                 suspendableRoutingApiClient { _ ->
-                    val isFirstCallRequest = requestCountMutex.withLock {
-                        (requestsSeen < 1).also { if (it) requestsSeen++ }
+                    val hold = holdMutex.withLock {
+                        holdNextRequest.also { holdNextRequest = false }
                     }
-                    if (isFirstCallRequest) {
+                    if (hold) {
+                        firstRequestArrived.complete(Unit)
                         // Never released: the first call is cancelled before this could
                         // ever resolve, so nothing needs to un-gate it.
                         firstCallGate.await()
@@ -194,6 +196,11 @@ class FeedViewModelTest {
             // of asserting wrong data — which is itself evidence the cancellation is what
             // makes this test (and the real bug scenario) terminate cleanly at all.
             vm.refreshDrawerUnread()
+            // Wait for the FIRST call's request to actually reach the route before firing
+            // the second. Without this the two race: if the cancellation lands before the
+            // first request gets there, the second call's request is the one the gate
+            // catches and the test hangs on a held request nobody will ever cancel.
+            firstRequestArrived.await()
             vm.refreshDrawerUnread()
             awaitChildren(coroutineContext[Job]!!)
 
