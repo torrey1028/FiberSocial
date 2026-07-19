@@ -1,9 +1,11 @@
 package com.myhobbyislearning.fibersocial.feed
 
+import com.myhobbyislearning.fibersocial.auth.SessionExpiredException
 import com.myhobbyislearning.fibersocial.feed.models.FeedItem
 import com.myhobbyislearning.fibersocial.feed.models.Group
 import com.myhobbyislearning.fibersocial.feed.models.RavelryUser
 import com.myhobbyislearning.fibersocial.feed.models.Topic
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -154,15 +156,29 @@ class FeedRepository(private val apiClient: RavelryApiClient) {
      * robust to both. Sticky topics counting toward the max is correct, not a leak: a reply
      * to a pinned thread is real new activity.
      *
-     * Failures are isolated per group with `runCatching` rather than left to `awaitAll`'s
-     * fail-fast — one inaccessible group must not blank every other group's dot.
+     * Failures are isolated per group rather than left to `awaitAll`'s fail-fast — one
+     * inaccessible group must not blank every other group's dot. Session expiry and
+     * cancellation are the two exceptions and DO propagate; see the catch blocks for why
+     * softening them would hide an expired session behind an innocent-looking empty drawer.
      */
     private suspend fun getGroupActivity(groups: List<Group>): Map<Long, Long> = coroutineScope {
         groups
             .map { group ->
                 async {
                     topicFetchConcurrency.withPermit {
-                        runCatching {
+                        // A per-group failure is deliberately soft — one unreachable group
+                        // shouldn't blank every other group's dot — but session expiry and
+                        // cancellation must NOT be softened:
+                        //
+                        // - SessionExpiredException has to reach the caller so the app can
+                        //   prompt a re-login. Swallowed here it renders as "no activity",
+                        //   i.e. an expired session looks exactly like a quiet group. The
+                        //   sibling getYourPostsUnread() leg usually throws on a concurrent
+                        //   expiry, but it isn't guaranteed to be the one that sees it first.
+                        //   Same rethrow-before-generic-catch shape as searchGroupByQuery.
+                        // - CancellationException would otherwise be caught as an ordinary
+                        //   failure, breaking structured concurrency for the enclosing scope.
+                        try {
                             apiClient
                                 .getGroupTopics(
                                     group.forumId,
@@ -174,11 +190,17 @@ class FeedRepository(private val apiClient: RavelryApiClient) {
                                     parseRavelryTimestamp(it.repliedAt)?.toEpochMilliseconds()
                                 }
                                 .maxOrNull()
-                        }.onFailure {
+                                ?.let { group.id to it }
+                        } catch (e: SessionExpiredException) {
+                            throw e
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
                             println(
-                                "FiberSocial: getGroupActivity: skipping group ${group.id} (${it.message})",
+                                "FiberSocial: getGroupActivity: skipping group ${group.id} (${e.message})",
                             )
-                        }.getOrNull()?.let { group.id to it }
+                            null
+                        }
                     }
                 }
             }

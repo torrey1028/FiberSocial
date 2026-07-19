@@ -1,5 +1,6 @@
 package com.myhobbyislearning.fibersocial.feed
 
+import com.myhobbyislearning.fibersocial.auth.SessionExpiredException
 import com.myhobbyislearning.fibersocial.feed.models.Group
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
@@ -11,6 +12,7 @@ import io.ktor.http.headersOf
 import io.ktor.serialization.kotlinx.json.json
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -568,6 +570,40 @@ class FeedRepositoryTest {
         )
 
         assertEquals(setOf(42L), result.unread.unreadGroupForumIds)
+    }
+
+    /**
+     * A per-group fetch failure is deliberately soft (one bad group must not blank every
+     * other group's dot) but session expiry must NOT be softened: swallowed, an expired
+     * session is indistinguishable from "no group has any new activity", so the drawer
+     * quietly goes dark instead of the app prompting a re-login.
+     */
+    @Test
+    fun `getDrawerUnread propagates session expiry from a group fetch rather than hiding it`() = runTest {
+        val engine = MockEngine { request ->
+            if (request.url.encodedPath.contains("filtered_topics")) {
+                // The "Your Posts" leg succeeds, so only the per-group leg sees the expiry.
+                respond(
+                    """{"topics":[]}""",
+                    HttpStatusCode.OK,
+                    headersOf("Content-Type", ContentType.Application.Json.toString()),
+                )
+            } else {
+                throw SessionExpiredException("Token expired")
+            }
+        }
+        val client = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val repo = FeedRepository(RavelryApiClient(client, FakeFeedTokenStorage()))
+
+        assertFailsWith<SessionExpiredException> {
+            repo.getDrawerUnread(
+                groups = dotGroups,
+                groupLastViewed = mapOf(1L to at("2026/07/05 00:00:00 +0000")),
+                now = at("2026/07/19 00:00:00 +0000"),
+            )
+        }
     }
 
     @Test
