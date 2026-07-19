@@ -611,27 +611,45 @@ fun FeedScreen(
     }
 
     if (showSettings) {
-        var pollCadence by remember { mutableStateOf<PollCadence?>(null) }
-        // effective: a legacy stored hours value migrates to a cadence bucket rather
-        // than the dialog having nothing to render.
+        // The whole NotificationSettings object is held (not just the cadence) so a
+        // per-kind toggle change (issue #335) saves a mutated copy and never clobbers
+        // the cadence or the other toggles — they all live in one serialized object.
+        var notificationSettings by remember { mutableStateOf<NotificationSettings?>(null) }
         LaunchedEffect(Unit) {
-            notificationSettingsStore?.let { pollCadence = it.load().effectivePollCadence }
+            notificationSettingsStore?.let { notificationSettings = it.load() }
         }
         val settingsScope = rememberCoroutineScope()
+        // Optimistically update local state, then persist. Null (still loading) is a no-op.
+        fun updateSettings(transform: (NotificationSettings) -> NotificationSettings) {
+            val updated = notificationSettings?.let(transform) ?: return
+            notificationSettings = updated
+            settingsScope.launch { notificationSettingsStore?.save(updated) }
+        }
         SettingsScreen(
             user = user,
             onBack = { showSettings = false },
             onSignOut = onLogout,
             themeMode = themeMode,
             onThemeModeSelected = onThemeModeSelected,
-            pollCadence = pollCadence,
+            // effective: a legacy stored hours value migrates to a cadence bucket rather
+            // than the dialog having nothing to render. Null while loading hides the row.
+            pollCadence = notificationSettings?.effectivePollCadence,
             onPollCadenceSelected = { cadence ->
-                pollCadence = cadence
-                settingsScope.launch {
-                    notificationSettingsStore?.save(NotificationSettings(pollCadence = cadence))
-                    // The host re-registers the periodic sync at the new cadence.
-                    onPollCadenceChanged(cadence)
-                }
+                updateSettings { it.copy(pollCadence = cadence) }
+                // The host re-registers the periodic sync at the new cadence.
+                onPollCadenceChanged(cadence)
+            },
+            eventRemindersEnabled = notificationSettings?.eventRemindersEnabled ?: true,
+            onEventRemindersEnabledChange = { enabled ->
+                updateSettings { it.copy(eventRemindersEnabled = enabled) }
+            },
+            newGroupEventsEnabled = notificationSettings?.newGroupEventsEnabled ?: true,
+            onNewGroupEventsEnabledChange = { enabled ->
+                updateSettings { it.copy(newGroupEventsEnabled = enabled) }
+            },
+            topicRepliesEnabled = notificationSettings?.topicRepliesEnabled ?: true,
+            onTopicRepliesEnabledChange = { enabled ->
+                updateSettings { it.copy(topicRepliesEnabled = enabled) }
             },
             // Debug panel now lives in Settings (debug builds only) instead of the top bar (#207).
             onOpenDebugPanel = if (debugPanelEnabled) {

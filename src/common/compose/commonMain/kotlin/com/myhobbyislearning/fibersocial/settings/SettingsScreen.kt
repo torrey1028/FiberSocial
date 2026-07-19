@@ -5,6 +5,7 @@ package com.myhobbyislearning.fibersocial.settings
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.backhandler.BackHandler
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -21,6 +22,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -58,6 +60,12 @@ import com.myhobbyislearning.fibersocial.ui.UserAvatar
  * @param themeMode Current theme override; null while loading (row hidden, same
  *   convention as [pollCadence]).
  * @param onThemeModeSelected Invoked with the chosen theme mode.
+ * @param eventRemindersEnabled Whether reminders for RSVP'd events are on (issue #335).
+ * @param onEventRemindersEnabledChange Invoked with the new value when toggled.
+ * @param newGroupEventsEnabled Whether "new group event" notifications are on.
+ * @param onNewGroupEventsEnabledChange Invoked with the new value when toggled.
+ * @param topicRepliesEnabled Whether reply notifications (My Posts) are on.
+ * @param onTopicRepliesEnabledChange Invoked with the new value when toggled.
  * @param onOpenAbout Opens the "About FiberSocial" disclosure screen (issue #289).
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -70,6 +78,12 @@ fun SettingsScreen(
     onPollCadenceSelected: (PollCadence) -> Unit = {},
     themeMode: ThemeMode? = null,
     onThemeModeSelected: (ThemeMode) -> Unit = {},
+    eventRemindersEnabled: Boolean = true,
+    onEventRemindersEnabledChange: (Boolean) -> Unit = {},
+    newGroupEventsEnabled: Boolean = true,
+    onNewGroupEventsEnabledChange: (Boolean) -> Unit = {},
+    topicRepliesEnabled: Boolean = true,
+    onTopicRepliesEnabledChange: (Boolean) -> Unit = {},
     // Non-null on debug builds only: shows a "Debug panel" entry (issue #207).
     onOpenDebugPanel: (() -> Unit)? = null,
     onOpenAbout: () -> Unit = {},
@@ -172,6 +186,27 @@ fun SettingsScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     // Aligns with the row title (icon 24 + spacing 16 + padding 16).
                     modifier = Modifier.padding(start = 56.dp, end = 16.dp, bottom = 12.dp),
+                )
+                // Per-kind toggles (issue #335): which kinds to notify about. Orthogonal
+                // to the cadence above (that's how often to check), and gated on the same
+                // settings load, so they surface together once known.
+                SwitchSettingRow(
+                    title = "Event reminders",
+                    subtitle = "Before events you've RSVP'd to",
+                    checked = eventRemindersEnabled,
+                    onCheckedChange = onEventRemindersEnabledChange,
+                )
+                SwitchSettingRow(
+                    title = "New group events",
+                    subtitle = "When one of your groups adds an event",
+                    checked = newGroupEventsEnabled,
+                    onCheckedChange = onNewGroupEventsEnabledChange,
+                )
+                SwitchSettingRow(
+                    title = "Replies to your topics",
+                    subtitle = "New replies in topics you've posted in",
+                    checked = topicRepliesEnabled,
+                    onCheckedChange = onTopicRepliesEnabledChange,
                 )
                 HorizontalDivider()
             }
@@ -306,6 +341,46 @@ private fun <T> ChoiceSettingRow(
                 TextButton(onClick = { showDialog = false }) { Text("Cancel") }
             },
         )
+    }
+}
+
+/**
+ * A settings row with a title, optional subtitle, and a trailing [Switch]. Used for the
+ * per-kind notification toggles (issue #335). The whole row is [toggleable] with the
+ * `Switch` role so a tap anywhere flips it and screen readers announce it as one switch;
+ * the `Switch` itself takes `onCheckedChange = null` to avoid a duplicate target.
+ *
+ * Indented to align under the "Check for new events" section (no leading icon), reading
+ * as sub-settings of the notification section rather than top-level rows.
+ */
+@Composable
+private fun SwitchSettingRow(
+    title: String,
+    subtitle: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .toggleable(
+                value = checked,
+                role = Role.Switch,
+                onValueChange = onCheckedChange,
+            )
+            .padding(start = 56.dp, end = 16.dp, top = 8.dp, bottom = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(text = title, style = MaterialTheme.typography.bodyLarge)
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Spacer(Modifier.width(16.dp))
+        Switch(checked = checked, onCheckedChange = null)
     }
 }
 

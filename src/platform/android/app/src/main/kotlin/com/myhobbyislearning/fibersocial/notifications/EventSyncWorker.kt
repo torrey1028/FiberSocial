@@ -18,6 +18,7 @@ import com.myhobbyislearning.fibersocial.net.ravelryApiClient
 import com.myhobbyislearning.fibersocial.net.ravelryAuthRepository
 import com.myhobbyislearning.fibersocial.net.ravelryHttpClient
 import com.myhobbyislearning.fibersocial.storage.AUTH_PREFS_NAME
+import com.myhobbyislearning.fibersocial.storage.NOTIFICATION_SETTINGS_PREFS_NAME
 import com.myhobbyislearning.fibersocial.storage.NOTIFICATION_STATE_PREFS_NAME
 import com.myhobbyislearning.fibersocial.storage.encryptedKeyValueStore
 import com.myhobbyislearning.fibersocial.storage.plainKeyValueStore
@@ -54,6 +55,7 @@ class EventSyncWorker(
             val runner = EventSyncRunner(
                 apiClient,
                 KeyValueNotificationStateStore(plainKeyValueStore(applicationContext, NOTIFICATION_STATE_PREFS_NAME)),
+                KeyValueNotificationSettingsStore(plainKeyValueStore(applicationContext, NOTIFICATION_SETTINGS_PREFS_NAME)),
             )
             val plan = runner.sync(Clock.System.now(), TimeZone.currentSystemDefault())
             apply(plan)

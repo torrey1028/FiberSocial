@@ -87,10 +87,25 @@ fun pollCadenceLabel(cadence: PollCadence): String = when (cadence) {
  *
  * @property pollCadence How often the background sync scrapes for new events and RSVP
  *   changes. Null before the first migration read (see [effectivePollCadence]).
+ * @property eventRemindersEnabled Whether reminders fire for the user's RSVP'd events
+ *   (T-24h, T-15m). Disabling cancels any pending reminders on the next sync.
+ * @property newGroupEventsEnabled Whether "a new event was added to your group"
+ *   notifications post.
+ * @property topicRepliesEnabled Whether "new replies in a topic you posted in"
+ *   notifications post (the My Posts activity leg).
+ *
+ * The three per-kind switches all default on and are defaulted fields, so JSON stored
+ * before they existed (issue #335) deserializes with every kind enabled — the pre-#335
+ * behavior. They gate *what* to notify about; [pollCadence] stays orthogonal (*how
+ * often* to check). See [EventSyncRunner] for how a disabled kind skips its scrape and
+ * re-seeds silently on re-enable.
  */
 @Serializable
 data class NotificationSettings(
     val pollCadence: PollCadence? = null,
+    val eventRemindersEnabled: Boolean = true,
+    val newGroupEventsEnabled: Boolean = true,
+    val topicRepliesEnabled: Boolean = true,
     // Legacy precise-hours setting, superseded by [pollCadence] (issue #113). Retained,
     // internal to this module, purely so a store holding pre-migration JSON migrates to
     // a qualitative bucket via [effectivePollCadence] instead of silently resetting to
