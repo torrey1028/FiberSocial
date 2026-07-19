@@ -20,9 +20,17 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import kotlin.test.assertEquals
 
 @RunWith(RobolectricTestRunner::class)
+// The default Robolectric screen is ~320x336dp. Since #347 pinned "Posts"/"Groups"
+// above the scrolling list, that leaves only ~174dp of pull area — and M3
+// pull-to-refresh's 0.5x drag multiplier plus touch slop drops a full-height swipe
+// just below the 80dp trigger threshold, so the gesture tests fail for want of screen
+// rather than for want of a working drawer. A real phone's drawer is several times
+// taller; this qualifier makes the test viewport representative of one.
+@Config(qualifiers = "w360dp-h800dp")
 class GroupDrawerTest {
 
     @get:Rule
@@ -75,13 +83,19 @@ class GroupDrawerTest {
                 onSettingsClick = {},
             )
         }
-        compose.onNodeWithText("Your Posts").assertIsDisplayed()
-        compose.onNodeWithText("Your Posts").performClick()
+        compose.onNodeWithText("Posts").assertIsDisplayed()
+        compose.onNodeWithText("Posts").performClick()
         compose.runOnIdle { assertEquals(1, myPostsClicks) }
     }
 
+    /**
+     * Issue #347: unselected NavigationDrawerItems paint no pill, so the Posts/Groups rows
+     * read as flat text on the sheet. The bracketing dividers are what make them look like a
+     * tappable navigation cluster — assert they render so the treatment can't be dropped
+     * silently.
+     */
     @Test
-    fun `collapsing Your Groups hides the group rows but keeps Your Posts`() {
+    fun `posts and groups are bracketed by dividers`() {
         compose.setContent {
             GroupDrawer(
                 groups = twoGroups,
@@ -94,12 +108,35 @@ class GroupDrawerTest {
             )
         }
 
-        compose.onNodeWithText("Your Groups").performClick()
+        // A rule above each row, and deliberately none below "Groups" — it heads the
+        // group list beneath it, so a line there would cut it off from its own children.
+        compose.onNodeWithTag("DrawerNavClusterTop").assertIsDisplayed()
+        compose.onNodeWithTag("DrawerNavClusterMiddle").assertIsDisplayed()
+        compose.onNodeWithTag("DrawerNavClusterBottom").assertDoesNotExist()
+        compose.onNodeWithText("Posts").assertIsDisplayed()
+        compose.onNodeWithText("Groups").assertIsDisplayed()
+    }
+
+    @Test
+    fun `collapsing Groups hides the group rows but keeps Posts`() {
+        compose.setContent {
+            GroupDrawer(
+                groups = twoGroups,
+                selectedGroup = twoGroups.first(),
+                eventCounts = emptyMap(),
+                user = user,
+                onGroupSelected = {},
+                onGroupEventsClick = {},
+                onSettingsClick = {},
+            )
+        }
+
+        compose.onNodeWithText("Groups").performClick()
 
         compose.onNodeWithText(twoGroups[0].name).assertDoesNotExist()
         compose.onNodeWithText(twoGroups[1].name).assertDoesNotExist()
         compose.onNodeWithText("Find groups").assertDoesNotExist()
-        compose.onNodeWithText("Your Posts").assertIsDisplayed()
+        compose.onNodeWithText("Posts").assertIsDisplayed()
         // Folded: the Edit affordance yields to the hidden-group count.
         compose.onNodeWithText("Edit").assertDoesNotExist()
         compose.onNodeWithText("2").assertIsDisplayed()
@@ -107,7 +144,7 @@ class GroupDrawerTest {
     }
 
     @Test
-    fun `expanding Your Groups restores the group rows`() {
+    fun `expanding Groups restores the group rows`() {
         compose.setContent {
             GroupDrawer(
                 groups = twoGroups,
@@ -120,8 +157,8 @@ class GroupDrawerTest {
             )
         }
 
-        compose.onNodeWithText("Your Groups").performClick()
-        compose.onNodeWithText("Your Groups").performClick()
+        compose.onNodeWithText("Groups").performClick()
+        compose.onNodeWithText("Groups").performClick()
 
         compose.onNodeWithText(twoGroups[0].name).assertIsDisplayed()
         compose.onNodeWithText("Find groups").assertIsDisplayed()
@@ -226,7 +263,7 @@ class GroupDrawerTest {
     }
 
     @Test
-    fun `Your Posts shows an unread dot when its posts have unread replies`() {
+    fun `Posts shows an unread dot when its posts have unread replies`() {
         compose.setContent {
             GroupDrawer(
                 groups = emptyList(),

@@ -28,7 +28,7 @@ data class FeedItemsPage(
  * @property unreadGroupForumIds Forum ids ([Group.forumId]) of groups with at least one
  *   unread topic — a group row shows a dot when its forum id is in this set.
  * @property yourPostsHasUnread Whether any topic the user posted in has unread replies —
- *   drives the "Your Posts" row's dot.
+ *   drives the "Posts" row's dot.
  */
 data class DrawerUnread(
     val unreadGroupForumIds: Set<Long> = emptySet(),
@@ -71,7 +71,7 @@ class FeedRepository(private val apiClient: RavelryApiClient) {
     /**
      * Fetches the drawer's unread indicators (the unread dots) in one cheap pass: one page
      * of the topics the user is *reading* (grouped by forum, for the per-group dots) and
-     * one page of the topics they've *posted in* (for the "Your Posts" dot). Only whether
+     * one page of the topics they've *posted in* (for the "Posts" dot). Only whether
      * ANY unread exists is derived — no per-topic counting and no per-group feed loads.
      * Both legs run concurrently; page 1, newest-activity-first, up to
      * [UNREAD_SCAN_PAGE_SIZE] topics, is plenty for a yes/no "is there anything new" signal.

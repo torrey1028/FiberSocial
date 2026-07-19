@@ -131,7 +131,7 @@ class FeedViewModel(
     private var drawerUnreadJob: Job? = null
 
     /**
-     * Whether the drawer's group rows and "Your Posts" row should show an unread dot
+     * Whether the drawer's group rows and "Posts" row should show an unread dot
      * (unread indicators). Updated by [refreshDrawerUnread] — see its doc for when that
      * fires; a fetch failure leaves the previous value rather than clearing the dots.
      */
