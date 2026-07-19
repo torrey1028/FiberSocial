@@ -26,6 +26,8 @@ import com.myhobbyislearning.fibersocial.feed.models.Post
 import com.myhobbyislearning.fibersocial.feed.models.RavelryUser
 import com.myhobbyislearning.fibersocial.profile.UserProfile
 import com.myhobbyislearning.fibersocial.feed.models.Topic
+import com.myhobbyislearning.fibersocial.messages.Message
+import com.myhobbyislearning.fibersocial.messages.MessageFolder
 import com.myhobbyislearning.fibersocial.feed.models.VoteType
 import com.myhobbyislearning.fibersocial.projects.PatternInfo
 import com.myhobbyislearning.fibersocial.projects.ProjectComment
@@ -84,6 +86,18 @@ const val DEFAULT_FEED_PAGE_SIZE = 25
  * often; larger pages mean fewer round-trips as the user scrolls a long thread.
  */
 const val DEFAULT_POSTS_PAGE_SIZE = 25
+
+/**
+ * Private messages requested per [RavelryApiClient.getMessages] page (issue #366).
+ *
+ * Deliberately 25, matching [DEFAULT_FEED_PAGE_SIZE], NOT Ravelry's server-side default
+ * of 100. Two reasons: the docs explicitly recommend a smaller page when asking for the
+ * `full` output format (bodies make each row far heavier than a topic row), and inboxes
+ * are commonly enormous — the docs call out users with "very large numbers of messages
+ * that have been marked as unread", so a 100-row first page would be the slowest screen
+ * in the app for exactly the users who use messages most.
+ */
+const val DEFAULT_MESSAGES_PAGE_SIZE = 25
 // coerceInputValues: a defensive safety net for when Ravelry returns an explicit JSON null
 // for a field our model declares non-nullable-with-default. kotlinx.serialization applies a
 // field default only when the key is ABSENT — an explicit null otherwise throws — so this
@@ -1131,6 +1145,136 @@ class RavelryApiClient(
     }
 
     /**
+     * Returns one page of the signed-in user's private messages from [folder]
+     * (`/messages/list.json`, issue #366, epic #365).
+     *
+     * Needs NO extra OAuth scope — reading messages works with ordinary authentication,
+     * so this must not motivate a `SCOPE` change or a forced re-login. (The write half,
+     * issue #367, is the part that needs `message-write`.)
+     *
+     * `folder` is REQUIRED by Ravelry; there is no "all messages" listing, so a caller
+     * wanting the full picture pages [MessageFolder.INBOX] and [MessageFolder.SENT]
+     * separately and merges. That is also why conversation grouping (#368) is a
+     * client-side reconstruction: Ravelry has no thread object at all.
+     *
+     * SORT: `time_` — WITH the trailing underscore. Ravelry sorts ascending by default
+     * and `_` reverses it, and this endpoint's `time` genuinely measures the send date
+     * (unlike `/forums/filtered_topics.json`'s "time since latest reply", where the
+     * underscore inverts to the WRONG direction — see [getMyTopics]). So bare `time` is
+     * oldest-first and buries new mail; `time_` is newest-first. Ravelry documents
+     * `time_` as this endpoint's default too, but we send it explicitly rather than
+     * trusting an undefaulted server-side default to stay put.
+     *
+     * UNRESOLVED DOC AMBIGUITY (#366) — `output_format` vs `format`. The parameter table
+     * documents `output_format` (accepting `list` / `full`); the worked example directly
+     * beneath it uses `format=full`. Exactly one of them is presumably honoured and we
+     * had no live token to find out which, so when [full] is requested this sends BOTH
+     * names with the same value. That is deliberate, not sloppiness: Ravelry ignores
+     * query params it doesn't recognise, the two can never disagree because they carry
+     * one value, and guessing wrong silently degrades to the `list` shape (bodies come
+     * back null) rather than erroring — a failure that would surface much later as an
+     * apparently empty message body.
+     *
+     * TO SETTLE IT: one authenticated call with only `output_format=full`, then one with
+     * only `format=full`; whichever response contains `content_html` names the winner.
+     * Then drop the loser here and delete this paragraph.
+     *
+     * Even if [full] is wrong, [getMessage] always returns the full shape, so a detail
+     * screen is never blocked on this question — only a list-with-previews optimisation.
+     *
+     * @param folder Which box to list. Required by Ravelry; see [MessageFolder].
+     * @param page 1-based page number.
+     * @param pageSize Messages per page; see [DEFAULT_MESSAGES_PAGE_SIZE] for why this
+     *   is 25 and not Ravelry's server-side default of 100.
+     * @param unreadOnly When true, ask Ravelry for unread messages only. Sent as `1`
+     *   (the documented truthy value) and OMITTED entirely when false, rather than sent
+     *   as `0` — an absent param is unambiguously "no filter" whatever the server's
+     *   boolean parsing does with "0"/"false".
+     * @param full When true, request bodies inline with the list. See the ambiguity note.
+     */
+    suspend fun getMessages(
+        folder: MessageFolder,
+        page: Int = 1,
+        pageSize: Int = DEFAULT_MESSAGES_PAGE_SIZE,
+        unreadOnly: Boolean = false,
+        full: Boolean = false,
+    ): MessagesPage {
+        val raw = authenticatedRequest {
+            httpClient.get("$BASE_URL/messages/list.json") {
+                header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
+                url.parameters.apply {
+                    append("folder", folder.wireName)
+                    append("sort", "time_")
+                    append("page", page.toString())
+                    append("page_size", pageSize.toString())
+                    if (unreadOnly) append("unread_only", "1")
+                    if (full) {
+                        append("output_format", "full")
+                        append("format", "full")
+                    }
+                }
+            }
+        }
+        val response = lenientJson.decodeFromString<MessagesResponse>(raw)
+        val paginator = response.paginator
+        return MessagesPage(
+            messages = response.messages,
+            page = paginator?.page ?: page,
+            hasMore = paginator != null && paginator.page < paginator.pageCount,
+        )
+    }
+
+    /**
+     * Returns a single private message in its full shape — the only call guaranteed to
+     * carry a body ([Message.contentHtml]), regardless of how the `output_format`
+     * ambiguity on [getMessages] resolves.
+     *
+     * @param messageId Ravelry message ID.
+     */
+    suspend fun getMessage(messageId: Long): Message {
+        val raw = authenticatedRequest {
+            httpClient.get("$BASE_URL/messages/$messageId.json") {
+                header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
+            }
+        }
+        return lenientJson.decodeFromString<MessageResponse>(raw).message
+    }
+
+    /**
+     * Marks a message read (`/messages/{id}/mark_read.json`).
+     *
+     * BEWARE THE MARK-READ RACE (already documented for topics at FeedViewModel.kt:409):
+     * an unread-count GET issued concurrently with this POST can observe the pre-POST
+     * state and re-light the dot. Sequence the refresh after this call completes.
+     *
+     * Ravelry returns the updated message; the response is intentionally discarded
+     * because every caller already holds the message and only needs the side effect.
+     *
+     * @param messageId Ravelry message ID.
+     */
+    suspend fun markMessageRead(messageId: Long) {
+        authenticatedRequest {
+            httpClient.post("$BASE_URL/messages/$messageId/mark_read.json") {
+                header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
+            }
+        }
+    }
+
+    /**
+     * Marks a message unread (`/messages/{id}/mark_unread.json`) — the manual
+     * "keep this in my face" affordance, and the undo for [markMessageRead].
+     *
+     * @param messageId Ravelry message ID.
+     */
+    suspend fun markMessageUnread(messageId: Long) {
+        authenticatedRequest {
+            httpClient.post("$BASE_URL/messages/$messageId/mark_unread.json") {
+                header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
+            }
+        }
+    }
+
+    /**
      * Returns [username]'s projects (the small list representation: name, permalink,
      * first photo, photo count). The whole list comes back in one page — the endpoint's
      * `page_size` defaults to the entire result set.
@@ -1381,6 +1525,11 @@ class RavelryApiClient(
         val paginator: Paginator? = null,
     )
     @Serializable private data class TopicDetailResponse(val topic: Topic)
+    @Serializable private data class MessagesResponse(
+        val messages: List<Message> = emptyList(),
+        val paginator: Paginator? = null,
+    )
+    @Serializable private data class MessageResponse(val message: Message)
     @Serializable private data class Paginator(
         val page: Int = 1,
         @SerialName("page_count") val pageCount: Int = 1,
@@ -1450,6 +1599,19 @@ data class TopicsPage(
  */
 data class PostsPage(
     val posts: List<Post>,
+    val page: Int,
+    val hasMore: Boolean,
+)
+
+/**
+ * One page of private messages, as returned by [RavelryApiClient.getMessages].
+ *
+ * @property messages This page's messages, newest-first (the call sorts `time_`).
+ * @property page The 1-based page number these messages came from.
+ * @property hasMore Whether requesting `page + 1` would return further messages.
+ */
+data class MessagesPage(
+    val messages: List<Message>,
     val page: Int,
     val hasMore: Boolean,
 )
