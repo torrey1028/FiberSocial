@@ -482,6 +482,9 @@ fun FeedScreen(
      */
     fun showMyPostsFeed(alreadyShowing: Boolean) {
         if (alreadyShowing) viewModel.feed.refresh() else viewModel.feed.selectMyPosts()
+        // A reply notification means content moved under the drawer's unread dots too,
+        // so re-evaluate them rather than leaving the tap to fix only the feed.
+        viewModel.feed.refreshDrawerUnread()
     }
 
     // Deleting the opening post deletes the whole topic on Ravelry (issue #247): close
