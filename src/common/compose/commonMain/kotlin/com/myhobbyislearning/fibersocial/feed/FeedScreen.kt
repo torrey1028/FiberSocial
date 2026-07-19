@@ -131,6 +131,7 @@ import com.myhobbyislearning.fibersocial.composeapp.resources.Res
 import com.myhobbyislearning.fibersocial.composeapp.resources.app_logo_content_description
 import com.myhobbyislearning.fibersocial.profile.UserProfileScreen
 import com.myhobbyislearning.fibersocial.profile.UserProfileState
+import com.myhobbyislearning.fibersocial.notifications.DeepLink
 import com.myhobbyislearning.fibersocial.notifications.MutedTopicsStore
 import com.myhobbyislearning.fibersocial.notifications.NotificationSettings
 import com.myhobbyislearning.fibersocial.notifications.NotificationSettingsStore
@@ -352,10 +353,10 @@ internal fun FeedTopBar(
 fun FeedScreen(
     viewModel: FeedScreenModel,
     onLogout: () -> Unit,
-    deepLinkEventPermalink: String? = null,
+    // Where a tapped notification wants to land (issue #351). Consume-once: the host
+    // nulls its flow when onDeepLinkConsumed fires, so a recomposition can't replay it.
+    deepLink: DeepLink? = null,
     onDeepLinkConsumed: () -> Unit = {},
-    deepLinkMyPosts: Boolean = false,
-    onDeepLinkMyPostsConsumed: () -> Unit = {},
     themeMode: ThemeMode? = null,
     onThemeModeSelected: (ThemeMode) -> Unit = {},
     // Platform seams, injected by the host (MainActivity today, an iOS host in #117):
@@ -425,31 +426,56 @@ fun FeedScreen(
     var composingTopic by rememberSaveable { mutableStateOf(false) }
     var sendingFeedback by rememberSaveable { mutableStateOf(false) }
 
-    // A tapped notification lands here: open the event detail directly.
-    LaunchedEffect(deepLinkEventPermalink) {
-        if (deepLinkEventPermalink != null) {
-            // The tap must win over whatever screen is open — the early returns
-            // below (topic, settings, events list) would otherwise swallow it and
-            // the notification tap would visibly do nothing.
-            selectedTopic = null
-            showSettings = false
-            showAbout = false
-            eventsGroup = null
-            composingTopic = false
-            composingEventGroup = null
-            sendingFeedback = false
-            // This path closes both composers without going through their onBack
-            // handlers, so their attachment flows must be reset here too.
-            viewModel.replyImage.reset()
-            viewModel.newTopicImage.reset()
-            viewModel.newEvent.reset()
-            viewModel.projectPicker.dismiss()
-            viewModel.projectPage.dismiss()
-            viewModel.userProfile.dismiss()
-            viewModel.eventDetail.load(deepLinkEventPermalink)
-            selectedEventPermalink = deepLinkEventPermalink
-            onDeepLinkConsumed()
-        }
+    // Deep-link ids parked until the feed data needed to act on them arrives; see the
+    // two resolver effects below for why each resolution has to be deferred.
+    var pendingDeepLinkTopicId by remember { mutableStateOf<Long?>(null) }
+    var pendingDeepLinkEventGroup by remember { mutableStateOf<Pair<String, Long>?>(null) }
+
+    /**
+     * Clears every navigation flag ahead of acting on a deep link.
+     *
+     * A tap must win over whatever screen is open — the early returns below (topic,
+     * settings, events list, composers) would otherwise swallow it and the notification
+     * would visibly do nothing. Factored out of the three deep-link branches so a nav
+     * flag added later can't be cleared in one of them and forgotten in the others.
+     */
+    fun clearNavigationForDeepLink() {
+        selectedTopic = null
+        selectedEventPermalink = null
+        showSettings = false
+        showAbout = false
+        showDebugPanel = false
+        eventsGroup = null
+        composingTopic = false
+        composingEventGroup = null
+        sendingFeedback = false
+        // The parks count as navigation state too: without this, a Topic link parked
+        // while My Posts was still loading would resolve *after* a second tap sent the
+        // user to an event, and the topic early return (which sits above the event one)
+        // would cover the event they actually asked for.
+        pendingDeepLinkTopicId = null
+        pendingDeepLinkEventGroup = null
+        // This path closes both composers without going through their onBack
+        // handlers, so their attachment flows must be reset here too.
+        viewModel.replyImage.reset()
+        viewModel.newTopicImage.reset()
+        viewModel.newEvent.reset()
+        viewModel.projectPicker.dismiss()
+        viewModel.projectPage.dismiss()
+        viewModel.userProfile.dismiss()
+    }
+
+    /**
+     * Brings the cross-group My Posts feed up, the shared first step of the Topic and
+     * MyPosts deep links.
+     *
+     * `selectMyPosts()` no-ops when My Posts is already the active view (it's a "switch
+     * to" call, not a "load" call) — which would otherwise strand a second notification
+     * tap on stale content, since that is exactly the state a reply notification arrives
+     * in. Refresh instead, so the tap that reported new replies actually pulls them in.
+     */
+    fun showMyPostsFeed(alreadyShowing: Boolean) {
+        if (alreadyShowing) viewModel.feed.refresh() else viewModel.feed.selectMyPosts()
     }
 
     // Deleting the opening post deletes the whole topic on Ravelry (issue #247): close
@@ -474,38 +500,118 @@ fun FeedScreen(
     val user = loaded?.user
     val groups = loaded?.groups ?: emptyList()
 
-    // A tapped "new replies" notification lands here: open the cross-group My Posts
-    // feed. Unlike the event deep link above, this must wait for the feed to load —
-    // selectMyPosts() no-ops before FeedState.Loaded, and a cold start from the
-    // notification arrives mid-load — so the effect keys on the loaded flag too and
-    // consumes the link only once it has acted.
     val feedIsLoaded = state is FeedState.Loaded
-    LaunchedEffect(deepLinkMyPosts, feedIsLoaded) {
-        if (deepLinkMyPosts && feedIsLoaded) {
-            // Same rule as the event deep link: the tap must win over whatever screen
-            // is open, and force-closed composers need their attachment flows reset.
-            selectedTopic = null
-            showSettings = false
-            showAbout = false
-            eventsGroup = null
-            composingTopic = false
-            composingEventGroup = null
-            sendingFeedback = false
-            selectedEventPermalink = null
-            viewModel.replyImage.reset()
-            viewModel.newTopicImage.reset()
-            viewModel.newEvent.reset()
-            viewModel.projectPicker.dismiss()
-            viewModel.projectPage.dismiss()
-            viewModel.userProfile.dismiss()
-            // selectMyPosts() no-ops if My Posts is already the active view (it's a
-            // "switch to" call, not a "load" call) — which would otherwise strand a
-            // second notification tap showing stale content, since that's exactly the
-            // case a reply notification arrives in. Refresh instead so the tap that
-            // reported new replies actually pulls them in.
-            if (loaded?.myPosts == true) viewModel.feed.refresh() else viewModel.feed.selectMyPosts()
-            onDeepLinkMyPostsConsumed()
+    // The My Posts items available right now — Loaded, or a Refreshing snapshot of them.
+    // This is the lookup table a Topic deep link resolves its id against.
+    val myPostsItems = if (loaded?.myPosts == true) loaded.items else emptyList()
+
+    // A tapped notification lands here and is routed to one of three destinations. Both
+    // feed-backed destinations must wait for the feed to load — selectMyPosts() no-ops
+    // before FeedState.Loaded, and a cold start from a notification arrives mid-load — so
+    // the effect keys on the loaded flag too and consumes the link only once it has acted.
+    LaunchedEffect(deepLink, feedIsLoaded) {
+        when (val link = deepLink) {
+            null -> Unit
+
+            // Acts immediately rather than waiting for feedIsLoaded: the event detail
+            // fetches its own data, and gating it here would strand the tap entirely if
+            // the feed happened to fail to load.
+            is DeepLink.Event -> {
+                clearNavigationForDeepLink()
+                viewModel.eventDetail.load(link.permalink)
+                selectedEventPermalink = link.permalink
+                // Putting the group's events list underneath is what makes back land
+                // there, and a second back reach the feed (issue #351) — the
+                // selectedEventPermalink early return sits above the eventsGroup one.
+                // Null for reminder notifications, which carry no group at all — back
+                // from the event then goes straight to the feed. See DeepLink.Event.
+                val groupId = link.groupId
+                if (groupId != null) {
+                    val group = groups.firstOrNull { it.id == groupId }
+                    // Groups not loaded yet (the usual cold-start-from-a-tap case) —
+                    // park it for the resolver below.
+                    if (group != null) eventsGroup = group
+                    else pendingDeepLinkEventGroup = link.permalink to groupId
+                }
+                onDeepLinkConsumed()
+            }
+
+            // Switches to My Posts and parks the topic id; the resolver below opens the
+            // thread once that feed has content to look the id up in.
+            is DeepLink.Topic -> {
+                if (!feedIsLoaded) return@LaunchedEffect // re-runs when it loads
+                clearNavigationForDeepLink()
+                showMyPostsFeed(alreadyShowing = loaded?.myPosts == true)
+                pendingDeepLinkTopicId = link.topicId
+                onDeepLinkConsumed()
+            }
+
+            DeepLink.MyPosts -> {
+                if (!feedIsLoaded) return@LaunchedEffect
+                clearNavigationForDeepLink()
+                showMyPostsFeed(alreadyShowing = loaded?.myPosts == true)
+                onDeepLinkConsumed()
+            }
         }
+    }
+
+    // Phase 2 of a Topic deep link. `selectedTopic` is a whole FeedItem (author, post
+    // count, unread counts, first-unread anchor…) and the notification carries only an
+    // id, so the item is looked up in the My Posts page the branch above switched to
+    // rather than synthesized — a synthetic item would show bogus unread state and no
+    // first-unread anchor to jump to.
+    // Keyed on the whole loaded snapshot, not just its items: a My Posts feed that loads
+    // empty leaves the item list unchanged, and this effect still has to run so it can
+    // release the parked id instead of waiting on a page that will never arrive.
+    LaunchedEffect(pendingDeepLinkTopicId, loaded) {
+        val topicId = pendingDeepLinkTopicId ?: return@LaunchedEffect
+        // The branch that parked this id switched to My Posts synchronously
+        // (selectMyPosts flips the chrome on the same frame), so a feed that is no
+        // longer on My Posts means the user navigated away while the page was still
+        // loading. Drop the link rather than leaving it parked to fire minutes later
+        // and yank them into a topic out of nowhere — the same hazard the event
+        // resolver below guards against.
+        if (loaded?.myPosts != true) {
+            if (loaded != null) pendingDeepLinkTopicId = null
+            return@LaunchedEffect
+        }
+        // Wait until My Posts actually has content. A Refreshing snapshot is fine, and
+        // in fact preferable: its unread state is the pre-notification one, which is
+        // exactly where "jump to first unread" should land the user.
+        if (myPostsItems.isEmpty() && !feedIsLoaded) return@LaunchedEffect
+        // Releasing the park invalidates this effect's own key, so everything below must
+        // stay non-suspending — a suspension point here would be cancelled mid-flight and
+        // the navigation would silently not happen.
+        pendingDeepLinkTopicId = null
+        val topic = myPostsItems.firstOrNull { it.id == topicId }
+        if (topic == null) {
+            // The topic fell off page 1 of filtered_topics between the sync that
+            // notified and the tap. Degrade to the My Posts feed that's already on
+            // screen — better than a dead tap or a fabricated item.
+            println("FiberSocial: deep-linked topic $topicId is not on the My Posts page; showing the feed")
+            return@LaunchedEffect
+        }
+        // Mirrors onTopicClick below, including its composer resets.
+        viewModel.replyImage.reset()
+        viewModel.projectPicker.dismiss()
+        viewModel.topicDetail.load(topic.id)
+        selectedTopic = topic
+    }
+
+    // Phase 2 of an Event deep link whose group wasn't loaded when the tap arrived.
+    // eventsGroup sits below the event-detail early return, so filling it in late is
+    // invisible — it only decides where back lands.
+    LaunchedEffect(pendingDeepLinkEventGroup, groups) {
+        val (permalink, groupId) = pendingDeepLinkEventGroup ?: return@LaunchedEffect
+        if (groups.isEmpty()) return@LaunchedEffect
+        // Same non-suspending caveat as the topic resolver above.
+        pendingDeepLinkEventGroup = null
+        // If the user already backed out of the deep-linked event, leave them where they
+        // are — pushing an events list under them now would yank them into a screen they
+        // never asked for. A group that isn't found (they left it) also stays null,
+        // which just means back goes to the feed.
+        if (selectedEventPermalink != permalink) return@LaunchedEffect
+        eventsGroup = groups.firstOrNull { it.id == groupId }
     }
 
     // Scrape events in the background as soon as the groups are known so the drawer's

@@ -10,11 +10,18 @@ import kotlinx.datetime.toInstant
 /** How long a known event is remembered after it was last seen before being pruned. */
 private val KNOWN_EVENT_RETENTION = 60.days
 
-/** A "new event was added to your group" notification to post. */
+/**
+ * A "new event was added to your group" notification to post.
+ *
+ * @property groupId Carried alongside [groupName] purely so a tap can put the group's
+ *   events list under the opened event detail (issue #351) — display copy only ever
+ *   uses the name.
+ */
 data class NewEventNotification(
     val eventPermalink: String,
     val eventTitle: String,
     val groupName: String,
+    val groupId: Long,
     val whenText: String,
 )
 
@@ -95,6 +102,7 @@ object EventNotificationPlanner {
                         eventPermalink = it.event.permalink,
                         eventTitle = it.event.title,
                         groupName = it.group.name,
+                        groupId = it.group.id,
                         whenText = it.event.whenText,
                     )
                 }

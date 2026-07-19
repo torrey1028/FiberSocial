@@ -21,8 +21,26 @@ import platform.UserNotifications.UNUserNotificationCenter
 /** userInfo key carrying an event permalink; the tap handler deep-links to its detail. */
 const val NOTIFICATION_EVENT_PERMALINK_KEY = "event_permalink"
 
+/**
+ * userInfo key: the group that listed the deep-linked event, so its events list can sit
+ * under the opened detail and back-back reaches the feed (issue #351). Absent on
+ * reminders, which don't know a group — see `DeepLink.Event`.
+ *
+ * Stored as a decimal string, not a number: userInfo round-trips through `NSDictionary`,
+ * where a Kotlin `Long` becomes an `NSNumber` whose Kotlin type on the way back depends
+ * on its `objCType`. A string reads back as exactly what was written.
+ */
+const val NOTIFICATION_EVENT_GROUP_ID_KEY = "event_group_id"
+
 /** userInfo key (presence = true): the tap handler opens the My Posts feed. */
 const val NOTIFICATION_OPEN_MY_POSTS_KEY = "open_my_posts"
+
+/**
+ * userInfo key: the topic a reply notification is about; the tap handler opens that
+ * thread over the My Posts feed. Stored as a decimal string for the same reason as
+ * [NOTIFICATION_EVENT_GROUP_ID_KEY].
+ */
+const val NOTIFICATION_TOPIC_ID_KEY = "topic_id"
 
 /**
  * Posts the two kinds of event notifications via `UNUserNotificationCenter` — the iOS
@@ -58,7 +76,12 @@ class IosEventNotifier(
             setTitle(EventNotificationContent.newEventTitle(notification.groupName))
             setBody(EventNotificationContent.newEventText(notification.eventTitle, notification.whenText))
             setSound(UNNotificationSound.defaultSound)
-            setUserInfo(mapOf(NOTIFICATION_EVENT_PERMALINK_KEY to notification.eventPermalink))
+            setUserInfo(
+                mapOf(
+                    NOTIFICATION_EVENT_PERMALINK_KEY to notification.eventPermalink,
+                    NOTIFICATION_EVENT_GROUP_ID_KEY to notification.groupId.toString(),
+                ),
+            )
         }
         val request = UNNotificationRequest.requestWithIdentifier(
             "new-event/${notification.eventPermalink}",
@@ -81,7 +104,10 @@ class IosEventNotifier(
             setTitle(MyPostsNotificationContent.replyTitle(notification))
             setBody(MyPostsNotificationContent.replyText(notification))
             setSound(UNNotificationSound.defaultSound)
-            setUserInfo(mapOf(NOTIFICATION_OPEN_MY_POSTS_KEY to true))
+            // Opens the topic itself, over the My Posts feed so back lands there (#351).
+            // iOS has no group-summary notification, so unlike Android there is no
+            // spans-several-topics case that has to fall back to the bare feed.
+            setUserInfo(mapOf(NOTIFICATION_TOPIC_ID_KEY to notification.topicId.toString()))
             // Coalesces all reply notifications into one Notification Center stack —
             // iOS's own grouping, so no explicit summary notification is needed here
             // (unlike Android's group-summary pattern).

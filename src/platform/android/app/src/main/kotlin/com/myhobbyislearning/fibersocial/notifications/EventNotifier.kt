@@ -15,8 +15,22 @@ import com.myhobbyislearning.fibersocial.R
 /** Intent extra carrying an event permalink; MainActivity deep-links to its detail. */
 const val EXTRA_EVENT_PERMALINK = "event_permalink"
 
+/**
+ * Intent extra: the group that listed the deep-linked event, so its events list can sit
+ * under the opened detail and back-back reaches the feed (issue #351). Absent on reminder
+ * notifications, which don't know a group — see `DeepLink.Event`.
+ */
+const val EXTRA_EVENT_GROUP_ID = "event_group_id"
+
 /** Intent extra: a tapped reply notification opens the cross-group My Posts feed. */
 const val EXTRA_OPEN_MY_POSTS = "open_my_posts"
+
+/**
+ * Intent extra carrying the topic a reply-notification child is about; MainActivity
+ * deep-links straight into that thread. The group summary spans topics and so carries
+ * [EXTRA_OPEN_MY_POSTS] instead.
+ */
+const val EXTRA_TOPIC_ID = "topic_id"
 
 private const val CHANNEL_REMINDERS = "event_reminders"
 private const val CHANNEL_NEW_EVENTS = "new_events"
@@ -77,6 +91,9 @@ class EventNotifier(private val context: Context) {
             title = EventNotificationContent.reminderTitle(kind),
             text = eventTitle,
             eventPermalink = eventPermalink,
+            // Reminders are planned from the RSVP'd-events scrape, which records no
+            // group — so back from the opened event goes straight to the feed.
+            eventGroupId = null,
         )
     }
 
@@ -88,6 +105,7 @@ class EventNotifier(private val context: Context) {
             title = EventNotificationContent.newEventTitle(notification.groupName),
             text = EventNotificationContent.newEventText(notification.eventTitle, notification.whenText),
             eventPermalink = notification.eventPermalink,
+            eventGroupId = notification.groupId,
         )
     }
 
@@ -96,7 +114,9 @@ class EventNotifier(private val context: Context) {
      * one child per topic (tag = the topic id, so a later batch for the same topic
      * replaces its earlier child with a fresh count while different topics stack) under
      * a summary notification ("9 new replies in 4 topics") that Android renders as an
-     * expandable stack. Every tap — child or summary — opens the My Posts feed.
+     * expandable stack. Tapping a child opens that topic's thread over the My Posts feed
+     * (so back lands there); tapping the summary opens the My Posts feed itself, since a
+     * summary spans topics and has no single right one to open (issue #351).
      */
     fun showNewReplies(batch: List<NewReplyNotification>) {
         if (batch.isEmpty()) return
@@ -114,7 +134,7 @@ class EventNotifier(private val context: Context) {
             .setSmallIcon(R.drawable.ic_notification_reply)
             .setContentTitle(MyPostsNotificationContent.replyTitle(notification))
             .setContentText(MyPostsNotificationContent.replyText(notification))
-            .setContentIntent(myPostsTapIntent(id))
+            .setContentIntent(topicTapIntent(id, notification.topicId))
             .setAutoCancel(true)
             .setGroup(GROUP_MY_POSTS_REPLIES)
             // Carried so the summary can total the WHOLE visible stack later, including
@@ -154,8 +174,8 @@ class EventNotifier(private val context: Context) {
     private fun myPostsTapIntent(requestCode: Int): PendingIntent {
         val tapIntent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
-            // One shared data URI is fine here (unlike per-event URIs): every reply
-            // notification deep-links to the same destination, the My Posts feed.
+            // One shared data URI is fine here (unlike the per-topic URIs below): the
+            // only caller is the group summary, and there is exactly one of those.
             data = Uri.parse("fibersocial://my-posts")
             putExtra(EXTRA_OPEN_MY_POSTS, true)
         }
@@ -167,7 +187,32 @@ class EventNotifier(private val context: Context) {
         )
     }
 
-    private fun post(channel: String, id: Int, title: String, text: String, eventPermalink: String) {
+    private fun topicTapIntent(requestCode: Int, topicId: Long): PendingIntent {
+        val tapIntent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            // Distinct per topic for the same reason the event path documents below:
+            // PendingIntents are matched by Intent.filterEquals, which ignores extras,
+            // so a shared URI would let two topics collide onto one PendingIntent and
+            // FLAG_UPDATE_CURRENT would silently rewrite the first one's topic id.
+            data = Uri.parse("fibersocial://topic/$topicId")
+            putExtra(EXTRA_TOPIC_ID, topicId)
+        }
+        return PendingIntent.getActivity(
+            context,
+            requestCode,
+            tapIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+    }
+
+    private fun post(
+        channel: String,
+        id: Int,
+        title: String,
+        text: String,
+        eventPermalink: String,
+        eventGroupId: Long?,
+    ) {
         if (!canNotify()) {
             println("FiberSocial: EventNotifier skipping \"$title\" — notifications not permitted")
             return
@@ -180,6 +225,7 @@ class EventNotifier(private val context: Context) {
             // extras and a tap could deep-link to the wrong event.
             data = Uri.parse("fibersocial://event/$eventPermalink")
             putExtra(EXTRA_EVENT_PERMALINK, eventPermalink)
+            eventGroupId?.let { putExtra(EXTRA_EVENT_GROUP_ID, it) }
         }
         val pending = PendingIntent.getActivity(
             context,
