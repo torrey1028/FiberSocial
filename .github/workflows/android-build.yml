@@ -37,9 +37,24 @@ jobs:
         # the expression is substituted textually before the shell runs, so a
         # secret containing quotes/$/backslashes would corrupt the script (or
         # the written value) silently.
+        #
+        # This repo is PUBLIC, and Actions artifacts on a public repo are downloadable
+        # by anyone — no GitHub account needed. RAVELRY_CLIENT_SECRET becomes a
+        # compile-time BuildConfig constant, so it is trivially recoverable from any
+        # APK we upload (debug builds aren't even minified). The `secrets` context IS
+        # populated for same-repo pull_request runs, so before this gate every PR run
+        # published the live secret. The `A && B || ''` ternary resolves to the secret
+        # only on post-merge main builds and to an empty string everywhere else.
+        # Issue #266.
+        #
+        # Blank values are a supported state end to end: app/build.gradle.kts defaults
+        # both buildConfigFields to "", and AuthAndroidViewModel already logs a
+        # blank-credential warning at launch (the path fork PRs have always taken).
+        # Consequence: to smoke-test login from a CI artifact, take one from a main
+        # run, not a PR run.
         env:
-          RAVELRY_CLIENT_ID: ${{ secrets.RAVELRY_CLIENT_ID }}
-          RAVELRY_CLIENT_SECRET: ${{ secrets.RAVELRY_CLIENT_SECRET }}
+          RAVELRY_CLIENT_ID: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') && secrets.RAVELRY_CLIENT_ID || '' }}
+          RAVELRY_CLIENT_SECRET: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') && secrets.RAVELRY_CLIENT_SECRET || '' }}
         run: |
           {
             printf 'sdk.dir=%s\n' "$ANDROID_HOME"
@@ -47,12 +62,13 @@ jobs:
             printf 'ravelry.client_secret=%s\n' "$RAVELRY_CLIENT_SECRET"
           } > src/platform/android/local.properties
 
-      # Fail loudly on push builds if either repo secret is missing — otherwise
-      # CI goes green while publishing APKs that can't log in (issue #6). Fork
-      # PRs legitimately have no secrets and still build (their artifacts just
-      # can't log in, with the runtime warning explaining why).
+      # Fail loudly on post-merge main builds if either repo secret is missing —
+      # otherwise CI goes green while publishing APKs that can't log in (issue #6).
+      # Deliberately scoped to exactly the runs that inject credentials: PR builds
+      # (and fork PRs, which never had secrets) legitimately produce blank-credential
+      # artifacts now, with the runtime warning explaining why.
       - name: Verify OAuth credentials are configured
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           RAVELRY_CLIENT_ID: ${{ secrets.RAVELRY_CLIENT_ID }}
           RAVELRY_CLIENT_SECRET: ${{ secrets.RAVELRY_CLIENT_SECRET }}
