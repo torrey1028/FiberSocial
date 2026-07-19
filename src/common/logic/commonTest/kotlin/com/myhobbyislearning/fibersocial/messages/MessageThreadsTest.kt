@@ -138,6 +138,41 @@ class MessageThreadsTest {
     }
 
     @Test
+    fun `a chain needing exactly the walk cap's hop count still fully resolves`() {
+        // A regression pin for an off-by-one: the walk cap is MAX_PARENT_WALK_DEPTH (64)
+        // HOPS, so a chain where the deepest message needs exactly 64 hops to reach its
+        // true root (65 messages: ids 1..65, id 1 rootless) must still fully collapse
+        // onto message 1 — the boundary the loose "> 1 threads" assertion in the 200-link
+        // test above can't distinguish from an off-by-one that stops one hop short.
+        val chain = (1L..65L).map { id ->
+            inbound(id = id, parent = if (id == 1L) null else id - 1, sentAt = at(1))
+        }
+
+        val threads = groupIntoThreads(chain, me)
+
+        assertEquals(1, threads.size)
+        assertEquals(1L, threads[0].rootId)
+        assertEquals(65, threads[0].messages.size)
+    }
+
+    @Test
+    fun `a chain needing one hop more than the walk cap still splits at the boundary`() {
+        // The other half of the same pin: one hop past the cap (66 messages, id 66 needs
+        // 65 hops) must genuinely still bail, not have the boundary fix accidentally
+        // widen the cap instead of correcting the off-by-one.
+        val chain = (1L..66L).map { id ->
+            inbound(id = id, parent = if (id == 1L) null else id - 1, sentAt = at(1))
+        }
+
+        val threads = groupIntoThreads(chain, me)
+
+        assertEquals(2, threads.size)
+        assertEquals(setOf(1L, 66L), threads.map { it.rootId }.toSet())
+        assertEquals(65, threads.first { it.rootId == 1L }.messages.size)
+        assertEquals(1, threads.first { it.rootId == 66L }.messages.size)
+    }
+
+    @Test
     fun `counterpart is the other party for an inbound root`() {
         val threads = groupIntoThreads(listOf(inbound(id = 1)), me)
 
