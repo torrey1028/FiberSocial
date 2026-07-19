@@ -5,6 +5,7 @@ import com.myhobbyislearning.fibersocial.auth.SessionExpirySignal
 import com.myhobbyislearning.fibersocial.feed.models.FeedItem
 import com.myhobbyislearning.fibersocial.feed.models.Group
 import com.myhobbyislearning.fibersocial.feed.models.RavelryUser
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -125,6 +126,15 @@ class FeedViewModel(
      */
     val leaveError: StateFlow<String?> = _leaveError.asStateFlow()
 
+    private val _drawerUnread = MutableStateFlow(DrawerUnread())
+
+    /**
+     * Whether the drawer's group rows and "Your Posts" row should show an unread dot
+     * (unread indicators). Refreshed alongside a full [load] or [refresh]; a fetch failure
+     * leaves the previous value rather than clearing the dots.
+     */
+    val drawerUnread: StateFlow<DrawerUnread> = _drawerUnread.asStateFlow()
+
     /**
      * Joins the current user to the group at [permalink] (the app support group, from the
      * drawer's "Join feedback group" button), then reloads so the drawer reflects the new
@@ -219,6 +229,30 @@ class FeedViewModel(
             _state.value = FeedState.Loading
             _state.value = fetchFeed(selectedGroup = null) // null: fall back to the default group
             println("FiberSocial: FeedViewModel.load() -> ${_state.value::class.simpleName}")
+        }
+    }
+
+    /**
+     * Best-effort refresh of the drawer's unread dots ([drawerUnread]). Driven by the UI
+     * (on first feed display and on drawer pull-to-refresh) rather than folded into
+     * [load]/[refresh], so it stays an independent, non-blocking side channel: a failure
+     * just keeps the previous value so a transient error can't wrongly clear the dots, and
+     * it never disrupts the feed itself (session expiry there is surfaced by the feed's own
+     * fetch). Concurrent calls are harmless — last write wins.
+     */
+    fun refreshDrawerUnread() {
+        scope.launch {
+            try {
+                _drawerUnread.value = repository.getDrawerUnread()
+                println(
+                    "FiberSocial: drawer unread -> ${_drawerUnread.value.unreadGroupForumIds.size} " +
+                        "group(s), yourPosts=${_drawerUnread.value.yourPostsHasUnread}",
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                println("FiberSocial: drawer unread refresh failed: ${e.message}")
+            }
         }
     }
 

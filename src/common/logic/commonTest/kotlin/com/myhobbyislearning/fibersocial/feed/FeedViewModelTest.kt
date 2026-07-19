@@ -99,6 +99,40 @@ class FeedViewModelTest {
     }
 
     @Test
+    fun `refreshDrawerUnread populates the drawer unread state`() = runTest(UnconfinedTestDispatcher()) {
+        // Both legs (reading + posting) hit /forums/filtered_topics.json; the fake serves an
+        // unread topic (5 posts, read to 3) in forum 42.
+        val repo = FeedRepository(routingApiClient { path ->
+            when {
+                path.contains("filtered_topics") ->
+                    """{"topics":[{"id":1,"title":"T","forum_id":42,"forum_posts_count":5,"last_read":3}]}"""
+                else -> error("Unexpected: $path")
+            }
+        })
+        val vm = FeedViewModel(repo, this, FakeGroupOrderStore())
+
+        vm.refreshDrawerUnread()
+        awaitChildren(coroutineContext[Job]!!)
+
+        assertEquals(setOf(42L), vm.drawerUnread.value.unreadGroupForumIds)
+        assertTrue(vm.drawerUnread.value.yourPostsHasUnread)
+    }
+
+    @Test
+    fun `refreshDrawerUnread keeps the previous value when the fetch fails`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val repo = FeedRepository(routingApiClient { error("boom") })
+            val vm = FeedViewModel(repo, this, FakeGroupOrderStore())
+
+            vm.refreshDrawerUnread()
+            awaitChildren(coroutineContext[Job]!!)
+
+            // A failed fetch is swallowed — the dots stay at their (empty) default rather
+            // than propagating the error into the feed.
+            assertEquals(DrawerUnread(), vm.drawerUnread.value)
+        }
+
+    @Test
     fun `load selects the sole group as default and seeds the stored order`() =
         runTest(UnconfinedTestDispatcher()) {
             val store = FakeGroupOrderStore()
