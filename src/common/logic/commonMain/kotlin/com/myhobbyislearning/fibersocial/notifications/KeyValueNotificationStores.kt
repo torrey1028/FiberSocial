@@ -2,6 +2,8 @@ package com.myhobbyislearning.fibersocial.notifications
 
 import com.myhobbyislearning.fibersocial.storage.JsonKeyValueEntry
 import com.myhobbyislearning.fibersocial.storage.KeyValueStore
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.builtins.SetSerializer
 import kotlinx.serialization.builtins.serializer
 
@@ -45,7 +47,18 @@ class KeyValueMutedTopicsStore(store: KeyValueStore) : MutedTopicsStore {
 
     override suspend fun save(mutedTopicIds: Set<Long>) = entry.save(mutedTopicIds)
 
+    // Process-wide (not per-instance): the UI and the background sync each construct
+    // their own KeyValueMutedTopicsStore, so an instance-level lock wouldn't serialize
+    // between them — they need to contend for the same lock object.
+    override suspend fun mutate(transform: (Set<Long>) -> Set<Long>): Set<Long> = mutex.withLock {
+        val current = load()
+        val updated = transform(current)
+        if (updated != current) save(updated)
+        updated
+    }
+
     private companion object {
         const val KEY = "muted_topics"
+        val mutex = Mutex()
     }
 }

@@ -702,10 +702,13 @@ fun FeedScreen(
                 val nowMuted = !topicMuted
                 topicMuted = nowMuted // optimistic; the store write follows
                 muteScope.launch {
-                    val updated = store.load().toMutableSet().apply {
-                        if (nowMuted) add(topic.id) else remove(topic.id)
+                    // mutate(), not load()-then-save(): a background sync's retention
+                    // pruning can run concurrently, and separate load/save calls here
+                    // could race it and silently lose this toggle (or resurrect a mute
+                    // the sync just pruned).
+                    store.mutate { current ->
+                        if (nowMuted) current + topic.id else current - topic.id
                     }
-                    store.save(updated)
                 }
             },
             replyState = replyState,
