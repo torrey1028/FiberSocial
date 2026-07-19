@@ -60,11 +60,13 @@ class IosEventNotifier(
             setSound(UNNotificationSound.defaultSound)
             setUserInfo(mapOf(NOTIFICATION_EVENT_PERMALINK_KEY to notification.eventPermalink))
         }
+        val identifier = "new-event/${notification.eventPermalink}"
         val request = UNNotificationRequest.requestWithIdentifier(
-            "new-event/${notification.eventPermalink}",
+            identifier,
             content = content,
             trigger = null, // deliver now
         )
+        center.replaceDelivered(identifier)
         center.addNotificationRequest(request) { error ->
             error?.let { println("FiberSocial: showNewEvent(${notification.eventPermalink}) failed: ${it.localizedDescription}") }
         }
@@ -87,14 +89,30 @@ class IosEventNotifier(
             // (unlike Android's group-summary pattern).
             setThreadIdentifier("my-posts-replies")
         }
+        val identifier = "topic-replies/${notification.topicId}"
         val request = UNNotificationRequest.requestWithIdentifier(
-            "topic-replies/${notification.topicId}",
+            identifier,
             content = content,
             trigger = null, // deliver now
         )
+        center.replaceDelivered(identifier)
         center.addNotificationRequest(request) { error ->
             error?.let { println("FiberSocial: showNewReplies(${notification.topicId}) failed: ${it.localizedDescription}") }
         }
+    }
+
+    /**
+     * Clears an already-delivered banner with [identifier] so the request that follows
+     * lands as a genuine replacement.
+     *
+     * `addNotificationRequest` only reliably replaces *pending* requests; for one already
+     * sitting in Notification Center, identifier-keyed replacement is unreliable in
+     * practice and the user can end up with two stacked banners for the same event or
+     * topic (an "N new replies" followed by a stale "M new replies"). Removing first makes
+     * the replace explicit. Harmless when nothing was delivered.
+     */
+    private fun UNUserNotificationCenter.replaceDelivered(identifier: String) {
+        removeDeliveredNotificationsWithIdentifiers(listOf(identifier))
     }
 
     /**
