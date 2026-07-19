@@ -133,6 +133,57 @@ class FeedViewModelTest {
         }
 
     @Test
+    fun `refreshDrawerUnread signals sessionExpired instead of swallowing it`() =
+        runTest(UnconfinedTestDispatcher()) {
+            // This can be the only in-flight request (e.g. a drawer pull-to-refresh while
+            // otherwise idle on an already-loaded feed) — nothing else is guaranteed to
+            // notice the expired session if this swallows it too.
+            val vm = FeedViewModel(FeedRepository(sessionExpiredApiClient()), this, FakeGroupOrderStore())
+
+            vm.refreshDrawerUnread()
+            awaitChildren(coroutineContext[Job]!!)
+
+            vm.sessionExpired.first()
+        }
+
+    @Test
+    fun `refreshDrawerUnread cancels a still in-flight call rather than letting it clobber a newer result`() =
+        runTest(UnconfinedTestDispatcher()) {
+            // getDrawerUnread() fires exactly 2 concurrent requests (reading + posting legs)
+            // per call. Gate only the first call's pair so it's still suspended when the
+            // second call starts; the second call's own pair (uncounted below) resolves
+            // immediately. If the second call didn't cancel the first, releasing the gate
+            // afterward would let the first (stale, forum 999) result overwrite the second
+            // (fresh, forum 42) one — "last write wins" instead of "last call wins".
+            val firstCallGate = CompletableDeferred<Unit>()
+            var firstCallRequestsSeen = 0
+            val repo = FeedRepository(
+                suspendableRoutingApiClient { _ ->
+                    if (firstCallRequestsSeen < 2) {
+                        firstCallRequestsSeen++
+                        firstCallGate.await()
+                        """{"topics":[{"id":1,"title":"T","forum_id":999,"forum_posts_count":5,"last_read":3}]}"""
+                    } else {
+                        """{"topics":[{"id":2,"title":"T2","forum_id":42,"forum_posts_count":5,"last_read":3}]}"""
+                    }
+                },
+            )
+            val vm = FeedViewModel(repo, this, FakeGroupOrderStore())
+
+            vm.refreshDrawerUnread()
+            vm.refreshDrawerUnread()
+            awaitChildren(coroutineContext[Job]!!)
+            assertEquals(setOf(42L), vm.drawerUnread.value.unreadGroupForumIds)
+
+            // Release the first call's gate — its coroutine was already cancelled when the
+            // second call started, so this must not resurrect its stale forum-999 result.
+            firstCallGate.complete(Unit)
+            awaitChildren(coroutineContext[Job]!!)
+
+            assertEquals(setOf(42L), vm.drawerUnread.value.unreadGroupForumIds)
+        }
+
+    @Test
     fun `load selects the sole group as default and seeds the stored order`() =
         runTest(UnconfinedTestDispatcher()) {
             val store = FakeGroupOrderStore()

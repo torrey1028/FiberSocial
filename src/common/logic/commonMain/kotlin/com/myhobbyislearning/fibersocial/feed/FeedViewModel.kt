@@ -7,6 +7,7 @@ import com.myhobbyislearning.fibersocial.feed.models.Group
 import com.myhobbyislearning.fibersocial.feed.models.RavelryUser
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -127,11 +128,12 @@ class FeedViewModel(
     val leaveError: StateFlow<String?> = _leaveError.asStateFlow()
 
     private val _drawerUnread = MutableStateFlow(DrawerUnread())
+    private var drawerUnreadJob: Job? = null
 
     /**
      * Whether the drawer's group rows and "Your Posts" row should show an unread dot
-     * (unread indicators). Refreshed alongside a full [load] or [refresh]; a fetch failure
-     * leaves the previous value rather than clearing the dots.
+     * (unread indicators). Updated by [refreshDrawerUnread] — see its doc for when that
+     * fires; a fetch failure leaves the previous value rather than clearing the dots.
      */
     val drawerUnread: StateFlow<DrawerUnread> = _drawerUnread.asStateFlow()
 
@@ -237,11 +239,18 @@ class FeedViewModel(
      * (on first feed display and on drawer pull-to-refresh) rather than folded into
      * [load]/[refresh], so it stays an independent, non-blocking side channel: a failure
      * just keeps the previous value so a transient error can't wrongly clear the dots, and
-     * it never disrupts the feed itself (session expiry there is surfaced by the feed's own
-     * fetch). Concurrent calls are harmless — last write wins.
+     * it never disrupts the feed itself. Session expiry IS still signalled from here,
+     * though — this can be the only in-flight request (e.g. a drawer pull-to-refresh while
+     * otherwise idle on an already-loaded feed), so it can't assume some other fetch will
+     * always notice first.
+     *
+     * A new call cancels any still-in-flight previous one before starting, so responses
+     * can never land out of order and let a slow, stale result overwrite a fresher one —
+     * true last-*call*-wins, not just last-to-*complete*-wins.
      */
     fun refreshDrawerUnread() {
-        scope.launch {
+        drawerUnreadJob?.cancel()
+        drawerUnreadJob = scope.launch {
             try {
                 _drawerUnread.value = repository.getDrawerUnread()
                 println(
@@ -250,6 +259,9 @@ class FeedViewModel(
                 )
             } catch (e: CancellationException) {
                 throw e
+            } catch (e: SessionExpiredException) {
+                println("FiberSocial: drawer unread refresh session expired")
+                sessionExpirySignal.signal()
             } catch (e: Exception) {
                 println("FiberSocial: drawer unread refresh failed: ${e.message}")
             }
