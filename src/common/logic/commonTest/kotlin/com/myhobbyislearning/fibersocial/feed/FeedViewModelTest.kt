@@ -153,19 +153,30 @@ class FeedViewModelTest {
         runTest(UnconfinedTestDispatcher()) {
             // Ktor engines — including MockEngine — dispatch request handling via
             // withContext(Dispatchers.IO) regardless of the calling coroutine's own
-            // dispatcher (see FakeFeedTokenStorage's KDoc), so requests from the two
-            // refreshDrawerUnread() calls below genuinely race on real threads; the
-            // Mutex keeps the shared counter's read-then-increment atomic across them
-            // (a plain var here previously caused a Robolectric-only CI flake).
+            // dispatcher (see FakeFeedTokenStorage's KDoc), so request handling runs on
+            // real threads rather than the test dispatcher.
+            //
+            // That is why the two calls are STARTED SEQUENTIALLY below rather than
+            // back-to-back. "The first two requests seen belong to call 1" is only true
+            // if call 2 hasn't started yet: each call fires two concurrent requests, so
+            // if both calls are in flight at once the first two seen can be one from
+            // each. The odd one out then falls to the `else` branch while call 2's other
+            // request blocks on a gate that is never opened, and the test hangs on a
+            // call that can never complete. That is the real defect behind the
+            // intermittent CI failures — an earlier fix added the Mutex, which made the
+            // counter's read-then-increment atomic but left the interleaving itself
+            // untouched, so the flake survived on JVM.
             val requestCountMutex = Mutex()
             var requestsSeen = 0
             val firstCallGate = CompletableDeferred<Unit>()
+            // Completed once BOTH of call 1's requests are parked on the gate, which is
+            // the point at which starting call 2 is unambiguous.
+            val firstCallParked = CompletableDeferred<Unit>()
             val repo = FeedRepository(
                 suspendableRoutingApiClient { _ ->
-                    val isFirstCallRequest = requestCountMutex.withLock {
-                        (requestsSeen < 2).also { if (it) requestsSeen++ }
-                    }
-                    if (isFirstCallRequest) {
+                    val seen = requestCountMutex.withLock { ++requestsSeen }
+                    if (seen <= 2) {
+                        if (seen == 2) firstCallParked.complete(Unit)
                         // Never released: the first call is cancelled before this could
                         // ever resolve, so nothing needs to un-gate it.
                         firstCallGate.await()
@@ -186,6 +197,7 @@ class FeedViewModelTest {
             // data — which is itself evidence the cancellation is what makes this test
             // (and the real bug scenario) terminate cleanly at all.
             vm.refreshDrawerUnread()
+            firstCallParked.await() // both of call 1's requests are now on the gate
             vm.refreshDrawerUnread()
             awaitChildren(coroutineContext[Job]!!)
 
