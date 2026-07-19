@@ -81,6 +81,29 @@ class GroupDrawerTest {
     }
 
     @Test
+    fun `the Your Posts row shows an unseen-replies dot only when flagged`() {
+        // Issue #339: a foreground sync that suppressed a reply banner badges this row.
+        var hasUnseen by mutableStateOf(false)
+        compose.setContent {
+            GroupDrawer(
+                groups = twoGroups,
+                selectedGroup = twoGroups.first(),
+                myPostsHasUnseen = hasUnseen,
+                eventCounts = emptyMap(),
+                user = user,
+                onGroupSelected = {},
+                onGroupEventsClick = {},
+                onSettingsClick = {},
+            )
+        }
+        compose.onNodeWithContentDescription("New replies", useUnmergedTree = true).assertDoesNotExist()
+
+        hasUnseen = true
+        compose.waitForIdle()
+        compose.onNodeWithContentDescription("New replies", useUnmergedTree = true).assertIsDisplayed()
+    }
+
+    @Test
     fun `collapsing Your Groups hides the group rows but keeps Your Posts`() {
         compose.setContent {
             GroupDrawer(

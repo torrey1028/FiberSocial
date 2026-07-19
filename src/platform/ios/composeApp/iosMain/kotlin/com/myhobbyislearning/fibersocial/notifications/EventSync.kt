@@ -42,6 +42,18 @@ import platform.Foundation.dateWithTimeIntervalSinceNow
  * - `BGAppRefreshTask` when the OS grants a background slot;
  * - RSVP changes and the debug panel's "Run sync now" (immediate).
  */
+/**
+ * Why a sync ran, which decides how its detected activity surfaces (issue #339):
+ * - [FOREGROUND]: user is in the app (activation / RSVP change). Reply + new-event
+ *   banners are suppressed by `NotificationDelegate.willPresent`; activity surfaces
+ *   in-app instead.
+ * - [BACKGROUND]: `BGAppRefreshTask` while the app is away — banners present normally
+ *   (willPresent isn't called when backgrounded).
+ * - [DEBUG]: the debug panel's "Run sync now" — banners are force-presented regardless
+ *   of foreground state, to verify the pipeline on-device.
+ */
+enum class SyncTrigger { FOREGROUND, BACKGROUND, DEBUG }
+
 @OptIn(ExperimentalForeignApi::class)
 object EventSync {
 
@@ -56,16 +68,16 @@ object EventSync {
      * then off) must not let a stale sync save last and resurrect reminders for a
      * withdrawn RSVP.
      */
-    fun runOnce(onFinished: (Boolean) -> Unit = {}) {
+    fun runOnce(trigger: SyncTrigger = SyncTrigger.FOREGROUND, onFinished: (Boolean) -> Unit = {}) {
         inFlight?.cancel()
         inFlight = scope.launch {
-            val ok = syncNow()
+            val ok = syncNow(trigger)
             onFinished(ok)
         }
     }
 
     /** One sync cycle; returns false on failure. Skips (successfully) when logged out. */
-    private suspend fun syncNow(): Boolean {
+    private suspend fun syncNow(trigger: SyncTrigger): Boolean {
         println("FiberSocial: EventSync starting")
         val httpClient = ravelryHttpClient()
         return try {
@@ -88,7 +100,7 @@ object EventSync {
                 KeyValueMutedTopicsStore(NsUserDefaultsKeyValueStore(NOTIFICATION_STATE_STORE_NAME)),
             )
             val plan = runner.sync(Clock.System.now(), TimeZone.currentSystemDefault())
-            apply(plan)
+            apply(plan, trigger)
             true
         } catch (e: CancellationException) {
             throw e
@@ -104,10 +116,14 @@ object EventSync {
         }
     }
 
-    private fun apply(plan: SyncPlan) {
+    private fun apply(plan: SyncPlan, trigger: SyncTrigger) {
         val notifier = IosEventNotifier()
-        plan.newEventNotifications.forEach { notifier.showNewEvent(it) }
-        plan.newReplyNotifications.forEach { notifier.showNewReplies(it) }
+        // A debug sync force-presents its banners even while foregrounded; foreground and
+        // background syncs don't tag them, so willPresent suppresses them in the
+        // foreground and the OS shows them normally in the background (issue #339).
+        val forcePresent = trigger == SyncTrigger.DEBUG
+        plan.newEventNotifications.forEach { notifier.showNewEvent(it, forcePresent) }
+        plan.newReplyNotifications.forEach { notifier.showNewReplies(it, forcePresent) }
         plan.remindersToCancel.forEach { notifier.cancelReminder(it) }
         // Re-arm everything still in the future, not just the plan's diff — same
         // crash-safety reasoning as Android's EventSyncWorker: state persists before
@@ -116,6 +132,15 @@ object EventSync {
         plan.newState.scheduledReminders
             .filter { it.fireAtEpochMs > now }
             .forEach { notifier.scheduleReminder(it) }
+        // A foreground sync's reply banners are suppressed; surface the activity in-app.
+        if (ForegroundNotificationPolicy.shouldSurfaceRepliesInApp(
+                forceNotifications = forcePresent,
+                appInForeground = trigger == SyncTrigger.FOREGROUND,
+                hasReplyActivity = plan.newReplyNotifications.isNotEmpty(),
+            )
+        ) {
+            ForegroundActivitySignal.markUnseenReplies()
+        }
     }
 
     /**
@@ -137,7 +162,7 @@ object EventSync {
         // so a crash mid-sync doesn't silently end all future background refreshes.
         scheduleBackgroundRefresh()
         val job = scope.launch {
-            val ok = syncNow()
+            val ok = syncNow(SyncTrigger.BACKGROUND)
             task.setTaskCompletedWithSuccess(ok)
         }
         task.expirationHandler = {

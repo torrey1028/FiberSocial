@@ -25,6 +25,7 @@ import com.myhobbyislearning.fibersocial.feed.LocalProjectLinkOpener
 import com.myhobbyislearning.fibersocial.profile.LocalProfileOpener
 import com.myhobbyislearning.fibersocial.login.LoginScreen
 import com.myhobbyislearning.fibersocial.notifications.EventSync
+import com.myhobbyislearning.fibersocial.notifications.SyncTrigger
 import com.myhobbyislearning.fibersocial.notifications.IosEventNotifier
 import com.myhobbyislearning.fibersocial.login.WebViewLoginScreen
 import com.myhobbyislearning.fibersocial.notifications.KeyValueMutedTopicsStore
@@ -212,7 +213,7 @@ private fun IosApp(authModel: IosAuthModel, feedModel: IosFeedModel) {
                             // request (iOS treats it as a floor, not a schedule).
                             onPollCadenceChanged = { EventSync.scheduleBackgroundRefresh(it) },
                             debugPanelEnabled = Platform.isDebugBinary,
-                            onRunEventSync = { EventSync.runOnce() },
+                            onRunEventSync = { EventSync.runOnce(SyncTrigger.DEBUG) },
                             deviceInfo = deviceContext(),
                         )
                     }

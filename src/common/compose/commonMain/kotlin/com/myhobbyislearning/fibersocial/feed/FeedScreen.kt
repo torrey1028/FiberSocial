@@ -131,6 +131,7 @@ import com.myhobbyislearning.fibersocial.composeapp.resources.Res
 import com.myhobbyislearning.fibersocial.composeapp.resources.app_logo_content_description
 import com.myhobbyislearning.fibersocial.profile.UserProfileScreen
 import com.myhobbyislearning.fibersocial.profile.UserProfileState
+import com.myhobbyislearning.fibersocial.notifications.ForegroundActivitySignal
 import com.myhobbyislearning.fibersocial.notifications.MutedTopicsStore
 import com.myhobbyislearning.fibersocial.notifications.NotificationSettings
 import com.myhobbyislearning.fibersocial.notifications.NotificationSettingsStore
@@ -883,6 +884,17 @@ fun FeedScreen(
     }
     val selectedGroup = loaded?.selectedGroup
 
+    // A foreground sync that detected new replies but suppressed its banner (issue #339)
+    // badges the drawer's "Your Posts" row. If the user is already on that feed, refresh
+    // it so the per-card unread badges are current, and clear the drawer badge.
+    val hasUnseenReplies by ForegroundActivitySignal.hasUnseenReplies.collectAsState()
+    LaunchedEffect(hasUnseenReplies, showingMyPosts) {
+        if (hasUnseenReplies && showingMyPosts) {
+            viewModel.feed.refresh()
+            ForegroundActivitySignal.clearUnseenReplies()
+        }
+    }
+
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
@@ -890,8 +902,10 @@ fun FeedScreen(
                 groups = groups,
                 selectedGroup = selectedGroup,
                 myPostsSelected = showingMyPosts,
+                myPostsHasUnseen = hasUnseenReplies && !showingMyPosts,
                 onMyPostsSelected = {
                     scope.launch { drawerState.close() }
+                    ForegroundActivitySignal.clearUnseenReplies()
                     viewModel.feed.selectMyPosts()
                 },
                 eventCounts = eventCounts,
@@ -1299,6 +1313,9 @@ internal fun GroupDrawer(
     groups: List<Group>,
     selectedGroup: Group?,
     myPostsSelected: Boolean = false,
+    // A dot on the "Your Posts" row for reply activity a foreground sync surfaced in-app
+    // instead of as a banner (issue #339).
+    myPostsHasUnseen: Boolean = false,
     onMyPostsSelected: () -> Unit = {},
     eventCounts: Map<Long, Int>,
     user: RavelryUser?,
@@ -1474,6 +1491,11 @@ internal fun GroupDrawer(
                             selected = myPostsSelected,
                             onClick = { if (!reorderMode) onMyPostsSelected() },
                             icon = { Icon(Icons.Default.Person, contentDescription = null) },
+                            badge = if (myPostsHasUnseen) {
+                                { UnseenActivityDot() }
+                            } else {
+                                null
+                            },
                             modifier = Modifier.padding(horizontal = 12.dp),
                         )
                     }
@@ -1760,6 +1782,20 @@ internal fun FeedFabs(
             Icon(Icons.Default.Edit, contentDescription = "New topic")
         }
     }
+}
+
+/**
+ * A small filled dot used as the "Your Posts" drawer-row badge when a foreground sync
+ * surfaced new reply activity in-app instead of as a banner (issue #339).
+ */
+@Composable
+private fun UnseenActivityDot() {
+    Box(
+        modifier = Modifier
+            .size(8.dp)
+            .background(MaterialTheme.colorScheme.primary, CircleShape)
+            .semantics { contentDescription = "New replies" },
+    )
 }
 
 /**

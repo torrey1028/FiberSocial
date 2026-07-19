@@ -2,6 +2,7 @@ package com.myhobbyislearning.fibersocial.app
 
 import com.myhobbyislearning.fibersocial.notifications.EventSync
 import com.myhobbyislearning.fibersocial.notifications.NOTIFICATION_EVENT_PERMALINK_KEY
+import com.myhobbyislearning.fibersocial.notifications.NOTIFICATION_FORCE_PRESENT_KEY
 import com.myhobbyislearning.fibersocial.notifications.NOTIFICATION_OPEN_MY_POSTS_KEY
 import kotlinx.coroutines.flow.MutableStateFlow
 import platform.Foundation.NSNotificationCenter
@@ -9,6 +10,7 @@ import platform.Foundation.NSOperationQueue
 import platform.UIKit.UIApplicationDidBecomeActiveNotification
 import platform.UIKit.UIApplicationDidEnterBackgroundNotification
 import platform.UserNotifications.UNNotificationPresentationOptionBanner
+import platform.UserNotifications.UNNotificationPresentationOptionNone
 import platform.UserNotifications.UNNotificationPresentationOptionSound
 import platform.UserNotifications.UNNotification
 import platform.UserNotifications.UNNotificationPresentationOptions
@@ -77,13 +79,23 @@ private class NotificationDelegate : NSObject(), UNUserNotificationCenterDelegat
         withCompletionHandler()
     }
 
-    /** Notifications arriving while the app is foregrounded still show as banners
-     *  (Android posts them regardless of foreground state too). */
+    /**
+     * A notification is about to present while the app is foregrounded (this delegate
+     * only fires then). Suppress its banner — the user is in the app, so activity is
+     * surfaced in-app instead (issue #339) — UNLESS it's force-present tagged: reminders
+     * (time-critical) and debug "Run sync now" notifications still show.
+     */
     override fun userNotificationCenter(
         center: UNUserNotificationCenter,
         willPresentNotification: UNNotification,
         withCompletionHandler: (UNNotificationPresentationOptions) -> Unit,
     ) {
-        withCompletionHandler(UNNotificationPresentationOptionBanner or UNNotificationPresentationOptionSound)
+        val forcePresent =
+            willPresentNotification.request.content.userInfo[NOTIFICATION_FORCE_PRESENT_KEY] != null
+        if (forcePresent) {
+            withCompletionHandler(UNNotificationPresentationOptionBanner or UNNotificationPresentationOptionSound)
+        } else {
+            withCompletionHandler(UNNotificationPresentationOptionNone)
+        }
     }
 }

@@ -1,6 +1,8 @@
 package com.myhobbyislearning.fibersocial.notifications
 
 import android.content.Context
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.ExistingWorkPolicy
@@ -10,8 +12,11 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.Constraints
+import androidx.work.workDataOf
 import com.myhobbyislearning.fibersocial.BuildConfig
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import com.myhobbyislearning.fibersocial.auth.KeyValueTokenStorage
 import com.myhobbyislearning.fibersocial.auth.SessionExpiredException
 import com.myhobbyislearning.fibersocial.net.ravelryApiClient
@@ -59,7 +64,10 @@ class EventSyncWorker(
                 KeyValueMutedTopicsStore(plainKeyValueStore(applicationContext, NOTIFICATION_STATE_PREFS_NAME)),
             )
             val plan = runner.sync(Clock.System.now(), TimeZone.currentSystemDefault())
-            apply(plan)
+            // The debug panel's one-time sync forces real banners regardless of foreground
+            // state (issue #339); the periodic sync doesn't set the flag.
+            val force = inputData.getBoolean(KEY_FORCE_NOTIFICATIONS, false)
+            apply(plan, force)
             Result.success()
         } catch (e: CancellationException) {
             // WorkManager stopped us (constraint lost, timeout); cancellation must
@@ -77,10 +85,25 @@ class EventSyncWorker(
         }
     }
 
-    private fun apply(plan: SyncPlan) {
+    private suspend fun apply(plan: SyncPlan, forceNotifications: Boolean) {
+        val foreground = appInForeground()
         val notifier = EventNotifier(applicationContext).apply { ensureChannels() }
-        plan.newEventNotifications.forEach { notifier.showNewEvent(it) }
-        notifier.showNewReplies(plan.newReplyNotifications)
+        // Reply + new-event banners are suppressed while the app is foregrounded (unless
+        // forced): the user is looking at the app, so we surface the activity in-app
+        // instead of over it (issue #339). Reminders (exact alarms, scheduled below) are
+        // time-critical and keep firing regardless.
+        if (ForegroundNotificationPolicy.shouldPostBanners(forceNotifications, foreground)) {
+            plan.newEventNotifications.forEach { notifier.showNewEvent(it) }
+            notifier.showNewReplies(plan.newReplyNotifications)
+        } else {
+            println("FiberSocial: EventSyncWorker suppressing banners — app foregrounded")
+        }
+        if (ForegroundNotificationPolicy.shouldSurfaceRepliesInApp(
+                forceNotifications, foreground, plan.newReplyNotifications.isNotEmpty(),
+            )
+        ) {
+            ForegroundActivitySignal.markUnseenReplies()
+        }
         val scheduler = ReminderScheduler(applicationContext)
         plan.remindersToCancel.forEach { scheduler.cancel(it) }
         // Re-arm everything still in the future, not just the plan's diff: state is
@@ -94,9 +117,21 @@ class EventSyncWorker(
             .forEach { scheduler.schedule(it) }
     }
 
+    /**
+     * Whether the app process is currently foregrounded. `ProcessLifecycleOwner`'s state
+     * is maintained on the main thread, so read it there — the worker runs on a
+     * background dispatcher.
+     */
+    private suspend fun appInForeground(): Boolean = withContext(Dispatchers.Main.immediate) {
+        ProcessLifecycleOwner.get().lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
+    }
+
     companion object {
         private const val UNIQUE_WORK_NAME = "event_sync"
         private const val UNIQUE_ONCE_WORK_NAME = "event_sync_once"
+
+        /** Input-data flag: post real banners even if foregrounded (debug "Run sync now"). */
+        const val KEY_FORCE_NOTIFICATIONS = "force_notifications"
 
         /**
          * Registers (or re-registers, when [cadence] changed) the periodic sync.
@@ -132,6 +167,9 @@ class EventSyncWorker(
                 UNIQUE_ONCE_WORK_NAME,
                 ExistingWorkPolicy.REPLACE,
                 OneTimeWorkRequestBuilder<EventSyncWorker>()
+                    // Debug sync-now posts real banners even when foregrounded, so the
+                    // notification pipeline can be verified on-device (issue #339).
+                    .setInputData(workDataOf(KEY_FORCE_NOTIFICATIONS to true))
                     .setConstraints(
                         Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build(),
                     )

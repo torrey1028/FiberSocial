@@ -25,6 +25,14 @@ const val NOTIFICATION_EVENT_PERMALINK_KEY = "event_permalink"
 const val NOTIFICATION_OPEN_MY_POSTS_KEY = "open_my_posts"
 
 /**
+ * userInfo key (presence = true): present this notification's banner even while the app
+ * is foregrounded (issue #339). Set on reminders (always time-critical) and on
+ * reply/new-event notifications from a debug "Run sync now"; absent on ordinary
+ * foreground syncs, whose banners `NotificationDelegate.willPresent` suppresses.
+ */
+const val NOTIFICATION_FORCE_PRESENT_KEY = "force_present"
+
+/**
  * Posts the two kinds of event notifications via `UNUserNotificationCenter` — the iOS
  * counterpart of Android's `EventNotifier` + `ReminderScheduler` in one: on iOS a
  * scheduled local notification IS the reminder, fired by the OS with no receiver or
@@ -53,12 +61,17 @@ class IosEventNotifier(
     }
 
     /** Announces an event newly added to one of the user's groups (posts immediately). */
-    fun showNewEvent(notification: NewEventNotification) {
+    fun showNewEvent(notification: NewEventNotification, forcePresent: Boolean = false) {
         val content = UNMutableNotificationContent().apply {
             setTitle(EventNotificationContent.newEventTitle(notification.groupName))
             setBody(EventNotificationContent.newEventText(notification.eventTitle, notification.whenText))
             setSound(UNNotificationSound.defaultSound)
-            setUserInfo(mapOf(NOTIFICATION_EVENT_PERMALINK_KEY to notification.eventPermalink))
+            setUserInfo(
+                buildMap<Any?, Any> {
+                    put(NOTIFICATION_EVENT_PERMALINK_KEY, notification.eventPermalink)
+                    if (forcePresent) put(NOTIFICATION_FORCE_PRESENT_KEY, true)
+                },
+            )
         }
         val request = UNNotificationRequest.requestWithIdentifier(
             "new-event/${notification.eventPermalink}",
@@ -76,12 +89,17 @@ class IosEventNotifier(
      * banner (with a fresh count) while different topics stack — mirroring Android's
      * per-topic tag.
      */
-    fun showNewReplies(notification: NewReplyNotification) {
+    fun showNewReplies(notification: NewReplyNotification, forcePresent: Boolean = false) {
         val content = UNMutableNotificationContent().apply {
             setTitle(MyPostsNotificationContent.replyTitle(notification))
             setBody(MyPostsNotificationContent.replyText(notification))
             setSound(UNNotificationSound.defaultSound)
-            setUserInfo(mapOf(NOTIFICATION_OPEN_MY_POSTS_KEY to true))
+            setUserInfo(
+                buildMap<Any?, Any> {
+                    put(NOTIFICATION_OPEN_MY_POSTS_KEY, true)
+                    if (forcePresent) put(NOTIFICATION_FORCE_PRESENT_KEY, true)
+                },
+            )
             // Coalesces all reply notifications into one Notification Center stack —
             // iOS's own grouping, so no explicit summary notification is needed here
             // (unlike Android's group-summary pattern).
@@ -106,7 +124,14 @@ class IosEventNotifier(
             setTitle(EventNotificationContent.reminderTitle(reminder.kind))
             setBody(reminder.eventTitle)
             setSound(UNNotificationSound.defaultSound)
-            setUserInfo(mapOf(NOTIFICATION_EVENT_PERMALINK_KEY to reminder.eventPermalink))
+            // Reminders are time-critical: force-present so a reminder that fires while
+            // the app is foregrounded still shows its banner (issue #339).
+            setUserInfo(
+                mapOf(
+                    NOTIFICATION_EVENT_PERMALINK_KEY to reminder.eventPermalink,
+                    NOTIFICATION_FORCE_PRESENT_KEY to true,
+                ),
+            )
         }
         val fireDate = NSDate.dateWithTimeIntervalSince1970(reminder.fireAtEpochMs / 1000.0)
         val components = NSCalendar.currentCalendar.components(

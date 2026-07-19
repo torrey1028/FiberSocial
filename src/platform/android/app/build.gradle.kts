@@ -114,6 +114,9 @@ dependencies {
     implementation(project(":composeApp"))
     implementation("androidx.activity:activity-compose:1.9.0")
     implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.8.1")
+    // ProcessLifecycleOwner: lets the background sync tell whether the app is foregrounded
+    // before posting a banner (issue #339).
+    implementation("androidx.lifecycle:lifecycle-process:2.8.1")
     implementation("androidx.security:security-crypto:1.0.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
