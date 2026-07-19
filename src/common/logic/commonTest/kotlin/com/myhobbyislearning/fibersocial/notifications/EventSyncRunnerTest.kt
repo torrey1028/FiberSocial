@@ -46,6 +46,11 @@ private class InMemoryMutedTopicsStore(initial: Set<Long> = emptySet()) : MutedT
         muted = mutedTopicIds
         saveCount++
     }
+    override suspend fun mutate(transform: (Set<Long>) -> Set<Long>): Set<Long> {
+        val updated = transform(muted)
+        if (updated != muted) save(updated)
+        return updated
+    }
 }
 
 /**
