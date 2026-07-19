@@ -165,6 +165,12 @@ class FeedViewModelTest {
             // refreshDrawerUnread() calls below genuinely run on real threads; the Mutex
             // keeps the shared flag's read-then-clear atomic across them (a plain var
             // here previously caused a Robolectric-only CI flake).
+            //
+            // NOTE vs the version of this fix that landed on main (#361): that one waits
+            // for TWO of call 1's requests to park, because there getDrawerUnread() fires
+            // two legs. On this branch the per-group leg is conditional on a loaded feed,
+            // so an un-loaded VM fires exactly ONE request per call — waiting for a second
+            // park would hang. This deliberately supersedes #361's version on merge.
             val holdMutex = Mutex()
             var holdNextRequest = true
             val firstRequestArrived = CompletableDeferred<Unit>()

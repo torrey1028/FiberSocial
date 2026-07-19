@@ -589,7 +589,7 @@ class FeedRepositoryTest {
     }
 
     @Test
-    fun `getDrawerUnread takes the newest topic on the page, not the first`() = runTest {
+    fun `getDrawerUnread takes the newest topic on the page rather than the first`() = runTest {
         // THE TRAP this design guards against: getGroupTopics sends no explicit sort, and
         // forums pin sticky topics (issue #332), so slot 1 can hold a pinned thread whose
         // last reply is ancient while a genuinely new reply sits below it. A pageSize=1
