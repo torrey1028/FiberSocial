@@ -210,6 +210,64 @@ class GroupDrawerTest {
         compose.runOnIdle { assertEquals(1L, selected?.id) }
     }
 
+    // Unread indicators (unread dots) — the dot's semantics label; counted in the
+    // unmerged tree since NavigationDrawerItem merges its icon into the row node.
+    private fun unreadDotCount(): Int =
+        compose.onAllNodes(
+            androidx.compose.ui.test.hasContentDescription("Unread posts"),
+            useUnmergedTree = true,
+        ).fetchSemanticsNodes().size
+
+    @Test
+    fun `only the group whose forum has unread shows a dot`() {
+        compose.setContent {
+            GroupDrawer(
+                groups = twoGroups, // KAL Hub forumId 42, Sock Society forumId 43
+                selectedGroup = twoGroups.first(),
+                unreadGroupForumIds = setOf(42L),
+                eventCounts = emptyMap(),
+                user = user,
+                onGroupSelected = {},
+                onGroupEventsClick = {},
+                onSettingsClick = {},
+            )
+        }
+        compose.runOnIdle { assertEquals(1, unreadDotCount()) }
+    }
+
+    @Test
+    fun `no unread dots when nothing is unread`() {
+        compose.setContent {
+            GroupDrawer(
+                groups = twoGroups,
+                selectedGroup = twoGroups.first(),
+                eventCounts = emptyMap(),
+                user = user,
+                onGroupSelected = {},
+                onGroupEventsClick = {},
+                onSettingsClick = {},
+            )
+        }
+        compose.runOnIdle { assertEquals(0, unreadDotCount()) }
+    }
+
+    @Test
+    fun `Your Posts shows an unread dot when its posts have unread replies`() {
+        compose.setContent {
+            GroupDrawer(
+                groups = emptyList(),
+                selectedGroup = null,
+                myPostsHasUnread = true,
+                eventCounts = emptyMap(),
+                user = user,
+                onGroupSelected = {},
+                onGroupEventsClick = {},
+                onSettingsClick = {},
+            )
+        }
+        compose.runOnIdle { assertEquals(1, unreadDotCount()) }
+    }
+
     private val twoGroups = listOf(
         Group(id = 1L, name = "KAL Hub", permalink = "kal-hub", forumId = 42L),
         Group(id = 2L, name = "Sock Society", permalink = "sock", forumId = 43L),

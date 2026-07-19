@@ -11,6 +11,8 @@ import kotlin.test.assertTrue
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
 
@@ -97,6 +99,98 @@ class FeedViewModelTest {
         assertEquals(1, state.groups.size)
         assertEquals(1, state.items.size)
     }
+
+    @Test
+    fun `refreshDrawerUnread populates the drawer unread state`() = runTest(UnconfinedTestDispatcher()) {
+        // Both legs (reading + posting) hit /forums/filtered_topics.json; the fake serves an
+        // unread topic (5 posts, read to 3) in forum 42.
+        val repo = FeedRepository(routingApiClient { path ->
+            when {
+                path.contains("filtered_topics") ->
+                    """{"topics":[{"id":1,"title":"T","forum_id":42,"forum_posts_count":5,"last_read":3}]}"""
+                else -> error("Unexpected: $path")
+            }
+        })
+        val vm = FeedViewModel(repo, this, FakeGroupOrderStore())
+
+        vm.refreshDrawerUnread()
+        awaitChildren(coroutineContext[Job]!!)
+
+        assertEquals(setOf(42L), vm.drawerUnread.value.unreadGroupForumIds)
+        assertTrue(vm.drawerUnread.value.yourPostsHasUnread)
+    }
+
+    @Test
+    fun `refreshDrawerUnread keeps the previous value when the fetch fails`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val repo = FeedRepository(routingApiClient { error("boom") })
+            val vm = FeedViewModel(repo, this, FakeGroupOrderStore())
+
+            vm.refreshDrawerUnread()
+            awaitChildren(coroutineContext[Job]!!)
+
+            // A failed fetch is swallowed — the dots stay at their (empty) default rather
+            // than propagating the error into the feed.
+            assertEquals(DrawerUnread(), vm.drawerUnread.value)
+        }
+
+    @Test
+    fun `refreshDrawerUnread signals sessionExpired instead of swallowing it`() =
+        runTest(UnconfinedTestDispatcher()) {
+            // This can be the only in-flight request (e.g. a drawer pull-to-refresh while
+            // otherwise idle on an already-loaded feed) — nothing else is guaranteed to
+            // notice the expired session if this swallows it too.
+            val vm = FeedViewModel(FeedRepository(sessionExpiredApiClient()), this, FakeGroupOrderStore())
+
+            vm.refreshDrawerUnread()
+            awaitChildren(coroutineContext[Job]!!)
+
+            vm.sessionExpired.first()
+        }
+
+    @Test
+    fun `refreshDrawerUnread cancels a still in-flight call rather than letting it clobber a newer result`() =
+        runTest(UnconfinedTestDispatcher()) {
+            // Ktor engines — including MockEngine — dispatch request handling via
+            // withContext(Dispatchers.IO) regardless of the calling coroutine's own
+            // dispatcher (see FakeFeedTokenStorage's KDoc), so requests from the two
+            // refreshDrawerUnread() calls below genuinely race on real threads; the
+            // Mutex keeps the shared counter's read-then-increment atomic across them
+            // (a plain var here previously caused a Robolectric-only CI flake).
+            val requestCountMutex = Mutex()
+            var requestsSeen = 0
+            val firstCallGate = CompletableDeferred<Unit>()
+            val repo = FeedRepository(
+                suspendableRoutingApiClient { _ ->
+                    val isFirstCallRequest = requestCountMutex.withLock {
+                        (requestsSeen < 2).also { if (it) requestsSeen++ }
+                    }
+                    if (isFirstCallRequest) {
+                        // Never released: the first call is cancelled before this could
+                        // ever resolve, so nothing needs to un-gate it.
+                        firstCallGate.await()
+                        error("unreachable — cancelled before the gate could open")
+                    } else {
+                        """{"topics":[{"id":2,"title":"T2","forum_id":42,"forum_posts_count":5,"last_read":3}]}"""
+                    }
+                },
+            )
+            val vm = FeedViewModel(repo, this, FakeGroupOrderStore())
+
+            // getDrawerUnread() fires exactly 2 concurrent requests (reading + posting
+            // legs) per call. The first call's pair blocks on firstCallGate forever; the
+            // second call cancels it (the fix under test) before starting its own pair,
+            // which resolves immediately. Without the fix, the first call's requests
+            // would still be in flight (not cancelled) when the test ends, and this
+            // would hang / fail as an uncompleted coroutine instead of asserting wrong
+            // data — which is itself evidence the cancellation is what makes this test
+            // (and the real bug scenario) terminate cleanly at all.
+            vm.refreshDrawerUnread()
+            vm.refreshDrawerUnread()
+            awaitChildren(coroutineContext[Job]!!)
+
+            assertEquals(setOf(42L), vm.drawerUnread.value.unreadGroupForumIds)
+        }
 
     @Test
     fun `load selects the sole group as default and seeds the stored order`() =
