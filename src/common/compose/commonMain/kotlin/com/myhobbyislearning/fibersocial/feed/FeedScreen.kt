@@ -454,6 +454,29 @@ fun FeedScreen(
     // a scope remembered in there would be cancelled with it, killing an in-flight settings
     // save mid-write and silently reverting the toggle the user just flipped.
     val settingsScope = rememberCoroutineScope()
+    // Hoisted here for the same lifetime reason as settingsScope, one step further (#360).
+    // The whole NotificationSettings object is held (not just the cadence) so a per-kind
+    // toggle change (issue #335) saves a mutated copy and never clobbers the cadence or the
+    // other toggles — they all live in one serialized object.
+    //
+    // Remembered at screen lifetime rather than inside the Settings block because a
+    // block-scoped `remember` + one-shot load re-read disk on *every* entry: toggle, Back,
+    // reopen faster than the (now NonCancellable) save lands, and the fresh load returned
+    // the pre-write value and rendered the toggle back where it started, with nothing left
+    // to re-trigger a reload. The app is the only writer of this store — the event sync only
+    // load()s it — so once loaded the in-memory value is authoritative and re-reading buys
+    // nothing but that race.
+    var notificationSettings by remember { mutableStateOf<NotificationSettings?>(null) }
+    // Lazy, not eager: load on first Settings open and keep it, so opening Settings still
+    // costs the one disk read it always did and app start doesn't gain one for the users who
+    // never open it. The null guard is what makes it once-only — after that this re-runs on
+    // each open and immediately no-ops, so it can never clobber an in-flight optimistic edit.
+    // Closing Settings mid-load cancels the read and leaves it null; the next open retries.
+    LaunchedEffect(showSettings) {
+        if (showSettings && notificationSettings == null) {
+            notificationSettingsStore?.let { notificationSettings = it.load() }
+        }
+    }
     // Same reasoning as settingsScope above, for the topic-detail mute toggle's early-return
     // block: hoisted here so tapping Back right after toggling mute doesn't cancel the write.
     val muteScope = rememberCoroutineScope()
@@ -761,13 +784,8 @@ fun FeedScreen(
     }
 
     if (showSettings) {
-        // The whole NotificationSettings object is held (not just the cadence) so a
-        // per-kind toggle change (issue #335) saves a mutated copy and never clobbers
-        // the cadence or the other toggles — they all live in one serialized object.
-        var notificationSettings by remember { mutableStateOf<NotificationSettings?>(null) }
-        LaunchedEffect(Unit) {
-            notificationSettingsStore?.let { notificationSettings = it.load() }
-        }
+        // notificationSettings and its one-shot load are hoisted to FeedScreen's state block
+        // (see #360 there) so the optimistic value survives leaving and re-entering Settings.
         // Optimistically update local state, then persist. Null (still loading) is a no-op.
         // settingsScope is hoisted to FeedScreen's state block (see #343 there) so leaving
         // Settings doesn't cancel the save; NonCancellable covers the remaining case that
