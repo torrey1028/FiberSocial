@@ -2551,21 +2551,26 @@ class RavelryApiClientTest {
     }
 
     @Test
-    fun `getMessages requests the full output format under both documented param names`() = runTest {
+    fun `getMessages asks for full bodies via output_format and never sends Rails-reserved format`() = runTest {
         // UNRESOLVED (#366): the docs' parameter table says output_format, their own
-        // example says format. With no live token to settle it we send both, so whichever
-        // the server honours wins instead of silently degrading to the body-less list
-        // shape. Neither is sent when full is not requested.
+        // example says format. With no live token to settle it we send only the name the
+        // parameter table documents.
+        //
+        // `format` is deliberately NOT sent as a hedge: this API is Rails and every path
+        // ends in .json, where params[:format] is the reserved response-format selector.
+        // The path extension probably wins, but the plausible bad outcome is a 406 on the
+        // whole request — strictly worse than the silent degrade to a body-less list that
+        // the hedge would protect against. This test pins that one-sided choice so a
+        // future "let's send both to be safe" edit has to argue with it first.
         var url: io.ktor.http.Url? = null
         val client = routingApiClientCapturing(onRequest = { url = it }) { MESSAGES_LIST_JSON }
 
         client.getMessages(MessageFolder.INBOX)
         assertNull(url?.parameters?.get("output_format"))
-        assertNull(url?.parameters?.get("format"))
 
         client.getMessages(MessageFolder.INBOX, full = true)
         assertEquals("full", url?.parameters?.get("output_format"))
-        assertEquals("full", url?.parameters?.get("format"))
+        assertNull(url?.parameters?.get("format"))
     }
 
     @Test
