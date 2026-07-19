@@ -20,9 +20,17 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import kotlin.test.assertEquals
 
 @RunWith(RobolectricTestRunner::class)
+// The default Robolectric screen is ~320x336dp. Since #347 pinned "Posts"/"Groups"
+// above the scrolling list, that leaves only ~174dp of pull area — and M3
+// pull-to-refresh's 0.5x drag multiplier plus touch slop drops a full-height swipe
+// just below the 80dp trigger threshold, so the gesture tests fail for want of screen
+// rather than for want of a working drawer. A real phone's drawer is several times
+// taller; this qualifier makes the test viewport representative of one.
+@Config(qualifiers = "w360dp-h800dp")
 class GroupDrawerTest {
 
     @get:Rule
@@ -100,8 +108,11 @@ class GroupDrawerTest {
             )
         }
 
+        // A rule above each row, and deliberately none below "Groups" — it heads the
+        // group list beneath it, so a line there would cut it off from its own children.
         compose.onNodeWithTag("DrawerNavClusterTop").assertIsDisplayed()
-        compose.onNodeWithTag("DrawerNavClusterBottom").assertIsDisplayed()
+        compose.onNodeWithTag("DrawerNavClusterMiddle").assertIsDisplayed()
+        compose.onNodeWithTag("DrawerNavClusterBottom").assertDoesNotExist()
         compose.onNodeWithText("Posts").assertIsDisplayed()
         compose.onNodeWithText("Groups").assertIsDisplayed()
     }
