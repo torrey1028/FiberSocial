@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -379,6 +380,11 @@ fun FeedScreen(
     val joinState by viewModel.feed.joinState.collectAsState()
     val leavingGroupId by viewModel.feed.leavingGroupId.collectAsState()
     val leaveError by viewModel.feed.leaveError.collectAsState()
+    val drawerUnread by viewModel.feed.drawerUnread.collectAsState()
+    // Fetch the drawer's unread dots once the authenticated feed is showing (issue: unread
+    // indicators). Kept a UI-driven side channel — not folded into load()/refresh() — so it
+    // never blocks or interferes with the feed fetch; drawer pull-to-refresh re-fires it.
+    LaunchedEffect(Unit) { viewModel.feed.refreshDrawerUnread() }
     // Hoisted above the topic-detail early-return below so the feed's scroll position
     // survives opening a topic and coming back (issue #204): FeedList is removed from
     // composition while a topic is open, so a list state owned by it would reset to top.
@@ -914,6 +920,8 @@ fun FeedScreen(
                     scope.launch { drawerState.close() }
                     viewModel.feed.selectMyPosts()
                 },
+                unreadGroupForumIds = drawerUnread.unreadGroupForumIds,
+                myPostsHasUnread = drawerUnread.yourPostsHasUnread,
                 eventCounts = eventCounts,
                 user = user,
                 isFeedbackGroupMember = groups.any { it.permalink == SupportGroup.PERMALINK },
@@ -930,7 +938,11 @@ fun FeedScreen(
                 onReorder = { viewModel.feed.reorderGroups(it) },
                 onFindGroups = { uriHandler.openUri("https://www.ravelry.com/groups/search") },
                 isRefreshing = state is FeedState.Refreshing,
-                onRefresh = { viewModel.feed.refresh() },
+                onRefresh = {
+                    viewModel.feed.refresh()
+                    // Re-check the unread dots on a drawer pull-to-refresh (unread indicators).
+                    viewModel.feed.refreshDrawerUnread()
+                },
                 onLeaveGroup = { group -> viewModel.feed.leaveGroup(group) },
                 leavingGroupId = leavingGroupId,
                 leaveError = leaveError,
@@ -1320,6 +1332,10 @@ internal fun GroupDrawer(
     selectedGroup: Group?,
     myPostsSelected: Boolean = false,
     onMyPostsSelected: () -> Unit = {},
+    // Unread indicators (unread dots): forum ids of groups with unread posts, and whether
+    // the user's own posts have unread replies. A dot appears on the matching rows.
+    unreadGroupForumIds: Set<Long> = emptySet(),
+    myPostsHasUnread: Boolean = false,
     eventCounts: Map<Long, Int>,
     user: RavelryUser?,
     isFeedbackGroupMember: Boolean = false,
@@ -1493,7 +1509,11 @@ internal fun GroupDrawer(
                             label = { Text("Your Posts") },
                             selected = myPostsSelected,
                             onClick = { if (!reorderMode) onMyPostsSelected() },
-                            icon = { Icon(Icons.Default.Person, contentDescription = null) },
+                            icon = {
+                                IconWithUnreadDot(hasUnread = myPostsHasUnread) {
+                                    Icon(Icons.Default.Person, contentDescription = null)
+                                }
+                            },
                             modifier = Modifier.padding(horizontal = 12.dp),
                         )
                     }
@@ -1552,7 +1572,11 @@ internal fun GroupDrawer(
                         // both compete for the leading slot, and mid-reorder the handle
                         // is the one doing work.
                         icon = if (!reorderMode) {
-                            { GroupBadge(group = group, size = 28.dp) }
+                            {
+                                IconWithUnreadDot(hasUnread = group.forumId in unreadGroupForumIds) {
+                                    GroupBadge(group = group, size = 28.dp)
+                                }
+                            }
                         } else {
                             {
                                 DragHandle(
@@ -1778,6 +1802,39 @@ internal fun FeedFabs(
         }
         FloatingActionButton(onClick = onNewTopicClick) {
             Icon(Icons.Default.Edit, contentDescription = "New topic")
+        }
+    }
+}
+
+/**
+ * A small filled dot marking unread activity — the drawer's unread indicator, shown via
+ * [IconWithUnreadDot] on a "Your Posts" / group row whose posts have unread replies.
+ */
+@Composable
+private fun UnreadDot(modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .size(9.dp)
+            .background(MaterialTheme.colorScheme.primary, CircleShape)
+            .semantics { contentDescription = "Unread posts" },
+    )
+}
+
+/**
+ * Overlays an [UnreadDot] on the top-trailing corner of [content] (a drawer row's leading
+ * icon) when [hasUnread]. The dot sits on the icon rather than the trailing badge slot,
+ * which the group rows already use for the events count / leave control.
+ */
+@Composable
+private fun IconWithUnreadDot(hasUnread: Boolean, content: @Composable () -> Unit) {
+    Box {
+        content()
+        if (hasUnread) {
+            UnreadDot(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .offset(x = 3.dp, y = (-3).dp),
+            )
         }
     }
 }
