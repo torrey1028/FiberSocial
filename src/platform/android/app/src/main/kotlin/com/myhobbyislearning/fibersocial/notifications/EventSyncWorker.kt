@@ -56,6 +56,7 @@ class EventSyncWorker(
                 apiClient,
                 KeyValueNotificationStateStore(plainKeyValueStore(applicationContext, NOTIFICATION_STATE_PREFS_NAME)),
                 KeyValueNotificationSettingsStore(plainKeyValueStore(applicationContext, NOTIFICATION_SETTINGS_PREFS_NAME)),
+                KeyValueMutedTopicsStore(plainKeyValueStore(applicationContext, NOTIFICATION_STATE_PREFS_NAME)),
             )
             val plan = runner.sync(Clock.System.now(), TimeZone.currentSystemDefault())
             apply(plan)

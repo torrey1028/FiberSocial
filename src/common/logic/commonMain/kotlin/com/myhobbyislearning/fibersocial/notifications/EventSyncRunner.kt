@@ -22,6 +22,7 @@ class EventSyncRunner(
     private val apiClient: RavelryApiClient,
     private val stateStore: NotificationStateStore,
     private val settingsStore: NotificationSettingsStore,
+    private val mutedTopicsStore: MutedTopicsStore = MutedTopicsStore.EMPTY,
 ) {
 
     // Background sync fans out one request per group plus one per saved event; a user
@@ -97,14 +98,25 @@ class EventSyncRunner(
             timeZone = timeZone,
         )
         val myPostsPlan = if (settings.topicRepliesEnabled) {
-            MyPostsNotificationPlanner.plan(
+            val muted = mutedTopicsStore.load()
+            val plan = MyPostsNotificationPlanner.plan(
                 knownTopics = state?.knownTopics,
                 myTopics = myTopicsDeferred.await(),
                 groupNamesByForumId = groups.associateBy({ it.forumId }, { it.name }),
                 nowMs = now.toEpochMilliseconds(),
+                mutedTopics = muted,
             )
+            // Prune mutes for topics that have aged out of knownTopics (issue #338): a
+            // muted id absent from the refreshed set was unseen through the whole
+            // retention window (or was never a tracked topic), so the mute can't grow the
+            // set forever. Goes through mutate() (not load-then-save against the [muted]
+            // snapshot above) so a concurrent UI mute/unmute landing between that snapshot
+            // and this write is intersected against the fresh value, not clobbered by it.
+            mutedTopicsStore.mutate { it.intersect(plan.newKnownTopics.keys) }
+            plan
         } else {
             // Cleared, not frozen: re-enabling then re-seeds silently (see sync()'s doc).
+            // Mutes are left untouched here so a replies-off/on cycle doesn't drop them.
             MyPostsPlan(notifications = emptyList(), newKnownTopics = emptyMap())
         }
         val plan = eventPlan.copy(
