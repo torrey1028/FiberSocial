@@ -1073,7 +1073,15 @@ fun FeedScreen(
     // Initial load: show a full-page loading screen instead of the drawer + empty group
     // list + a settings page with nothing to act on, so the user can't click around
     // half-built chrome while groups are still loading (issue #233).
-    if (state is FeedState.Loading) {
+    //
+    // ...but never over Messages (#369). Messages doesn't read the feed state at all, so
+    // a Loading state while it's up would replace a perfectly valid screen with a
+    // full-page spinner AND take the drawer away, stranding the user. No current caller
+    // can reach that combination — feed.load() runs once on entry, and the other two
+    // callers (Error retry, pull-to-refresh) are unreachable while Messages covers the
+    // feed — so this guard is insurance, not a bug fix. It stops being insurance the
+    // moment anything else routes through load().
+    if (state is FeedState.Loading && !showingMessages) {
         LaunchLoadingScreen()
         return
     }

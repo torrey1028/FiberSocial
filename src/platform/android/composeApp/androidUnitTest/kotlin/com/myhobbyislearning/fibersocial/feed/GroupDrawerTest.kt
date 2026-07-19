@@ -7,6 +7,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsNotSelected
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -125,6 +127,34 @@ class GroupDrawerTest {
 
         compose.onNodeWithText("Messages").performClick()
         compose.runOnIdle { assertEquals(1, messagesClicks) }
+    }
+
+    /**
+     * The selected pill is the only thing telling the user which destination they're on, and
+     * `messagesSelected`/`myPostsSelected` are independent booleans — nothing in the drawer
+     * stops both painting selected at once. FeedScreen keeps them mutually exclusive
+     * (`myPostsSelected = showingMyPosts && !showingMessages`), but that lives a thousand
+     * lines away in a composable with no test harness, so assert the drawer's half here:
+     * given the flags FeedScreen intends to pass, exactly one row reads as selected.
+     */
+    @Test
+    fun `selecting messages paints its row selected and leaves posts unselected`() {
+        compose.setContent {
+            GroupDrawer(
+                groups = twoGroups,
+                selectedGroup = null,
+                messagesSelected = true,
+                myPostsSelected = false,
+                eventCounts = emptyMap(),
+                user = user,
+                onGroupSelected = {},
+                onGroupEventsClick = {},
+                onSettingsClick = {},
+            )
+        }
+
+        compose.onNodeWithText("Messages").assertIsSelected()
+        compose.onNodeWithText("Posts").assertIsNotSelected()
     }
 
     /**
