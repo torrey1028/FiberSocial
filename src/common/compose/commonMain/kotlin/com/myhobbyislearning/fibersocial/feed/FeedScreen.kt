@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -144,7 +145,9 @@ import com.myhobbyislearning.fibersocial.ui.GroupBadge
 import com.myhobbyislearning.fibersocial.ui.PullToRefreshBox
 import com.myhobbyislearning.fibersocial.ui.appLogoResource
 import com.myhobbyislearning.fibersocial.ui.UserAvatar
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.jetbrains.compose.resources.painterResource
 import org.jetbrains.compose.resources.stringResource
 
@@ -377,6 +380,11 @@ fun FeedScreen(
     val joinState by viewModel.feed.joinState.collectAsState()
     val leavingGroupId by viewModel.feed.leavingGroupId.collectAsState()
     val leaveError by viewModel.feed.leaveError.collectAsState()
+    val drawerUnread by viewModel.feed.drawerUnread.collectAsState()
+    // Fetch the drawer's unread dots once the authenticated feed is showing (issue: unread
+    // indicators). Kept a UI-driven side channel — not folded into load()/refresh() — so it
+    // never blocks or interferes with the feed fetch; drawer pull-to-refresh re-fires it.
+    LaunchedEffect(Unit) { viewModel.feed.refreshDrawerUnread() }
     // Hoisted above the topic-detail early-return below so the feed's scroll position
     // survives opening a topic and coming back (issue #204): FeedList is removed from
     // composition while a topic is open, so a list state owned by it would reset to top.
@@ -419,6 +427,14 @@ fun FeedScreen(
     var showSettings by rememberSaveable { mutableStateOf(false) }
     // Declared here (not at the feed chrome below) so the Settings block above can open it (#207).
     var showDebugPanel by remember { mutableStateOf(false) }
+    // Declared here (not inside the Settings block above) so it outlives that subtree (#343).
+    // The block is an early return, so tapping Back drops it out of composition immediately —
+    // a scope remembered in there would be cancelled with it, killing an in-flight settings
+    // save mid-write and silently reverting the toggle the user just flipped.
+    val settingsScope = rememberCoroutineScope()
+    // Same reasoning as settingsScope above, for the topic-detail mute toggle's early-return
+    // block: hoisted here so tapping Back right after toggling mute doesn't cancel the write.
+    val muteScope = rememberCoroutineScope()
     // Opened from the Settings block below without clearing showSettings, so backing out
     // of About returns to the still-open Settings screen (issue #289).
     var showAbout by remember { mutableStateOf(false) }
@@ -622,12 +638,15 @@ fun FeedScreen(
         LaunchedEffect(Unit) {
             notificationSettingsStore?.let { notificationSettings = it.load() }
         }
-        val settingsScope = rememberCoroutineScope()
         // Optimistically update local state, then persist. Null (still loading) is a no-op.
+        // settingsScope is hoisted to FeedScreen's state block (see #343 there) so leaving
+        // Settings doesn't cancel the save; NonCancellable covers the remaining case that
+        // hoisting can't — FeedScreen itself leaving composition (logout, teardown) while a
+        // save is in flight — so a started write always runs to completion either way.
         fun updateSettings(transform: (NotificationSettings) -> NotificationSettings) {
             val updated = notificationSettings?.let(transform) ?: return
             notificationSettings = updated
-            settingsScope.launch { notificationSettingsStore?.save(updated) }
+            settingsScope.launch { withContext(NonCancellable) { notificationSettingsStore?.save(updated) } }
         }
         SettingsScreen(
             user = user,
@@ -692,7 +711,6 @@ fun FeedScreen(
         LaunchedEffect(topic.id) {
             mutedTopicsStore?.let { topicMuted = topic.id in it.load() }
         }
-        val muteScope = rememberCoroutineScope()
         TopicDetailRoute(
             topic = topic,
             postsState = topicDetailState,
@@ -706,8 +724,10 @@ fun FeedScreen(
                     // pruning can run concurrently, and separate load/save calls here
                     // could race it and silently lose this toggle (or resurrect a mute
                     // the sync just pruned).
-                    store.mutate { current ->
-                        if (nowMuted) current + topic.id else current - topic.id
+                    withContext(NonCancellable) {
+                        store.mutate { current ->
+                            if (nowMuted) current + topic.id else current - topic.id
+                        }
                     }
                 }
             },
@@ -904,6 +924,8 @@ fun FeedScreen(
                     scope.launch { drawerState.close() }
                     viewModel.feed.selectMyPosts()
                 },
+                unreadGroupForumIds = drawerUnread.unreadGroupForumIds,
+                myPostsHasUnread = drawerUnread.yourPostsHasUnread,
                 eventCounts = eventCounts,
                 user = user,
                 isFeedbackGroupMember = groups.any { it.permalink == SupportGroup.PERMALINK },
@@ -920,7 +942,11 @@ fun FeedScreen(
                 onReorder = { viewModel.feed.reorderGroups(it) },
                 onFindGroups = { uriHandler.openUri("https://www.ravelry.com/groups/search") },
                 isRefreshing = state is FeedState.Refreshing,
-                onRefresh = { viewModel.feed.refresh() },
+                onRefresh = {
+                    viewModel.feed.refresh()
+                    // Re-check the unread dots on a drawer pull-to-refresh (unread indicators).
+                    viewModel.feed.refreshDrawerUnread()
+                },
                 onLeaveGroup = { group -> viewModel.feed.leaveGroup(group) },
                 leavingGroupId = leavingGroupId,
                 leaveError = leaveError,
@@ -1310,6 +1336,10 @@ internal fun GroupDrawer(
     selectedGroup: Group?,
     myPostsSelected: Boolean = false,
     onMyPostsSelected: () -> Unit = {},
+    // Unread indicators (unread dots): forum ids of groups with unread posts, and whether
+    // the user's own posts have unread replies. A dot appears on the matching rows.
+    unreadGroupForumIds: Set<Long> = emptySet(),
+    myPostsHasUnread: Boolean = false,
     eventCounts: Map<Long, Int>,
     user: RavelryUser?,
     isFeedbackGroupMember: Boolean = false,
@@ -1483,7 +1513,11 @@ internal fun GroupDrawer(
                             label = { Text("Your Posts") },
                             selected = myPostsSelected,
                             onClick = { if (!reorderMode) onMyPostsSelected() },
-                            icon = { Icon(Icons.Default.Person, contentDescription = null) },
+                            icon = {
+                                IconWithUnreadDot(hasUnread = myPostsHasUnread) {
+                                    Icon(Icons.Default.Person, contentDescription = null)
+                                }
+                            },
                             modifier = Modifier.padding(horizontal = 12.dp),
                         )
                     }
@@ -1542,7 +1576,11 @@ internal fun GroupDrawer(
                         // both compete for the leading slot, and mid-reorder the handle
                         // is the one doing work.
                         icon = if (!reorderMode) {
-                            { GroupBadge(group = group, size = 28.dp) }
+                            {
+                                IconWithUnreadDot(hasUnread = group.forumId in unreadGroupForumIds) {
+                                    GroupBadge(group = group, size = 28.dp)
+                                }
+                            }
                         } else {
                             {
                                 DragHandle(
@@ -1768,6 +1806,39 @@ internal fun FeedFabs(
         }
         FloatingActionButton(onClick = onNewTopicClick) {
             Icon(Icons.Default.Edit, contentDescription = "New topic")
+        }
+    }
+}
+
+/**
+ * A small filled dot marking unread activity — the drawer's unread indicator, shown via
+ * [IconWithUnreadDot] on a "Your Posts" / group row whose posts have unread replies.
+ */
+@Composable
+private fun UnreadDot(modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .size(9.dp)
+            .background(MaterialTheme.colorScheme.primary, CircleShape)
+            .semantics { contentDescription = "Unread posts" },
+    )
+}
+
+/**
+ * Overlays an [UnreadDot] on the top-trailing corner of [content] (a drawer row's leading
+ * icon) when [hasUnread]. The dot sits on the icon rather than the trailing badge slot,
+ * which the group rows already use for the events count / leave control.
+ */
+@Composable
+private fun IconWithUnreadDot(hasUnread: Boolean, content: @Composable () -> Unit) {
+    Box {
+        content()
+        if (hasUnread) {
+            UnreadDot(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .offset(x = 3.dp, y = (-3).dp),
+            )
         }
     }
 }
