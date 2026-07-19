@@ -1168,16 +1168,28 @@ class RavelryApiClient(
      * UNRESOLVED DOC AMBIGUITY (#366) — `output_format` vs `format`. The parameter table
      * documents `output_format` (accepting `list` / `full`); the worked example directly
      * beneath it uses `format=full`. Exactly one of them is presumably honoured and we
-     * had no live token to find out which, so when [full] is requested this sends BOTH
-     * names with the same value. That is deliberate, not sloppiness: Ravelry ignores
-     * query params it doesn't recognise, the two can never disagree because they carry
-     * one value, and guessing wrong silently degrades to the `list` shape (bodies come
-     * back null) rather than erroring — a failure that would surface much later as an
-     * apparently empty message body.
+     * had no live token to find out which.
+     *
+     * We send ONLY `output_format`, the name the parameter table documents. Sending both
+     * as a hedge was considered and rejected: `format` is not an arbitrary unknown param
+     * that Ravelry would harmlessly ignore. This API is Rails and every path here ends in
+     * `.json`, where `params[:format]` is the RESERVED response-format selector. The path
+     * extension normally wins over the query param, so `?format=full` is probably inert —
+     * but "probably" is the whole problem. The plausible bad outcome is a 406 / unknown-
+     * format error on the entire request, which is strictly worse than the failure we'd
+     * be hedging against (a silent degrade to the body-less `list` shape).
+     *
+     * So the risk is deliberately one-sided: if `output_format` is the wrong name, bodies
+     * come back null and callers fall back to [getMessage], which always returns the full
+     * shape. Nothing errors.
      *
      * TO SETTLE IT: one authenticated call with only `output_format=full`, then one with
      * only `format=full`; whichever response contains `content_html` names the winner.
-     * Then drop the loser here and delete this paragraph.
+     * Note the second experiment may return an HTTP error rather than a body — that is
+     * itself the answer. Then hard-code the winner here and delete this paragraph.
+     *
+     * DO THIS BEFORE a caller sets `full = true` (#370's list-with-previews is the first
+     * one that will want to) — today the branch is unreachable in shipped code.
      *
      * Even if [full] is wrong, [getMessage] always returns the full shape, so a detail
      * screen is never blocked on this question — only a list-with-previews optimisation.
@@ -1208,10 +1220,8 @@ class RavelryApiClient(
                     append("page", page.toString())
                     append("page_size", pageSize.toString())
                     if (unreadOnly) append("unread_only", "1")
-                    if (full) {
-                        append("output_format", "full")
-                        append("format", "full")
-                    }
+                    // Only `output_format` — NOT `format`, which is Rails-reserved. See KDoc.
+                    if (full) append("output_format", "full")
                 }
             }
         }
