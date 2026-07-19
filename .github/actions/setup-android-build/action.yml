@@ -1,0 +1,115 @@
+name: Set up Android build environment
+description: >-
+  Installs the JDK, materializes src/platform/android/local.properties (SDK
+  path, Ravelry OAuth credentials, and optionally the release signing config),
+  and configures Gradle. Shared by android-build.yml, release.yml and tests.yml
+  so a fix to the JDK/secret handling reaches every workflow at once (#274).
+
+# The `secrets` context is NOT available inside a composite action, so every
+# secret has to be handed in explicitly by the caller as an input. All of them
+# default to "" — a caller that passes nothing gets the credential-free variant
+# the test jobs want, with no extra configuration.
+inputs:
+  java-version:
+    description: Temurin JDK major version to install.
+    required: false
+    default: "17"
+  android-sdk-packages:
+    description: >-
+      Space-separated sdkmanager package list. When non-empty, installs the
+      Android SDK (android-actions/setup-android) after the JDK and before
+      local.properties is written — $ANDROID_HOME has to exist before it's
+      baked into sdk.dir. Needed by the macOS jobs: their runner images don't
+      ship an Android SDK, and the build applies AGP even for Native-only
+      tasks (:common is also an Android library). Leave empty on ubuntu
+      runners, which already have one.
+    required: false
+    default: ""
+  setup-gradle:
+    description: Whether to run gradle/actions/setup-gradle. Set to "false" to skip.
+    required: false
+    default: "true"
+  ravelry-client-id:
+    description: Ravelry OAuth client id. Empty writes a blank value (supported end to end).
+    required: false
+    default: ""
+  ravelry-client-secret:
+    description: Ravelry OAuth client secret. Empty writes a blank value.
+    required: false
+    default: ""
+  release-keystore-base64:
+    description: >-
+      Base64 of the release keystore. This input doubles as the gate for the
+      whole signing block: when it is empty, no keystore is decoded and no
+      release.* keys are appended to local.properties, so the caller just
+      produces an unsigned build instead of failing. (Callers can't gate a step
+      on `secrets.*` in an `if:`, which is why the gate lives here as a string
+      comparison rather than in the caller.)
+    required: false
+    default: ""
+  release-keystore-password:
+    description: Password for the release keystore.
+    required: false
+    default: ""
+  release-key-alias:
+    description: Alias of the signing key inside the keystore.
+    required: false
+    default: ""
+  release-key-password:
+    description: Password for the signing key.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Set up JDK ${{ inputs.java-version }}
+      uses: actions/setup-java@v4
+      with:
+        java-version: ${{ inputs.java-version }}
+        distribution: "temurin"
+
+    - name: Set up Android SDK
+      if: inputs.android-sdk-packages != ''
+      uses: android-actions/setup-android@v3
+      with:
+        packages: ${{ inputs.android-sdk-packages }}
+
+    # Secrets go through env + printf %s, never ${{ }} inside the script: the
+    # expression is substituted textually before the shell runs, so a secret
+    # containing quotes/$/backslashes would corrupt the script (or the written
+    # value) silently. That hazard is unchanged by moving the write in here —
+    # inputs interpolate exactly like secrets did.
+    #
+    # The base block is written with `>` (truncate) and the signing block, when
+    # present, is appended with `>>`, reproducing byte for byte what each
+    # caller wrote before this action existed.
+    - name: Write local.properties
+      shell: bash
+      env:
+        RAVELRY_CLIENT_ID: ${{ inputs.ravelry-client-id }}
+        RAVELRY_CLIENT_SECRET: ${{ inputs.ravelry-client-secret }}
+        RELEASE_KEYSTORE_BASE64: ${{ inputs.release-keystore-base64 }}
+        RELEASE_KEYSTORE_PASSWORD: ${{ inputs.release-keystore-password }}
+        RELEASE_KEY_ALIAS: ${{ inputs.release-key-alias }}
+        RELEASE_KEY_PASSWORD: ${{ inputs.release-key-password }}
+      run: |
+        {
+          printf 'sdk.dir=%s\n' "$ANDROID_HOME"
+          printf 'ravelry.client_id=%s\n' "$RAVELRY_CLIENT_ID"
+          printf 'ravelry.client_secret=%s\n' "$RAVELRY_CLIENT_SECRET"
+        } > src/platform/android/local.properties
+
+        if [ -n "$RELEASE_KEYSTORE_BASE64" ]; then
+          echo "$RELEASE_KEYSTORE_BASE64" | base64 -d > src/platform/android/release.keystore
+          {
+            printf 'release.store.file=release.keystore\n'
+            printf 'release.store.password=%s\n' "$RELEASE_KEYSTORE_PASSWORD"
+            printf 'release.key.alias=%s\n' "$RELEASE_KEY_ALIAS"
+            printf 'release.key.password=%s\n' "$RELEASE_KEY_PASSWORD"
+          } >> src/platform/android/local.properties
+        fi
+
+    - name: Setup Gradle
+      if: inputs.setup-gradle == 'true'
+      uses: gradle/actions/setup-gradle@v4
