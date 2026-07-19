@@ -137,6 +137,38 @@ class MyPostsNotificationPlannerTest {
         // Pruned for staleness but re-seeded by being visible — with a fresh stamp.
         assertEquals(KnownTopicActivity(3, NOW_MS), plan.newKnownTopics.getValue(1L))
     }
+
+    @Test
+    fun `a muted topic is not notified but its count still advances`() {
+        val plan = MyPostsNotificationPlanner.plan(
+            knownTopics = mapOf(1L to KnownTopicActivity(postCount = 3, lastSeenMs = NOW_MS - 1)),
+            myTopics = listOf(topic(1L, postsCount = 20, lastRead = 3)),
+            groupNamesByForumId = GROUPS,
+            nowMs = NOW_MS,
+            mutedTopics = setOf(1L),
+        )
+        assertTrue(plan.notifications.isEmpty())
+        // Count keeps advancing so an unmute later measures growth from here, not from 3.
+        assertEquals(20, plan.newKnownTopics.getValue(1L).postCount)
+    }
+
+    @Test
+    fun `muting one topic leaves others notifying`() {
+        val plan = MyPostsNotificationPlanner.plan(
+            knownTopics = mapOf(
+                1L to KnownTopicActivity(postCount = 3, lastSeenMs = NOW_MS - 1),
+                2L to KnownTopicActivity(postCount = 4, lastSeenMs = NOW_MS - 1),
+            ),
+            myTopics = listOf(
+                topic(1L, postsCount = 9, lastRead = 3),
+                topic(2L, postsCount = 6, lastRead = 4),
+            ),
+            groupNamesByForumId = GROUPS,
+            nowMs = NOW_MS,
+            mutedTopics = setOf(1L),
+        )
+        assertEquals(listOf(2L), plan.notifications.map { it.topicId })
+    }
 }
 
 class MyPostsNotificationContentTest {

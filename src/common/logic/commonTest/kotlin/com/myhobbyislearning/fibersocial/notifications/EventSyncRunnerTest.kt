@@ -37,6 +37,17 @@ private class InMemorySettingsStore(
     override suspend fun save(settings: NotificationSettings) = Unit
 }
 
+private class InMemoryMutedTopicsStore(initial: Set<Long> = emptySet()) : MutedTopicsStore {
+    var muted: Set<Long> = initial
+        private set
+    var saveCount = 0
+    override suspend fun load(): Set<Long> = muted
+    override suspend fun save(mutedTopicIds: Set<Long>) {
+        muted = mutedTopicIds
+        saveCount++
+    }
+}
+
 /**
  * Serves every page the sync touches: current user, memberships, group search, group
  * page (one upcoming event), saved events (one RSVP for July 5), and the event page
@@ -360,6 +371,55 @@ class EventSyncRunnerTest {
 
         assertTrue(plan.newEventNotifications.isEmpty())
         assertTrue(plan.newState.knownEvents.isEmpty())
+    }
+
+    // --- Per-topic mute (issue #338) ---
+
+    @Test
+    fun `a muted topic yields no reply notification but keeps advancing its count`() = runTest {
+        var posts = 3
+        val store = InMemoryStateStore()
+        val muted = InMemoryMutedTopicsStore(setOf(500L))
+        val runner = EventSyncRunner(
+            syncApiClientWithMyTopic({ posts }),
+            store,
+            InMemorySettingsStore(),
+            muted,
+        )
+        runner.sync(NOW, ZONE) // seed
+
+        posts = 8
+        val plan = runner.sync(NOW, ZONE)
+
+        assertTrue(plan.newReplyNotifications.isEmpty())
+        assertEquals(8, plan.newState.knownTopics.getValue(500L).postCount)
+    }
+
+    @Test
+    fun `a mute for a topic no longer tracked is pruned`() = runTest {
+        // 999 isn't among the user's My Posts topics, so it never enters knownTopics;
+        // its mute is pruned so the set can't grow forever.
+        val store = InMemoryStateStore()
+        val muted = InMemoryMutedTopicsStore(setOf(999L))
+        EventSyncRunner(syncApiClient(), store, InMemorySettingsStore(), muted).sync(NOW, ZONE)
+
+        assertTrue(muted.muted.isEmpty())
+        assertEquals(1, muted.saveCount)
+    }
+
+    @Test
+    fun `mutes are left untouched when replies are disabled`() = runTest {
+        val store = InMemoryStateStore()
+        val muted = InMemoryMutedTopicsStore(setOf(500L))
+        EventSyncRunner(
+            syncApiClientWithMyTopic({ 5 }),
+            store,
+            InMemorySettingsStore(NotificationSettings(topicRepliesEnabled = false)),
+            muted,
+        ).sync(NOW, ZONE)
+
+        assertEquals(setOf(500L), muted.muted)
+        assertEquals(0, muted.saveCount)
     }
 
     @Test

@@ -80,3 +80,41 @@ class KeyValueNotificationSettingsStoreTest {
         )
     }
 }
+
+class KeyValueMutedTopicsStoreTest {
+    @Test
+    fun `load returns empty when nothing saved`() = runTest {
+        assertEquals(emptySet(), KeyValueMutedTopicsStore(FakeKeyValueStore()).load())
+    }
+
+    @Test
+    fun `save then load round-trips`() = runTest {
+        val store = KeyValueMutedTopicsStore(FakeKeyValueStore())
+        store.save(setOf(500L, 731L))
+        assertEquals(setOf(500L, 731L), store.load())
+    }
+
+    @Test
+    fun `corrupt data degrades to empty`() = runTest {
+        val fake = FakeKeyValueStore()
+        fake.putString("muted_topics", "not json")
+        assertEquals(emptySet(), KeyValueMutedTopicsStore(fake).load())
+    }
+
+    @Test
+    fun `it shares the state store without colliding on keys`() = runTest {
+        // Both stores are backed by the same KeyValueStore in production (they use
+        // distinct keys); saving one must not disturb the other.
+        val backing = FakeKeyValueStore()
+        KeyValueNotificationStateStore(backing).save(
+            NotificationState(knownTopics = mapOf(500L to KnownTopicActivity(7, 123L))),
+        )
+        KeyValueMutedTopicsStore(backing).save(setOf(500L))
+
+        assertEquals(setOf(500L), KeyValueMutedTopicsStore(backing).load())
+        assertEquals(
+            mapOf(500L to KnownTopicActivity(7, 123L)),
+            KeyValueNotificationStateStore(backing).load()?.knownTopics,
+        )
+    }
+}

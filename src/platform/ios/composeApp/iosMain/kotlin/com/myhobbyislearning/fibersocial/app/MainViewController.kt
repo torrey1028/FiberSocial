@@ -27,11 +27,13 @@ import com.myhobbyislearning.fibersocial.login.LoginScreen
 import com.myhobbyislearning.fibersocial.notifications.EventSync
 import com.myhobbyislearning.fibersocial.notifications.IosEventNotifier
 import com.myhobbyislearning.fibersocial.login.WebViewLoginScreen
+import com.myhobbyislearning.fibersocial.notifications.KeyValueMutedTopicsStore
 import com.myhobbyislearning.fibersocial.notifications.KeyValueNotificationSettingsStore
 import com.myhobbyislearning.fibersocial.settings.KeyValueThemeSettingsStore
 import com.myhobbyislearning.fibersocial.settings.ThemeMode
 import com.myhobbyislearning.fibersocial.settings.ThemeSettings
 import com.myhobbyislearning.fibersocial.storage.NOTIFICATION_SETTINGS_STORE_NAME
+import com.myhobbyislearning.fibersocial.storage.NOTIFICATION_STATE_STORE_NAME
 import com.myhobbyislearning.fibersocial.storage.THEME_SETTINGS_STORE_NAME
 import com.myhobbyislearning.fibersocial.storage.NsUserDefaultsKeyValueStore
 import com.myhobbyislearning.fibersocial.ui.FiberSocialTheme
@@ -155,6 +157,11 @@ private fun IosApp(authModel: IosAuthModel, feedModel: IosFeedModel) {
                             NsUserDefaultsKeyValueStore(NOTIFICATION_SETTINGS_STORE_NAME),
                         )
                     }
+                    val mutedTopicsStore = remember {
+                        KeyValueMutedTopicsStore(
+                            NsUserDefaultsKeyValueStore(NOTIFICATION_STATE_STORE_NAME),
+                        )
+                    }
                     LaunchedEffect(Unit) {
                         feedModel.load()
                         // Same point in the flow where Android prompts (MainActivity
@@ -200,6 +207,7 @@ private fun IosApp(authModel: IosAuthModel, feedModel: IosFeedModel) {
                                 themeScope.launch { themeStore.save(ThemeSettings(mode = mode)) }
                             },
                             notificationSettingsStore = notificationSettingsStore,
+                            mutedTopicsStore = mutedTopicsStore,
                             // A cadence change re-baselines the next background-refresh
                             // request (iOS treats it as a floor, not a schedule).
                             onPollCadenceChanged = { EventSync.scheduleBackgroundRefresh(it) },

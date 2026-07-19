@@ -131,6 +131,7 @@ import com.myhobbyislearning.fibersocial.composeapp.resources.Res
 import com.myhobbyislearning.fibersocial.composeapp.resources.app_logo_content_description
 import com.myhobbyislearning.fibersocial.profile.UserProfileScreen
 import com.myhobbyislearning.fibersocial.profile.UserProfileState
+import com.myhobbyislearning.fibersocial.notifications.MutedTopicsStore
 import com.myhobbyislearning.fibersocial.notifications.NotificationSettings
 import com.myhobbyislearning.fibersocial.notifications.NotificationSettingsStore
 import com.myhobbyislearning.fibersocial.notifications.PollCadence
@@ -361,6 +362,9 @@ fun FeedScreen(
     // the settings store lives wherever the platform keeps preferences, and cadence
     // changes / debug sync-now must reach the platform's background scheduler.
     notificationSettingsStore: NotificationSettingsStore? = null,
+    // Where per-topic reply mutes are persisted (issue #338); read for the topic overflow
+    // menu's mute state and written when the user toggles it.
+    mutedTopicsStore: MutedTopicsStore? = null,
     onPollCadenceChanged: (PollCadence) -> Unit = {},
     debugPanelEnabled: Boolean = false,
     onRunEventSync: () -> Unit = {},
@@ -675,9 +679,28 @@ fun FeedScreen(
             is FeedState.Refreshing -> s.stale.user.username
             else -> null
         }
+        // Per-topic reply mute (issue #338): load this topic's muted state, then persist a
+        // toggle back to the dedicated store. Keyed on topic.id so re-entry reloads it.
+        var topicMuted by remember(topic.id) { mutableStateOf(false) }
+        LaunchedEffect(topic.id) {
+            mutedTopicsStore?.let { topicMuted = topic.id in it.load() }
+        }
+        val muteScope = rememberCoroutineScope()
         TopicDetailRoute(
             topic = topic,
             postsState = topicDetailState,
+            isMuted = topicMuted,
+            onToggleMute = {
+                val store = mutedTopicsStore ?: return@TopicDetailRoute
+                val nowMuted = !topicMuted
+                topicMuted = nowMuted // optimistic; the store write follows
+                muteScope.launch {
+                    val updated = store.load().toMutableSet().apply {
+                        if (nowMuted) add(topic.id) else remove(topic.id)
+                    }
+                    store.save(updated)
+                }
+            },
             replyState = replyState,
             onVote = { post, type -> viewModel.topicDetail.toggleVote(post, type) },
             onSendReply = { body -> viewModel.topicDetail.sendReply(topic.id, body) },
@@ -1077,6 +1100,8 @@ internal fun TopicDetailRoute(
     onLoadMore: () -> Unit = {},
     onLoadUntil: (Int) -> Unit = {},
     onMarkRead: (Int) -> Unit = {},
+    isMuted: Boolean = false,
+    onToggleMute: () -> Unit = {},
     currentUsername: String? = null,
     deleteState: DeleteState = DeleteState.Idle,
     onDeletePost: (Post) -> Unit = {},
@@ -1115,6 +1140,8 @@ internal fun TopicDetailRoute(
         onLoadMore = onLoadMore,
         onLoadUntil = onLoadUntil,
         onMarkRead = onMarkRead,
+        isMuted = isMuted,
+        onToggleMute = onToggleMute,
         currentUsername = currentUsername,
         deleteState = deleteState,
         onDeletePost = onDeletePost,

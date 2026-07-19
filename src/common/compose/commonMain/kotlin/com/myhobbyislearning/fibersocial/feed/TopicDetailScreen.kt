@@ -111,6 +111,11 @@ fun TopicDetailScreen(
     // Called with the furthest post number the user scrolled to, as they leave the thread
     // (issue #206) — drives the read-marker sync and the feed card's unread badge.
     onMarkRead: (Int) -> Unit = {},
+    // Whether reply notifications for this topic are muted, and a toggle for it (issue
+    // #338). Muting silences the notification only — the topic still shows in My Posts
+    // with unread badges. The overflow item is offered regardless of unread state.
+    isMuted: Boolean = false,
+    onToggleMute: () -> Unit = {},
     attachment: ImageAttachmentState = ImageAttachmentState.Idle,
     onImagePicked: (String) -> Unit = {},
     onAttachmentInserted: () -> Unit = {},
@@ -196,14 +201,16 @@ fun TopicDetailScreen(
                     }
                 },
                 actions = {
-                    // Mark the whole topic read without scrolling to the bottom (issue #227).
-                    // Only offered while something is still unread and not already cleared.
-                    if (topic.unreadCount > 0 && !markedAllRead) {
-                        var menuOpen by remember { mutableStateOf(false) }
-                        IconButton(onClick = { menuOpen = true }) {
-                            Icon(Icons.Default.MoreVert, contentDescription = "More options")
-                        }
-                        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                    var menuOpen by remember { mutableStateOf(false) }
+                    // "Mark all as read" (issue #227) is only offered while something is
+                    // still unread and not already cleared; the mute toggle (issue #338)
+                    // is always offered, so the overflow button is always present.
+                    val showMarkAllRead = topic.unreadCount > 0 && !markedAllRead
+                    IconButton(onClick = { menuOpen = true }) {
+                        Icon(Icons.Default.MoreVert, contentDescription = "More options")
+                    }
+                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        if (showMarkAllRead) {
                             DropdownMenuItem(
                                 text = { Text("Mark all as read") },
                                 onClick = {
@@ -213,6 +220,13 @@ fun TopicDetailScreen(
                                 },
                             )
                         }
+                        DropdownMenuItem(
+                            text = { Text(if (isMuted) "Unmute notifications" else "Mute notifications") },
+                            onClick = {
+                                menuOpen = false
+                                onToggleMute()
+                            },
+                        )
                     }
                 },
             )

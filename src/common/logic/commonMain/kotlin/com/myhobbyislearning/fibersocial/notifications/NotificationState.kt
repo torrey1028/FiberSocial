@@ -136,3 +136,30 @@ interface NotificationSettingsStore {
 
     suspend fun save(settings: NotificationSettings)
 }
+
+/**
+ * Persistence for the set of topic ids the user has muted reply notifications for
+ * (issue #338). Kept in its own store rather than inside [NotificationState] so the UI
+ * can mutate it without a read-modify-write race against the sync's `NotificationState`
+ * save — muting a topic must never clobber the sync's `knownTopics`/`knownEvents`.
+ * Muting silences the *notification*, not the feed: a muted topic still advances its
+ * [KnownTopicActivity] and still shows unread badges.
+ */
+interface MutedTopicsStore {
+    /** Returns the muted topic ids, or an empty set when none were saved. */
+    suspend fun load(): Set<Long>
+
+    suspend fun save(mutedTopicIds: Set<Long>)
+
+    companion object {
+        /**
+         * A store that mutes nothing and persists nothing — the null-object default for
+         * an [EventSyncRunner] whose caller doesn't wire mute persistence (and for tests
+         * that don't exercise muting). Real callers inject a [KeyValueMutedTopicsStore].
+         */
+        val EMPTY: MutedTopicsStore = object : MutedTopicsStore {
+            override suspend fun load(): Set<Long> = emptySet()
+            override suspend fun save(mutedTopicIds: Set<Long>) = Unit
+        }
+    }
+}

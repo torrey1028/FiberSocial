@@ -2,6 +2,8 @@ package com.myhobbyislearning.fibersocial.notifications
 
 import com.myhobbyislearning.fibersocial.storage.JsonKeyValueEntry
 import com.myhobbyislearning.fibersocial.storage.KeyValueStore
+import kotlinx.serialization.builtins.SetSerializer
+import kotlinx.serialization.builtins.serializer
 
 /**
  * [NotificationStateStore] backed by a [KeyValueStore]. Plain (non-secure) storage is
@@ -29,5 +31,21 @@ class KeyValueNotificationSettingsStore(store: KeyValueStore) : NotificationSett
 
     private companion object {
         const val KEY = "settings"
+    }
+}
+
+/**
+ * [MutedTopicsStore] backed by a [KeyValueStore]. Shares the notification-state store
+ * (a distinct [KEY] within it), so no new per-platform prefs/suite name is needed.
+ */
+class KeyValueMutedTopicsStore(store: KeyValueStore) : MutedTopicsStore {
+    private val entry = JsonKeyValueEntry(store, KEY, SetSerializer(Long.serializer()))
+
+    override suspend fun load(): Set<Long> = entry.load() ?: emptySet()
+
+    override suspend fun save(mutedTopicIds: Set<Long>) = entry.save(mutedTopicIds)
+
+    private companion object {
+        const val KEY = "muted_topics"
     }
 }

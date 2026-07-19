@@ -85,6 +85,7 @@ object EventSync {
                 apiClient,
                 KeyValueNotificationStateStore(NsUserDefaultsKeyValueStore(NOTIFICATION_STATE_STORE_NAME)),
                 KeyValueNotificationSettingsStore(NsUserDefaultsKeyValueStore(NOTIFICATION_SETTINGS_STORE_NAME)),
+                KeyValueMutedTopicsStore(NsUserDefaultsKeyValueStore(NOTIFICATION_STATE_STORE_NAME)),
             )
             val plan = runner.sync(Clock.System.now(), TimeZone.currentSystemDefault())
             apply(plan)
