@@ -237,4 +237,43 @@ class SettingsScreenTest {
         compose.onNodeWithText("Cancel").performClick()
         compose.runOnIdle { assertEquals(null, selected) }
     }
+
+    @Test
+    fun `notification kind toggles are hidden while settings load`() {
+        // They share the cadence row's loaded-settings gate, so a null cadence hides them.
+        compose.setContent {
+            SettingsScreen(user = user, onBack = {}, onSignOut = {}, pollCadence = null)
+        }
+        compose.onNodeWithText("Event reminders").assertDoesNotExist()
+        compose.onNodeWithText("New group events").assertDoesNotExist()
+        compose.onNodeWithText("Replies to your topics").assertDoesNotExist()
+    }
+
+    @Test
+    fun `notification kind toggles show once settings load`() {
+        compose.setContent {
+            SettingsScreen(
+                user = user, onBack = {}, onSignOut = {},
+                pollCadence = PollCadence.A_FEW_TIMES_A_DAY,
+            )
+        }
+        compose.onNodeWithText("Event reminders").assertIsDisplayed()
+        compose.onNodeWithText("New group events").assertIsDisplayed()
+        compose.onNodeWithText("Replies to your topics").assertIsDisplayed()
+    }
+
+    @Test
+    fun `toggling a notification kind invokes its callback with the flipped value`() {
+        var replies: Boolean? = null
+        compose.setContent {
+            SettingsScreen(
+                user = user, onBack = {}, onSignOut = {},
+                pollCadence = PollCadence.A_FEW_TIMES_A_DAY,
+                topicRepliesEnabled = true,
+                onTopicRepliesEnabledChange = { replies = it },
+            )
+        }
+        compose.onNodeWithText("Replies to your topics").performClick()
+        compose.runOnIdle { assertEquals(false, replies) }
+    }
 }

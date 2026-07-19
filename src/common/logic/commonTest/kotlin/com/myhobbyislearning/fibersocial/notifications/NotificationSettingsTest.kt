@@ -49,6 +49,37 @@ class NotificationSettingsTest {
         assertEquals(12, NotificationSettings(pollIntervalHours = 12).pollIntervalHours)
         assertEquals(6, NotificationSettings().pollIntervalHours)
     }
+
+    @Test
+    fun `every notification kind defaults on`() {
+        val settings = NotificationSettings()
+        assertEquals(true, settings.eventRemindersEnabled)
+        assertEquals(true, settings.newGroupEventsEnabled)
+        assertEquals(true, settings.topicRepliesEnabled)
+    }
+
+    @Test
+    fun `JSON saved before the per-kind toggles deserializes with every kind on`() {
+        // Pre-#335 stored settings have no per-kind keys; the defaulted fields must keep
+        // the old always-notify behavior rather than silently muting a kind.
+        val json = Json { ignoreUnknownKeys = true }
+        val legacy = json.decodeFromString<NotificationSettings>("""{"pollCadence":"HOURLY"}""")
+        assertEquals(true, legacy.eventRemindersEnabled)
+        assertEquals(true, legacy.newGroupEventsEnabled)
+        assertEquals(true, legacy.topicRepliesEnabled)
+    }
+
+    @Test
+    fun `per-kind toggles survive a JSON round trip`() {
+        val json = Json
+        val settings = NotificationSettings(
+            pollCadence = PollCadence.ONCE_A_DAY,
+            eventRemindersEnabled = false,
+            newGroupEventsEnabled = true,
+            topicRepliesEnabled = false,
+        )
+        assertEquals(settings, json.decodeFromString(json.encodeToString(settings)))
+    }
 }
 
 class PollCadenceFromHoursTest {

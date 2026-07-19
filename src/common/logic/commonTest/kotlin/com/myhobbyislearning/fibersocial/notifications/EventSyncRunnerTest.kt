@@ -30,6 +30,13 @@ private class InMemoryStateStore(private var state: NotificationState? = null) :
     }
 }
 
+private class InMemorySettingsStore(
+    private val settings: NotificationSettings = NotificationSettings(),
+) : NotificationSettingsStore {
+    override suspend fun load(): NotificationSettings = settings
+    override suspend fun save(settings: NotificationSettings) = Unit
+}
+
 /**
  * Serves every page the sync touches: current user, memberships, group search, group
  * page (one upcoming event), saved events (one RSVP for July 5), and the event page
@@ -76,7 +83,7 @@ class EventSyncRunnerTest {
     @Test
     fun `first sync seeds known events silently and schedules RSVP reminders`() = runTest {
         val store = InMemoryStateStore()
-        val plan = EventSyncRunner(syncApiClient(), store).sync(NOW, ZONE)
+        val plan = EventSyncRunner(syncApiClient(), store, InMemorySettingsStore()).sync(NOW, ZONE)
 
         assertTrue(plan.newEventNotifications.isEmpty())
         assertEquals(setOf("sunday-circle"), plan.newState.knownEvents.keys)
@@ -131,7 +138,7 @@ class EventSyncRunnerTest {
         val client = HttpClient(engine) {
             install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
         }
-        val runner = EventSyncRunner(RavelryApiClient(client, FakeFeedTokenStorage()), InMemoryStateStore())
+        val runner = EventSyncRunner(RavelryApiClient(client, FakeFeedTokenStorage()), InMemoryStateStore(), InMemorySettingsStore())
 
         val plan = runner.sync(NOW, ZONE)
 
@@ -158,7 +165,7 @@ class EventSyncRunnerTest {
             install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
         }
         val store = InMemoryStateStore()
-        val runner = EventSyncRunner(RavelryApiClient(client, FakeFeedTokenStorage()), store)
+        val runner = EventSyncRunner(RavelryApiClient(client, FakeFeedTokenStorage()), store, InMemorySettingsStore())
 
         val result = runCatching { runner.sync(NOW, ZONE) }
 
@@ -196,7 +203,7 @@ class EventSyncRunnerTest {
         val client = HttpClient(engine) {
             install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
         }
-        val runner = EventSyncRunner(RavelryApiClient(client, FakeFeedTokenStorage()), InMemoryStateStore())
+        val runner = EventSyncRunner(RavelryApiClient(client, FakeFeedTokenStorage()), InMemoryStateStore(), InMemorySettingsStore())
 
         val plan = runner.sync(NOW, ZONE)
 
@@ -206,7 +213,7 @@ class EventSyncRunnerTest {
     @Test
     fun `second sync over unchanged data is a no-op plan`() = runTest {
         val store = InMemoryStateStore()
-        val runner = EventSyncRunner(syncApiClient(), store)
+        val runner = EventSyncRunner(syncApiClient(), store, InMemorySettingsStore())
         runner.sync(NOW, ZONE)
         val second = runner.sync(NOW, ZONE)
 
@@ -219,9 +226,9 @@ class EventSyncRunnerTest {
     @Test
     fun `state saved by one runner is visible to the next`() = runTest {
         val store = InMemoryStateStore()
-        EventSyncRunner(syncApiClient(), store).sync(NOW, ZONE)
+        EventSyncRunner(syncApiClient(), store, InMemorySettingsStore()).sync(NOW, ZONE)
         // A brand-new runner (fresh worker process) sees the seeded state.
-        val plan = EventSyncRunner(syncApiClient(), store).sync(NOW, ZONE)
+        val plan = EventSyncRunner(syncApiClient(), store, InMemorySettingsStore()).sync(NOW, ZONE)
         assertTrue(plan.newEventNotifications.isEmpty())
     }
 
@@ -258,7 +265,7 @@ class EventSyncRunnerTest {
     fun `a topic that grew unread posts since the last sync yields a reply notification`() = runTest {
         var posts = 3
         val store = InMemoryStateStore()
-        val runner = EventSyncRunner(syncApiClientWithMyTopic({ posts }), store)
+        val runner = EventSyncRunner(syncApiClientWithMyTopic({ posts }), store, InMemorySettingsStore())
 
         val first = runner.sync(NOW, ZONE)
         assertTrue(first.newReplyNotifications.isEmpty()) // first sync seeds silently
@@ -281,7 +288,7 @@ class EventSyncRunnerTest {
         var posts = 3
         var lastRead = 3
         val store = InMemoryStateStore()
-        val runner = EventSyncRunner(syncApiClientWithMyTopic({ posts }, { lastRead }), store)
+        val runner = EventSyncRunner(syncApiClientWithMyTopic({ posts }, { lastRead }), store, InMemorySettingsStore())
         runner.sync(NOW, ZONE)
 
         // Two new posts arrive but the user has read everything (e.g. their own reply
@@ -293,5 +300,82 @@ class EventSyncRunnerTest {
         assertTrue(plan.newReplyNotifications.isEmpty())
         // The count still advances so the next growth is measured from here.
         assertEquals(5, plan.newState.knownTopics.getValue(500L).postCount)
+    }
+
+    // --- Per-kind toggles (issue #335) ---
+
+    @Test
+    fun `replies disabled skips the reply leg and clears known topics`() = runTest {
+        var posts = 3
+        val store = InMemoryStateStore()
+        // Seed knownTopics with replies enabled.
+        EventSyncRunner(syncApiClientWithMyTopic({ posts }), store, InMemorySettingsStore()).sync(NOW, ZONE)
+
+        // With replies off, a grown topic notifies nothing and its state is cleared so a
+        // later re-enable seeds silently instead of firing the backlog.
+        posts = 9
+        val plan = EventSyncRunner(
+            syncApiClientWithMyTopic({ posts }),
+            store,
+            InMemorySettingsStore(NotificationSettings(topicRepliesEnabled = false)),
+        ).sync(NOW, ZONE)
+
+        assertTrue(plan.newReplyNotifications.isEmpty())
+        assertTrue(plan.newState.knownTopics.isEmpty())
+    }
+
+    @Test
+    fun `re-enabling replies seeds silently rather than firing the backlog`() = runTest {
+        var posts = 3
+        val store = InMemoryStateStore()
+        val enabled = InMemorySettingsStore()
+        val disabled = InMemorySettingsStore(NotificationSettings(topicRepliesEnabled = false))
+
+        EventSyncRunner(syncApiClientWithMyTopic({ posts }), store, enabled).sync(NOW, ZONE)
+        // A pile of replies arrive while replies are off.
+        posts = 30
+        EventSyncRunner(syncApiClientWithMyTopic({ posts }), store, disabled).sync(NOW, ZONE)
+        // First sync after re-enabling must NOT announce the 27-post backlog.
+        val reenabled = EventSyncRunner(syncApiClientWithMyTopic({ posts }), store, enabled).sync(NOW, ZONE)
+
+        assertTrue(reenabled.newReplyNotifications.isEmpty())
+        assertEquals(30, reenabled.newState.knownTopics.getValue(500L).postCount)
+
+        // A genuine new reply after re-seeding notifies from the fresh baseline.
+        posts = 32
+        val next = EventSyncRunner(syncApiClientWithMyTopic({ posts }), store, enabled).sync(NOW, ZONE)
+        assertEquals(2, next.newReplyNotifications.single().newReplyCount)
+    }
+
+    @Test
+    fun `new group events disabled produces no event notifications and clears known events`() = runTest {
+        val store = InMemoryStateStore()
+        EventSyncRunner(syncApiClient(), store, InMemorySettingsStore()).sync(NOW, ZONE)
+
+        val plan = EventSyncRunner(
+            syncApiClient(),
+            store,
+            InMemorySettingsStore(NotificationSettings(newGroupEventsEnabled = false)),
+        ).sync(NOW, ZONE)
+
+        assertTrue(plan.newEventNotifications.isEmpty())
+        assertTrue(plan.newState.knownEvents.isEmpty())
+    }
+
+    @Test
+    fun `event reminders disabled schedules none and cancels the pending ones`() = runTest {
+        val store = InMemoryStateStore()
+        val first = EventSyncRunner(syncApiClient(), store, InMemorySettingsStore()).sync(NOW, ZONE)
+        assertTrue(first.remindersToSchedule.isNotEmpty())
+
+        val plan = EventSyncRunner(
+            syncApiClient(),
+            store,
+            InMemorySettingsStore(NotificationSettings(eventRemindersEnabled = false)),
+        ).sync(NOW, ZONE)
+
+        assertTrue(plan.remindersToSchedule.isEmpty())
+        assertEquals(first.remindersToSchedule.toSet(), plan.remindersToCancel.toSet())
+        assertTrue(plan.newState.scheduledReminders.isEmpty())
     }
 }
