@@ -499,4 +499,51 @@ class FeedRepositoryTest {
 
         assertEquals(listOf(100L), page.items.map { it.id })
     }
+
+    private fun unreadRepo(readingJson: String, postingJson: String): FeedRepository {
+        val engine = MockEngine { request ->
+            // Both legs hit /forums/filtered_topics.json — route by the status filter.
+            val body = when (request.url.parameters["status"]) {
+                "reading" -> readingJson
+                "posting" -> postingJson
+                else -> error("Unexpected status: ${request.url}")
+            }
+            respond(body, HttpStatusCode.OK, headersOf("Content-Type", ContentType.Application.Json.toString()))
+        }
+        val client = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        return FeedRepository(RavelryApiClient(client, FakeFeedTokenStorage()))
+    }
+
+    @Test
+    fun `getDrawerUnread flags only the forums and your-posts with unread`() = runTest {
+        val repo = unreadRepo(
+            // forum 42 has unread (5 > 3); forum 77 is fully read (4 == 4).
+            readingJson = """{"topics":[
+                {"id":1,"title":"A","forum_id":42,"forum_posts_count":5,"last_read":3},
+                {"id":2,"title":"B","forum_id":77,"forum_posts_count":4,"last_read":4}
+            ]}""",
+            // a posted-in topic with unread replies.
+            postingJson = """{"topics":[
+                {"id":3,"title":"C","forum_id":42,"forum_posts_count":9,"last_read":2}
+            ]}""",
+        )
+
+        val unread = repo.getDrawerUnread()
+
+        assertEquals(setOf(42L), unread.unreadGroupForumIds)
+        assertTrue(unread.yourPostsHasUnread)
+    }
+
+    @Test
+    fun `getDrawerUnread reports no unread when everything is at the read marker`() = runTest {
+        val allRead = """{"topics":[{"id":1,"title":"A","forum_id":42,"forum_posts_count":3,"last_read":3}]}"""
+        val repo = unreadRepo(readingJson = allRead, postingJson = allRead)
+
+        val unread = repo.getDrawerUnread()
+
+        assertTrue(unread.unreadGroupForumIds.isEmpty())
+        assertFalse(unread.yourPostsHasUnread)
+    }
 }
