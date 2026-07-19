@@ -5,7 +5,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsNotSelected
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -22,6 +25,10 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
+
+/** Top edge of a node in root coordinates, for asserting the vertical order of drawer rows. */
+private fun SemanticsNodeInteraction.topInRoot(): Float = fetchSemanticsNode().positionInRoot.y
 
 @RunWith(RobolectricTestRunner::class)
 // The default Robolectric screen is ~320x336dp. Since #347 pinned "Posts"/"Groups"
@@ -89,13 +96,76 @@ class GroupDrawerTest {
     }
 
     /**
-     * Issue #347: unselected NavigationDrawerItems paint no pill, so the Posts/Groups rows
-     * read as flat text on the sheet. The bracketing dividers are what make them look like a
-     * tappable navigation cluster — assert they render so the treatment can't be dropped
-     * silently.
+     * Issue #369: Messages is a peer destination of Posts, not a group, so it sits between the
+     * Posts row and the Groups section header.
      */
     @Test
-    fun `posts and groups are bracketed by dividers`() {
+    fun `messages row sits between posts and groups and invokes its callback`() {
+        var messagesClicks = 0
+        compose.setContent {
+            GroupDrawer(
+                groups = twoGroups,
+                selectedGroup = twoGroups.first(),
+                onMessagesSelected = { messagesClicks++ },
+                eventCounts = emptyMap(),
+                user = user,
+                onGroupSelected = {},
+                onGroupEventsClick = {},
+                onSettingsClick = {},
+            )
+        }
+
+        compose.onNodeWithText("Messages").assertIsDisplayed()
+
+        // Vertical order, not just presence: Messages between Posts and Groups is the whole
+        // point of the row's placement, and all three would still "display" if it moved.
+        val postsY = compose.onNodeWithText("Posts").topInRoot()
+        val messagesY = compose.onNodeWithText("Messages").topInRoot()
+        val groupsY = compose.onNodeWithText("Groups").topInRoot()
+        assertTrue(postsY < messagesY, "Messages ($messagesY) should sit below Posts ($postsY)")
+        assertTrue(messagesY < groupsY, "Messages ($messagesY) should sit above Groups ($groupsY)")
+
+        compose.onNodeWithText("Messages").performClick()
+        compose.runOnIdle { assertEquals(1, messagesClicks) }
+    }
+
+    /**
+     * The selected pill is the only thing telling the user which destination they're on, and
+     * `messagesSelected`/`myPostsSelected` are independent booleans — nothing in the drawer
+     * stops both painting selected at once. FeedScreen keeps them mutually exclusive
+     * (`myPostsSelected = showingMyPosts && !showingMessages`), but that lives a thousand
+     * lines away in a composable with no test harness, so assert the drawer's half here:
+     * given the flags FeedScreen intends to pass, exactly one row reads as selected.
+     */
+    @Test
+    fun `selecting messages paints its row selected and leaves posts unselected`() {
+        compose.setContent {
+            GroupDrawer(
+                groups = twoGroups,
+                selectedGroup = null,
+                messagesSelected = true,
+                myPostsSelected = false,
+                eventCounts = emptyMap(),
+                user = user,
+                onGroupSelected = {},
+                onGroupEventsClick = {},
+                onSettingsClick = {},
+            )
+        }
+
+        compose.onNodeWithText("Messages").assertIsSelected()
+        compose.onNodeWithText("Posts").assertIsNotSelected()
+    }
+
+    /**
+     * Issue #347: unselected NavigationDrawerItems paint no pill, so the nav rows read as flat
+     * text on the sheet. The dividers are what make them look like a tappable navigation
+     * cluster — assert they render so the treatment can't be dropped silently. Issue #369 added
+     * a third row (Messages) and with it a third rule; the tags name the row each rule sits
+     * above so a future destination doesn't force a renumbering.
+     */
+    @Test
+    fun `each nav row has a rule above it and Groups has none below`() {
         compose.setContent {
             GroupDrawer(
                 groups = twoGroups,
@@ -110,15 +180,17 @@ class GroupDrawerTest {
 
         // A rule above each row, and deliberately none below "Groups" — it heads the
         // group list beneath it, so a line there would cut it off from its own children.
-        compose.onNodeWithTag("DrawerNavClusterTop").assertIsDisplayed()
-        compose.onNodeWithTag("DrawerNavClusterMiddle").assertIsDisplayed()
-        compose.onNodeWithTag("DrawerNavClusterBottom").assertDoesNotExist()
+        compose.onNodeWithTag("DrawerNavDividerAbovePosts").assertIsDisplayed()
+        compose.onNodeWithTag("DrawerNavDividerAboveMessages").assertIsDisplayed()
+        compose.onNodeWithTag("DrawerNavDividerAboveGroups").assertIsDisplayed()
+        compose.onNodeWithTag("DrawerNavDividerBelowGroups").assertDoesNotExist()
         compose.onNodeWithText("Posts").assertIsDisplayed()
+        compose.onNodeWithText("Messages").assertIsDisplayed()
         compose.onNodeWithText("Groups").assertIsDisplayed()
     }
 
     @Test
-    fun `collapsing Groups hides the group rows but keeps Posts`() {
+    fun `collapsing Groups hides the group rows but keeps Posts and Messages`() {
         compose.setContent {
             GroupDrawer(
                 groups = twoGroups,
@@ -136,7 +208,10 @@ class GroupDrawerTest {
         compose.onNodeWithText(twoGroups[0].name).assertDoesNotExist()
         compose.onNodeWithText(twoGroups[1].name).assertDoesNotExist()
         compose.onNodeWithText("Find groups").assertDoesNotExist()
+        // Folding Groups hides its own children only — the two peer destinations above it are
+        // pinned nav rows and must survive (issue #369 added Messages to that set).
         compose.onNodeWithText("Posts").assertIsDisplayed()
+        compose.onNodeWithText("Messages").assertIsDisplayed()
         // Folded: the Edit affordance yields to the hidden-group count.
         compose.onNodeWithText("Edit").assertDoesNotExist()
         compose.onNodeWithText("2").assertIsDisplayed()
