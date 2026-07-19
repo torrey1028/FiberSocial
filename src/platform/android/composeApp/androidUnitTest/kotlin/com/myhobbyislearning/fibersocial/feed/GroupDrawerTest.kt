@@ -252,7 +252,7 @@ class GroupDrawerTest {
     }
 
     @Test
-    fun `Your Posts shows an unread dot when its posts have unread replies`() {
+    fun `Posts shows an unread dot when its posts have unread replies`() {
         compose.setContent {
             GroupDrawer(
                 groups = emptyList(),
