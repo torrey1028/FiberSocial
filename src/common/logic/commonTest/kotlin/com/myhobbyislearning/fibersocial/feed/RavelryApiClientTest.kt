@@ -8,6 +8,7 @@ import com.myhobbyislearning.fibersocial.events.EventVenueException
 import com.myhobbyislearning.fibersocial.events.NewEventForm
 import com.myhobbyislearning.fibersocial.events.NewEventInput
 import com.myhobbyislearning.fibersocial.feed.models.VoteType
+import com.myhobbyislearning.fibersocial.messages.MessageFolder
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
@@ -2485,7 +2486,254 @@ class RavelryApiClientTest {
         assertTrue(e.message!!.contains("City is required"))
         assertEquals(listOf("/events"), paths)
     }
+
+    // ---- Private messages (issue #366) ----
+
+    @Test
+    fun `getMessages decodes a list page into messages`() = runTest {
+        // The list shape carries no body: contentHtml must decode as null rather than
+        // throwing, because the same Message class serves both list and full shapes.
+        val client = routingApiClient { MESSAGES_LIST_JSON }
+
+        val page = client.getMessages(MessageFolder.INBOX)
+
+        assertEquals(listOf(1001L, 1002L), page.messages.map { it.id })
+        val first = page.messages.first()
+        assertEquals("Hello there", first.subject)
+        assertEquals("yarnie", first.sender?.username)
+        assertEquals("me", first.recipient?.username)
+        assertEquals("2026/07/18 09:00:00 -0700", first.sentAt)
+        assertFalse(first.readMessage)
+        assertNull(first.contentHtml)
+        // parent_message_id is the ONLY thread link Ravelry provides (#368 groups on it).
+        assertNull(first.parentMessageId)
+        assertEquals(1001L, page.messages[1].parentMessageId)
+    }
+
+    @Test
+    fun `getMessages sends the required folder and newest-first sort`() = runTest {
+        // folder is required by Ravelry (there is no "all messages" listing), and the
+        // sort MUST carry the trailing underscore: bare "time" is oldest-first and would
+        // bury new mail behind years-old messages.
+        var url: io.ktor.http.Url? = null
+        val client = routingApiClientCapturing(onRequest = { url = it }) { MESSAGES_LIST_JSON }
+
+        client.getMessages(MessageFolder.ARCHIVED, page = 3, pageSize = 10)
+
+        assertEquals("/messages/list.json", url?.encodedPath)
+        assertEquals("archived", url?.parameters?.get("folder"))
+        assertEquals("time_", url?.parameters?.get("sort"))
+        assertEquals("3", url?.parameters?.get("page"))
+        assertEquals("10", url?.parameters?.get("page_size"))
+    }
+
+    @Test
+    fun `MessageFolder wire names use archived not saved`() {
+        // Ravelry's prose calls the archive box "saved" while the folder param value is
+        // "archived"; sending the prose word would silently list nothing.
+        assertEquals("inbox", MessageFolder.INBOX.wireName)
+        assertEquals("sent", MessageFolder.SENT.wireName)
+        assertEquals("archived", MessageFolder.ARCHIVED.wireName)
+    }
+
+    @Test
+    fun `getMessages omits unread_only unless requested`() = runTest {
+        // Absent means "no filter" unambiguously; sending unread_only=0 would depend on
+        // how the server parses a falsy string.
+        var url: io.ktor.http.Url? = null
+        val client = routingApiClientCapturing(onRequest = { url = it }) { MESSAGES_LIST_JSON }
+
+        client.getMessages(MessageFolder.INBOX)
+        assertNull(url?.parameters?.get("unread_only"))
+
+        client.getMessages(MessageFolder.INBOX, unreadOnly = true)
+        assertEquals("1", url?.parameters?.get("unread_only"))
+    }
+
+    @Test
+    fun `getMessages asks for full bodies via output_format and never sends Rails-reserved format`() = runTest {
+        // UNRESOLVED (#366): the docs' parameter table says output_format, their own
+        // example says format. With no live token to settle it we send only the name the
+        // parameter table documents.
+        //
+        // `format` is deliberately NOT sent as a hedge: this API is Rails and every path
+        // ends in .json, where params[:format] is the reserved response-format selector.
+        // The path extension probably wins, but the plausible bad outcome is a 406 on the
+        // whole request — strictly worse than the silent degrade to a body-less list that
+        // the hedge would protect against. This test pins that one-sided choice so a
+        // future "let's send both to be safe" edit has to argue with it first.
+        var url: io.ktor.http.Url? = null
+        val client = routingApiClientCapturing(onRequest = { url = it }) { MESSAGES_LIST_JSON }
+
+        client.getMessages(MessageFolder.INBOX)
+        assertNull(url?.parameters?.get("output_format"))
+
+        client.getMessages(MessageFolder.INBOX, full = true)
+        assertEquals("full", url?.parameters?.get("output_format"))
+        assertNull(url?.parameters?.get("format"))
+    }
+
+    @Test
+    fun `getMessages reports hasMore true when more pages remain`() = runTest {
+        val client = routingApiClient {
+            """{"messages":[{"id":1}],"paginator":{"page":1,"page_count":4,"results":90}}"""
+        }
+
+        val page = client.getMessages(MessageFolder.INBOX)
+
+        assertEquals(1, page.page)
+        assertTrue(page.hasMore)
+    }
+
+    @Test
+    fun `getMessages reports hasMore false on the last page`() = runTest {
+        val client = routingApiClient {
+            """{"messages":[{"id":1}],"paginator":{"page":4,"page_count":4,"results":90}}"""
+        }
+
+        val page = client.getMessages(MessageFolder.INBOX, page = 4)
+
+        assertEquals(4, page.page)
+        assertFalse(page.hasMore)
+    }
+
+    @Test
+    fun `getMessages reports hasMore false and echoes the requested page when the paginator is absent`() = runTest {
+        // No paginator must mean "stop paging", never an infinite loop.
+        val client = routingApiClient { """{"messages":[]}""" }
+
+        val page = client.getMessages(MessageFolder.SENT, page = 2)
+
+        assertEquals(2, page.page)
+        assertFalse(page.hasMore)
+        assertTrue(page.messages.isEmpty())
+    }
+
+    @Test
+    fun `getMessage decodes the full shape`() = runTest {
+        var url: io.ktor.http.Url? = null
+        val client = routingApiClientCapturing(onRequest = { url = it }) { MESSAGE_FULL_JSON }
+
+        val message = client.getMessage(1001L)
+
+        assertEquals("/messages/1001.json", url?.encodedPath)
+        assertEquals("<p>Hi!</p>", message.contentHtml)
+        assertEquals("inbox", message.folderName)
+        assertTrue(message.readMessage)
+        assertTrue(message.replied)
+        assertEquals("2026/07/18 10:00:00 -0700", message.repliedAt)
+    }
+
+    @Test
+    fun `getMessage decodes a full message that has no plain-text content field`() = runTest {
+        // UNRESOLVED (#366): Ravelry's field table lists only content_html on reads, but
+        // third-party clients mention a plain-text content. The model must decode either
+        // shape, so absence yields null rather than a MissingFieldException — otherwise a
+        // wrong guess would break every message detail fetch.
+        val client = routingApiClient { MESSAGE_FULL_JSON }
+
+        assertNull(client.getMessage(1001L).content)
+    }
+
+    @Test
+    fun `getMessage decodes a full message that does carry plain-text content`() = runTest {
+        // The other half of the same ambiguity: if the field does exist we must keep it,
+        // not drop it on the floor.
+        val client = routingApiClient {
+            """{"message":{"id":1001,"content":"Hi!","content_html":"<p>Hi!</p>"}}"""
+        }
+
+        assertEquals("Hi!", client.getMessage(1001L).content)
+    }
+
+    @Test
+    fun `markMessageRead posts to the mark_read endpoint`() = runTest {
+        var path: String? = null
+        var method: String? = null
+        val engine = MockEngine { request ->
+            path = request.url.encodedPath
+            method = request.method.value
+            respond("", HttpStatusCode.OK,
+                headersOf("Content-Type", ContentType.Application.Json.toString()))
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+
+        RavelryApiClient(httpClient, FakeFeedTokenStorage()).markMessageRead(1001L)
+
+        assertEquals("/messages/1001/mark_read.json", path)
+        assertEquals("POST", method)
+    }
+
+    @Test
+    fun `markMessageUnread posts to the mark_unread endpoint`() = runTest {
+        var path: String? = null
+        var method: String? = null
+        val engine = MockEngine { request ->
+            path = request.url.encodedPath
+            method = request.method.value
+            respond("", HttpStatusCode.OK,
+                headersOf("Content-Type", ContentType.Application.Json.toString()))
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+
+        RavelryApiClient(httpClient, FakeFeedTokenStorage()).markMessageUnread(1001L)
+
+        assertEquals("/messages/1001/mark_unread.json", path)
+        assertEquals("POST", method)
+    }
+
+    @Test
+    fun `message calls send the bearer token`() = runTest {
+        // Reading messages needs no extra OAuth scope, but it still needs the header —
+        // forgetting it 401s only this endpoint.
+        var auth: String? = null
+        val engine = MockEngine { request ->
+            auth = request.headers[HttpHeaders.Authorization]
+            respond(MESSAGES_LIST_JSON, HttpStatusCode.OK,
+                headersOf("Content-Type", ContentType.Application.Json.toString()))
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+
+        RavelryApiClient(httpClient, FakeFeedTokenStorage()).getMessages(MessageFolder.INBOX)
+
+        assertEquals("Bearer test-token", auth)
+    }
+
+    @Test
+    fun `getMessage fails loudly when the envelope has no message`() = runTest {
+        // A maintenance page or a shape drift must not decode into an empty message.
+        val client = routingApiClient { "{}" }
+
+        assertFailsWith<kotlinx.serialization.MissingFieldException> { client.getMessage(1001L) }
+    }
 }
+
+private val MESSAGES_LIST_JSON = """
+{"messages":[
+  {"id":1001,"subject":"Hello there","message_type_name":"message","read_message":false,
+   "replied":false,"replied_at":null,"parent_message_id":null,
+   "sent_at":"2026/07/18 09:00:00 -0700",
+   "sender":{"username":"yarnie","small_photo_url":"https://example.com/y.jpg"},
+   "recipient":{"username":"me"}},
+  {"id":1002,"subject":"Hello there","message_type_name":"message","read_message":true,
+   "replied":false,"parent_message_id":1001,
+   "sent_at":"2026/07/18 10:00:00 -0700",
+   "sender":{"username":"me"},"recipient":{"username":"yarnie"}}
+],"paginator":{"page":1,"page_count":1,"results":2}}
+"""
+
+private val MESSAGE_FULL_JSON = """
+{"message":{"id":1001,"subject":"Hello there","folder_name":"inbox",
+ "content_html":"<p>Hi!</p>","read_message":true,"replied":true,
+ "replied_at":"2026/07/18 10:00:00 -0700","sent_at":"2026/07/18 09:00:00 -0700",
+ "sender":{"username":"yarnie"},"recipient":{"username":"me"}}}
+"""
 
 private val NEW_EVENT_FORM = NewEventForm(
     authenticityToken = "FORM_TOKEN_abc",
