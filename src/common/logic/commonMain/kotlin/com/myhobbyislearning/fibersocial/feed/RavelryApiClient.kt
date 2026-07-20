@@ -24,6 +24,7 @@ import com.myhobbyislearning.fibersocial.events.SavedEventsParser
 import com.myhobbyislearning.fibersocial.feed.models.Group
 import com.myhobbyislearning.fibersocial.feed.models.Post
 import com.myhobbyislearning.fibersocial.feed.models.RavelryUser
+import com.myhobbyislearning.fibersocial.feed.models.UserSearchResult
 import com.myhobbyislearning.fibersocial.profile.UserProfile
 import com.myhobbyislearning.fibersocial.feed.models.Topic
 import com.myhobbyislearning.fibersocial.messages.Message
@@ -98,6 +99,33 @@ const val DEFAULT_POSTS_PAGE_SIZE = 25
  * in the app for exactly the users who use messages most.
  */
 const val DEFAULT_MESSAGES_PAGE_SIZE = 25
+
+/**
+ * Users requested per [RavelryApiClient.searchUsers] call (issue #367).
+ *
+ * Ravelry's own default is 50 and its documented maximum is 500. We ask for less because
+ * this feeds a recipient PICKER, not a search results page: a user scanning for one person
+ * either sees them in the first handful of hits or refines the term, so rows past ~25 are
+ * paid for (bandwidth, avatar fetches) and never read.
+ */
+const val DEFAULT_USER_SEARCH_LIMIT = 25
+
+/**
+ * Every `/search.json` result type EXCEPT `User`, verbatim from the endpoint's own `types`
+ * enumeration in the API docs.
+ *
+ * A deny-list, used by [RavelryApiClient.searchUsers] as a backstop to the server-side
+ * `types=User` filter. It is spelled out this way — rather than as `type == "user"` — so
+ * that an unfamiliar or re-spelled USER type still reaches the recipient picker. See the
+ * fail-open reasoning on [RavelryApiClient.searchUsers].
+ *
+ * If Ravelry adds a new non-user result type, the worst that happens is one stray row in a
+ * picker until this list is updated; nothing breaks.
+ */
+private val NON_USER_SEARCH_TYPES = listOf(
+    "PatternAuthor", "PatternSource", "Pattern", "YarnCompany", "Yarn",
+    "Group", "Event", "Project", "Page", "Topic", "Shop",
+)
 // coerceInputValues: a defensive safety net for when Ravelry returns an explicit JSON null
 // for a field our model declares non-nullable-with-default. kotlinx.serialization applies a
 // field default only when the key is ABSENT — an explicit null otherwise throws — so this
@@ -1285,6 +1313,325 @@ class RavelryApiClient(
     }
 
     /**
+     * Sends a NEW private message, starting a new conversation (`/messages/create.json`,
+     * issue #367).
+     *
+     * USE [replyToMessage] INSTEAD WHENEVER THE USER IS ANSWERING AN EXISTING MESSAGE.
+     * This endpoint always produces a message with a null `parent_message_id`, and that
+     * pointer is the ONLY thing Ravelry gives us to hold a conversation together — see
+     * [replyToMessage] for why routing a reply through here corrupts threading silently.
+     *
+     * Messages CANNOT be edited or deleted-from-the-recipient after sending; Ravelry
+     * delivers immediately. There is deliberately no `editMessage` in this client because
+     * there is no such endpoint to call.
+     *
+     * @param recipientUsername Ravelry handle to deliver to — e.g. [UserSearchResult.username]
+     *   from [searchUsers]. Sent as `recipient_username`; see [messageBody] for the
+     *   `recipient_user_id` alternative we do not use.
+     * @param subject Subject line, user-authored.
+     * @param content Message body, user-authored. Markdown and limited HTML are supported.
+     * @return The newly created message in its full shape, as Ravelry stored it. The body
+     *   may differ from [content] because Markdown is rendered and unsafe HTML stripped.
+     * @throws ForbiddenException for BOTH messaging-disabled and stale-scope — the two are
+     *   indistinguishable by status code. See [messagingForbiddenMessage].
+     */
+    suspend fun sendMessage(recipientUsername: String, subject: String, content: String): Message {
+        val raw = withMessagingForbiddenMessage {
+            authenticatedRequest {
+                httpClient.post("$BASE_URL/messages/create.json") {
+                    header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
+                    setBody(messageBody(subject, content, recipientUsername))
+                }
+            }
+        }
+        return lenientJson.decodeFromString<MessageResponse>(raw).message
+    }
+
+    /**
+     * Replies to an existing message (`/messages/{id}/reply.json`, issue #367).
+     *
+     * THIS METHOD IS NOT INTERCHANGEABLE WITH [sendMessage]. Ravelry documents reply as
+     * "same as create but links the messages together as a conversation", and that link is
+     * the `parent_message_id` this endpoint — and ONLY this endpoint — sets.
+     *
+     * Ravelry PMs are a flat inbox: there is no conversation object, no thread ID and no
+     * thread endpoint anywhere in the API. Our threading (#368) is a client-side
+     * reconstruction that walks `parent_message_id`. So a reply sent through
+     * `create.json` still delivers, still shows the right subject, and still looks
+     * completely correct in the inbox — it just has a null parent, so the grouping pass
+     * drops it into a conversation of its own. The damage is invisible at send time,
+     * invisible in the sent folder, unfixable afterwards (messages cannot be edited), and
+     * only shows up later as a thread that mysteriously split in half.
+     *
+     * @param messageId The message being replied to. Ravelry requires the signed-in user
+     *   to be that message's RECIPIENT — replying to your own sent message is rejected.
+     * @param subject Subject line. Convention is to carry the parent's subject forward;
+     *   Ravelry does not do this for you.
+     * @param content Reply body, user-authored.
+     * @return The newly created reply, whose `parentMessageId` should echo [messageId].
+     * @throws ForbiddenException see [messagingForbiddenMessage].
+     */
+    suspend fun replyToMessage(messageId: Long, subject: String, content: String): Message {
+        val raw = withMessagingForbiddenMessage {
+            authenticatedRequest {
+                // reply.json, NOT create.json — this path is what sets parent_message_id.
+                httpClient.post("$BASE_URL/messages/$messageId/reply.json") {
+                    header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
+                    // No recipient: the endpoint derives it from the parent message.
+                    setBody(messageBody(subject, content, recipientUsername = null))
+                }
+            }
+        }
+        return lenientJson.decodeFromString<MessageResponse>(raw).message
+    }
+
+    /**
+     * Builds the request body for [sendMessage] / [replyToMessage].
+     *
+     * UNRESOLVED DOC AMBIGUITY (#367) — form-encoded body vs raw JSON body. Ravelry's
+     * parameter table for create/reply lists a single parameter, `data`, of type
+     * `Message (POST)`, described as "Message JSON object". Taken literally that could
+     * mean three different requests, and we had no live token to try them.
+     *
+     * We send a FORM-ENCODED body with the `Message (POST)` fields FLAT at the top level
+     * (`subject`, `content`, `recipient_username`). Reasoning, in the order it actually
+     * decided the question:
+     *
+     *  1. The one worked example the docs give for ANY `data`-typed endpoint —
+     *     `bundles/create`, likewise documented as `data / Bundle (POST)` — is written as
+     *     `/people/username/bundles/create.json { "name": "...", "notes": "..." }`. The
+     *     object's keys sit at the TOP LEVEL of the request body; nothing is nested under
+     *     a key literally named `data`. So `data` is the doc generator's label for "the
+     *     request body", not a parameter name to send. That rules out the third reading
+     *     (`data={"subject":...}`), which was the most likely thing to get wrong.
+     *  2. Between the remaining two — a JSON body vs a form body — Rails makes them
+     *     equivalent at the point that matters. Both a `application/json` body and an
+     *     `application/x-www-form-urlencoded` body are parsed into the SAME `params` hash,
+     *     so a controller reading `params[:subject]` cannot tell them apart. The docs'
+     *     top-level-keys example tells us the controller reads top-level params, and form
+     *     encoding delivers exactly those.
+     *  3. Given the two are equivalent, form encoding is what every other write on this
+     *     client already sends ([postReply], [createTopic], [postProjectComment]), so it
+     *     is the shape with production evidence behind it — `postProjectComment` posts
+     *     flat form fields to `comments/create.json` and works today.
+     *
+     * WHAT IS NOT UNCERTAIN: [subject] and [content] are user-authored free text and go in
+     * the BODY, never in `url.parameters`. Bodies run to multiple KB (request-line 414s)
+     * and query strings are recorded in server access logs. That constraint holds for
+     * either encoding and is the recurring bug this comment exists to prevent.
+     *
+     * RESIDUAL RISK, and it is small and safe: the only way form encoding loses is if the
+     * controller ignores `params` and parses `request.raw_post` as JSON itself. That fails
+     * LOUDLY — a validation error or a 4xx on the send — not silently, so no message can
+     * be delivered blank or to the wrong person by this choice.
+     *
+     * TO SETTLE IT: one authenticated `POST /messages/create.json` with a form body. If it
+     * returns the created message, this is right and this comment can shrink to a line. If
+     * it errors, switch [setBody] to a JSON body of the same three keys and
+     * `contentType(ContentType.Application.Json)` — a two-line change, deliberately kept
+     * that small by building the body here in one place instead of at both call sites.
+     *
+     * @param recipientUsername Omitted entirely for a reply, where the endpoint derives the
+     *   recipient from the parent. NOTE the docs name this field inconsistently: the field
+     *   row says `recipient_username` while its own description says "one of
+     *   recipient_user_id or recipient_login". We send `recipient_username`, the name in
+     *   the row itself and the one third-party clients use.
+     */
+    private fun messageBody(subject: String, content: String, recipientUsername: String?) =
+        FormDataContent(
+            Parameters.build {
+                recipientUsername?.let { append("recipient_username", it) }
+                append("subject", subject)
+                append("content", content)
+            },
+        )
+
+    /**
+     * Replaces the generic "Permission denied for /path" text on a messaging 403 with copy
+     * that names both things it can actually mean (issue #367).
+     *
+     * THE TWO 403s CANNOT BE TOLD APART, and conflating them is the trap this exists for:
+     *
+     *  (a) MESSAGING DISABLED — Ravelry documents create and reply as returning 403 "if
+     *      either the sender or the recipient has Ravelry messaging disabled in their
+     *      profile". Nothing the user can do in this app fixes it, and re-authenticating
+     *      certainly does not.
+     *  (b) STALE TOKEN SCOPE — `message-write` is in `SCOPE` (`RavelryAuthManager.kt:23`)
+     *      and must NOT be changed, but tokens minted before it was added lack it and 403
+     *      until the user signs out and back in. Here re-authenticating is the ONLY fix.
+     *
+     * Both arrive as a bare 403. Ravelry sends explanatory `errors` in the body for (a),
+     * but [authenticatedRequest] discards the body when it throws, so the client genuinely
+     * cannot classify these — hence copy that names both rather than guessing one and
+     * being confidently wrong half the time.
+     *
+     * A HEURISTIC FOR #374 IF IT EVER NEEDS TO DISAMBIGUATE: cause (b) is per-TOKEN, so it
+     * fails EVERY `message-write` call — [archiveMessage] and [deleteMessage] included.
+     * Cause (a) is per-CONVERSATION, so it fails only create/reply while archive still
+     * succeeds. A silent archive of any message the user already has distinguishes them
+     * without asking the user anything.
+     *
+     * WHAT MUST NOT HAPPEN: neither cause is session expiry. [authenticatedRequest] already
+     * gets this right — 403 becomes [ForbiddenException] and is never retried or refreshed
+     * into [SessionExpiredException] (issue #82) — and the message below deliberately
+     * contains no "403"/"401" digits, because `FeedErrorState` pattern-matches those in
+     * error text to route to the session-expired UI. Leaking the digits here would drop
+     * the user into a forced logout for a permission problem.
+     */
+    private suspend fun <T> withMessagingForbiddenMessage(block: suspend () -> T): T =
+        try {
+            block()
+        } catch (e: ForbiddenException) {
+            // ForbiddenException carries only a message, so replacing it drops the path
+            // the generic text named. Log it rather than lose it — that path is what tells
+            // a bug report whether create or reply was refused.
+            println("FiberSocial: messaging forbidden — ${e.message}")
+            throw ForbiddenException(messagingForbiddenMessage())
+        }
+
+    private fun messagingForbiddenMessage(): String =
+        "Ravelry wouldn't deliver this message. Either this person isn't accepting " +
+            "private messages, or your sign-in predates messaging permission — signing " +
+            "out and back in fixes that second case."
+
+    /**
+     * Archives a message (`/messages/{id}/archive.json`, issue #367) — moves it out of the
+     * inbox into the box Ravelry's `folder` parameter calls `archived` and its own prose
+     * calls "saved". See [MessageFolder] for that naming trap.
+     *
+     * This is Ravelry's ONLY per-message filing affordance. In particular it is NOT a mute:
+     * archiving does not stop future messages, and a new reply on an archived conversation
+     * lands back in the inbox. Per-thread muting (#377) has to be local state, because the
+     * server has no concept of it.
+     *
+     * Ravelry returns the updated message; discarded like [markMessageRead], since callers
+     * hold the message already and want only the side effect.
+     *
+     * @param messageId Ravelry message ID.
+     * @throws ForbiddenException when the token lacks `message-write` (stale-token case
+     *   (b) in [messagingForbiddenMessage]; the messaging-disabled case does not apply to
+     *   filing your own mail).
+     */
+    suspend fun archiveMessage(messageId: Long) {
+        authenticatedRequest {
+            httpClient.post("$BASE_URL/messages/$messageId/archive.json") {
+                header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
+            }
+        }
+    }
+
+    /**
+     * Moves an archived message back to the inbox (`/messages/{id}/unarchive.json`) — the
+     * undo for [archiveMessage].
+     *
+     * @param messageId Ravelry message ID.
+     * @throws ForbiddenException when the token lacks `message-write`.
+     */
+    suspend fun unarchiveMessage(messageId: Long) {
+        authenticatedRequest {
+            httpClient.post("$BASE_URL/messages/$messageId/unarchive.json") {
+                header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
+            }
+        }
+    }
+
+    /**
+     * Deletes a message (`DELETE /messages/{id}.json`, issue #367).
+     *
+     * DELETE, not POST — the only message endpoint that is not a POST, and the only one
+     * whose path has no verb segment. `POST /messages/{id}.json` is a different (or
+     * nonexistent) route, so the HTTP method here is load-bearing.
+     *
+     * Deletes only the signed-in user's copy; it does not unsend anything. There is no
+     * undelete endpoint, so a confirmation belongs in the UI (#374) rather than here.
+     *
+     * @param messageId Ravelry message ID.
+     * @throws ForbiddenException when the token lacks `message-write`, or the message
+     *   isn't the user's to delete.
+     */
+    suspend fun deleteMessage(messageId: Long) {
+        authenticatedRequest {
+            httpClient.delete("$BASE_URL/messages/$messageId.json") {
+                header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
+            }
+        }
+    }
+
+    /**
+     * Searches Ravelry users by name, for picking a message recipient (issue #367).
+     *
+     * THERE IS NO `/people/search.json`, despite how obvious a guess it is. The generic
+     * global search with `types=User` is the only user search the API offers, which is why
+     * this decodes a generic result envelope and flattens it into [UserSearchResult]
+     * instead of returning `RavelryUser`s.
+     *
+     * Needs no special scope — this is an ordinary read, unlike the rest of #367.
+     *
+     * TYPE FILTERING IS BELT-AND-BRACES, AND DELIBERATELY FAILS OPEN. `types=User` should
+     * already restrict results server-side, so the local filter exists only in case it
+     * doesn't. Crucially it is a DENY-list ([NON_USER_SEARCH_TYPES]) rather than an
+     * allow-list of "user": it drops a hit only when `record.type` names one of the OTHER
+     * documented result types.
+     *
+     * That asymmetry is the whole point. An allow-list keyed on the string "user" breaks
+     * catastrophically if Ravelry ever spells the type differently than we guessed — every
+     * search would return an empty list, and an empty picker reads to the user as "no such
+     * person" rather than as a bug, so nobody would report it. A deny-list's failure mode
+     * is a stray non-user row appearing in the picker: visible, obviously wrong, harmless
+     * (picking it just fails to send). Fail toward the noisy error, not the silent one.
+     *
+     * No blank-[query] guard and no debounce here on purpose: this client stays a thin
+     * transport, and per-keystroke throttling is the composer's concern (#374).
+     *
+     * @param query Free-text search term. Sent as a query parameter, which is correct here
+     *   and NOT a violation of the free-text-goes-in-the-body rule that governs
+     *   [messageBody] — this is a GET whose search term IS the resource identity, it is a
+     *   short term rather than a multi-KB body, and GET has no body to put it in.
+     * @param limit Maximum results. Ravelry's own default is 50 and its cap is 500; we ask
+     *   for [DEFAULT_USER_SEARCH_LIMIT] because this feeds a picker list, not a results page.
+     * @return Users in Ravelry's relevance order, preserved as returned. Results with no
+     *   usable username are dropped — an unaddressable row is worse than a missing one.
+     */
+    suspend fun searchUsers(query: String, limit: Int = DEFAULT_USER_SEARCH_LIMIT): List<UserSearchResult> {
+        val raw = authenticatedRequest {
+            httpClient.get("$BASE_URL/search.json") {
+                header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
+                url.parameters.apply {
+                    append("query", query)
+                    append("types", "User")
+                    append("limit", limit.toString())
+                }
+            }
+        }
+        return lenientJson.decodeFromString<SearchResponse>(raw).results
+            .filterNot { result ->
+                val type = result.record?.type ?: return@filterNot false
+                NON_USER_SEARCH_TYPES.any { it.equals(type, ignoreCase = true) }
+            }
+            .mapNotNull { result ->
+                // record.permalink is the username (it addresses /people/{username}). A
+                // PRESENT record with a blank/absent permalink is dropped, not fallen back
+                // to the display title — a title is free text, not necessarily a valid
+                // handle, and this function's own contract (below) is that an
+                // unaddressable row is worse than a missing one. The title fallback is
+                // only for when the record is missing ENTIRELY, where the record's own
+                // (permalink-shaped) identity was never available to check in the first
+                // place — a genuinely different case from "the record said no".
+                val username = if (result.record != null) {
+                    result.record.permalink?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                } else {
+                    result.title.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                }
+                UserSearchResult(
+                    id = result.record?.id,
+                    username = username,
+                    displayName = result.title.takeIf { it.isNotBlank() } ?: username,
+                    avatarUrl = result.tinyImageUrl ?: result.imageUrl,
+                )
+            }
+    }
+
+    /**
      * Returns [username]'s projects (the small list representation: name, permalink,
      * first photo, photo count). The whole list comes back in one page — the endpoint's
      * `page_size` defaults to the entire result set.
@@ -1540,6 +1887,27 @@ class RavelryApiClient(
         val paginator: Paginator? = null,
     )
     @Serializable private data class MessageResponse(val message: Message)
+
+    // Global search (/search.json) — a GENERIC envelope, not a user-specific one: the same
+    // shape comes back for patterns, yarns, groups and everything else, with the identity
+    // of the hit buried in the nested `record`. Every field is optional because only
+    // `title` and `record` are documented as always-present and this DTO must survive a hit
+    // of any type without throwing (see the lenient filtering in searchUsers).
+    @Serializable private data class SearchResponse(val results: List<SearchResult> = emptyList())
+    @Serializable private data class SearchResult(
+        val title: String = "",
+        @SerialName("type_name") val typeName: String? = null,
+        val caption: String? = null,
+        @SerialName("tiny_image_url") val tinyImageUrl: String? = null,
+        @SerialName("image_url") val imageUrl: String? = null,
+        val record: SearchRecord? = null,
+    )
+    @Serializable private data class SearchRecord(
+        val type: String? = null,
+        val id: Long? = null,
+        val permalink: String? = null,
+        val uri: String? = null,
+    )
     @Serializable private data class Paginator(
         val page: Int = 1,
         @SerialName("page_count") val pageCount: Int = 1,

@@ -22,18 +22,50 @@ private const val NO_UNREAD_MESSAGES_JSON = """{"messages":[]}"""
 
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class FeedViewModelTest {
-    private suspend fun awaitChildren(job: Job) =
-        job.children.toList().forEach { it.join() }
+    /**
+     * Drains [job]'s children until none are left, rather than joining a single snapshot.
+     *
+     * WHY THE LOOP — this was a real flake source, not defensiveness. The ViewModel's
+     * drawer-unread work spawns FOLLOW-ON children after its first ones resolve:
+     * `markGroupViewed` and the drawer-unread refresh both persist via `scope.launch`
+     * once their fetch completes. A snapshot-once join takes `job.children`, joins those,
+     * and returns — while a persist launched during that join is still in flight, because
+     * it was never in the snapshot. The test then asserts against half-applied state.
+     *
+     * That is exactly the shape of the failures seen on CI: `the group shown on load is
+     * not dotted for activity the user is looking at` failed intermittently on THREE
+     * separate PRs, two of which touched no code this test exercises. It reproduces
+     * essentially never on a fast idle machine and shows up under CI load, which is what
+     * you would expect from a race between a join and a launch.
+     *
+     * Looping until `children` is empty drains transitively-spawned work too. It cannot
+     * hang on well-behaved code: every launch here is bounded, and a genuinely
+     * never-completing child would hang the snapshot version on `join()` anyway.
+     */
+    private suspend fun awaitChildren(job: Job) {
+        while (true) {
+            val children = job.children.toList()
+            if (children.isEmpty()) return
+            children.forEach { it.join() }
+        }
+    }
 
     /**
-     * Joins every child of [job] except [excluded]. Whether the non-excluded call's
-     * coroutine is still active or has already resolved synchronously is platform-
-     * dependent (observed to differ between the JVM and Robolectric test targets), so
-     * this tolerates it having already completed and dropped out of [Job.children]
-     * rather than assuming a fresh child is always present to find.
+     * Drains every child of [job] except [excluded], for tests that deliberately leave one
+     * call parked in flight. Same drain-until-empty reasoning as [awaitChildren].
+     *
+     * Whether the non-excluded call's coroutine is still active or has already resolved
+     * synchronously is platform-dependent (observed to differ between the JVM and
+     * Robolectric test targets), so this tolerates it having already completed and dropped
+     * out of [Job.children] rather than assuming a fresh child is always present to find.
      */
-    private suspend fun awaitChildrenExcept(job: Job, excluded: Job) =
-        job.children.filter { it != excluded }.toList().forEach { it.join() }
+    private suspend fun awaitChildrenExcept(job: Job, excluded: Job) {
+        while (true) {
+            val children = job.children.filter { it != excluded }.toList()
+            if (children.isEmpty()) return
+            children.forEach { it.join() }
+        }
+    }
 
     private val group = Group(id = 10L, name = "KAL Hub", permalink = "kal-hub", forumId = 42L)
 
