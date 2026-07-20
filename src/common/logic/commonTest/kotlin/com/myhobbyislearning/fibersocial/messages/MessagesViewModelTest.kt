@@ -8,8 +8,10 @@ import io.ktor.http.Url
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -56,6 +58,13 @@ private fun listJson(
       "paginator": {"page": $page, "page_count": $pageCount, "results": ${messages.size}}
     }
 """.trimIndent()
+
+/**
+ * The message id in a `GET /messages/{id}.json`, or `null` for any other request —
+ * notably `/messages/list.json`, which the digits-only group is what excludes.
+ */
+private fun messageIdIn(url: Url): Long? =
+    Regex("""^/messages/(\d+)\.json$""").find(url.encodedPath)?.groupValues?.get(1)?.toLong()
 
 private const val EMPTY_LIST_JSON =
     """{"messages":[],"paginator":{"page":1,"page_count":1,"results":0}}"""
@@ -451,5 +460,494 @@ class MessagesViewModelTest {
                 setOf("inbox", "sent"),
                 urls.mapNotNull { it.parameters["folder"] }.toSet(),
             )
+        }
+
+    // ---------------------------------------------------------------------------------
+    // Conversation detail (issue #371): opening a thread reads it.
+    // ---------------------------------------------------------------------------------
+
+    /**
+     * The three-message conversation every detail test below opens.
+     *
+     * Deliberately mixed so "only unread inbound" has something to get wrong:
+     * - **1** inbound and UNREAD — the one and only message that may be marked read.
+     * - **2** OUTBOUND and `read_message: false`, served from the `sent` folder. That flag
+     *   describes whether *friend* has read it; POSTing mark_read for it would be marking
+     *   someone else's mailbox.
+     * - **3** inbound but ALREADY read — re-marking it is a wasted request.
+     */
+    private fun conversationClient(
+        bodies: String? = "<p>Hello there</p>",
+        onRequest: (Url) -> Unit = {},
+        route: suspend (Url) -> String? = { null },
+    ) = suspendableRoutingApiClient { url ->
+        onRequest(url)
+        route(url) ?: when {
+            url.encodedPath != "/messages/list.json" -> "{}"
+            url.parameters["folder"] == "inbox" -> listJson(
+                listOf(
+                    messageJson(id = 1, read = false, contentHtml = bodies),
+                    messageJson(id = 3, read = true, parentId = 1, contentHtml = bodies),
+                ),
+            )
+            else -> listJson(
+                listOf(
+                    messageJson(
+                        id = 2,
+                        sender = "yarnie",
+                        recipient = "friend",
+                        read = false,
+                        parentId = 1,
+                        contentHtml = bodies,
+                    ),
+                ),
+            )
+        }
+    }
+
+    private fun markReadPaths(urls: List<Url>) =
+        urls.map { it.encodedPath }.filter { it.endsWith("/mark_read.json") }
+
+    @Test
+    fun `opening a thread marks only the unread inbound messages read`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val urls = mutableListOf<Url>()
+            val vm = MessagesViewModel(conversationClient(onRequest = { urls += it }), this)
+            vm.load("yarnie")
+            awaitChildren(coroutineContext[Job]!!)
+
+            vm.openThread(rootId = 1)
+            awaitChildren(coroutineContext[Job]!!)
+
+            // NOT /messages/2/mark_read.json (outbound) and NOT /messages/3 (already read).
+            assertEquals(listOf("/messages/1/mark_read.json"), markReadPaths(urls))
+        }
+
+    @Test
+    fun `reading a thread clears the unread state on the thread and on its list row`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val vm = MessagesViewModel(conversationClient(), this)
+            vm.load("yarnie")
+            awaitChildren(coroutineContext[Job]!!)
+            assertTrue(assertIs<MessagesState.Loaded>(vm.state.value).threads.single().hasUnread)
+
+            vm.openThread(rootId = 1)
+            awaitChildren(coroutineContext[Job]!!)
+
+            // Both views come from one regrouping, so they cannot disagree — assert both.
+            assertEquals(false, assertIs<MessagesState.Loaded>(vm.state.value).threads.single().hasUnread)
+            assertEquals(false, vm.openThread.value?.thread?.hasUnread)
+        }
+
+    /**
+     * A mark-read that fails must cost the user nothing but the dot: the conversation stays
+     * open, ordered and readable, and the list behind it stays loaded.
+     */
+    @Test
+    fun `a failed mark-read leaves the thread open and readable`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val client = conversationClient(
+                route = { url ->
+                    if (url.encodedPath.endsWith("/mark_read.json")) error("mark_read exploded") else null
+                },
+            )
+            val vm = MessagesViewModel(client, this)
+            vm.load("yarnie")
+            awaitChildren(coroutineContext[Job]!!)
+
+            vm.openThread(rootId = 1)
+            awaitChildren(coroutineContext[Job]!!)
+
+            val open = vm.openThread.value
+            assertEquals(listOf(1L, 3L, 2L).sorted(), open?.thread?.messages?.map { it.id }?.sorted())
+            // Still unread — nothing was marked, and pretending otherwise would hide the
+            // message from the very dot that exists to surface it.
+            assertEquals(true, open?.thread?.hasUnread)
+            assertIs<MessagesState.Loaded>(vm.state.value)
+        }
+
+    /**
+     * THE MARK-READ RACE (issue #371; the same trap documented at
+     * `FeedViewModel.refreshDrawerUnreadAfterReading` and `RavelryApiClient.markMessageRead`).
+     *
+     * The drawer dot's re-probe is a GET. Fired next to the mark_read POST rather than after
+     * it, it can win, observe the pre-POST state and re-light the dot reading the thread just
+     * cleared. This gates the POST open so the two would visibly overlap if they were
+     * concurrent — asserting the callback has NOT run while the POST is still in flight is
+     * what makes this a race test rather than an ordering-of-a-completed-list test.
+     */
+    @Test
+    fun `the unread re-probe runs only after the mark-read POST has returned`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val gate = CompletableDeferred<Unit>()
+            // Ktor's engine does not necessarily run the request on the caller's dispatcher,
+            // so the test waits for the POST to actually be in flight rather than assuming
+            // launching openThread got it there.
+            val postStarted = CompletableDeferred<Unit>()
+            val order = mutableListOf<String>()
+            val client = conversationClient(
+                route = { url ->
+                    if (!url.encodedPath.endsWith("/mark_read.json")) {
+                        null
+                    } else {
+                        order += "post-started"
+                        postStarted.complete(Unit)
+                        gate.await()
+                        order += "post-returned"
+                        "{}"
+                    }
+                },
+            )
+            val vm = MessagesViewModel(client, this)
+            vm.load("yarnie")
+            awaitChildren(coroutineContext[Job]!!)
+
+            vm.openThread(rootId = 1) { order += "re-probe" }
+            postStarted.await()
+
+            assertEquals(listOf("post-started"), order)
+            gate.complete(Unit)
+            awaitChildren(coroutineContext[Job]!!)
+
+            assertEquals(listOf("post-started", "post-returned", "re-probe"), order)
+        }
+
+    /** Backing out of an already-read conversation must cost no POST and no re-probe GET. */
+    @Test
+    fun `an already-read thread neither posts nor re-probes`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val urls = mutableListOf<Url>()
+            var probes = 0
+            val client = suspendableRoutingApiClient { url ->
+                urls += url
+                if (url.parameters["folder"] == "inbox") {
+                    listJson(listOf(messageJson(id = 1, read = true)))
+                } else {
+                    EMPTY_LIST_JSON
+                }
+            }
+            val vm = MessagesViewModel(client, this)
+            vm.load("yarnie")
+            awaitChildren(coroutineContext[Job]!!)
+
+            vm.openThread(rootId = 1) { probes++ }
+            awaitChildren(coroutineContext[Job]!!)
+
+            assertEquals(emptyList(), markReadPaths(urls))
+            assertEquals(0, probes)
+        }
+
+    /**
+     * The body backfill (see `MessagesViewModel.backfillBodies`): the list shape may omit
+     * `content_html`, so a body-less message is re-fetched through `getMessage`, which
+     * always returns the full shape. Bounded to the ONE conversation the user opened.
+     */
+    @Test
+    fun `opening a thread backfills the bodies the list did not carry`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val urls = mutableListOf<Url>()
+            val client = conversationClient(
+                bodies = null,
+                onRequest = { urls += it },
+                route = { url ->
+                    messageIdIn(url)?.let {
+                        """{"message": ${messageJson(id = it, contentHtml = "<p>Body $it</p>")}}"""
+                    }
+                },
+            )
+            val vm = MessagesViewModel(client, this)
+            vm.load("yarnie")
+            awaitChildren(coroutineContext[Job]!!)
+
+            vm.openThread(rootId = 1)
+            awaitChildren(coroutineContext[Job]!!)
+
+            assertEquals(setOf(1L, 2L, 3L), urls.mapNotNull { messageIdIn(it) }.toSet())
+            val open = assertNotNull(vm.openThread.value)
+            assertEquals(false, open.loadingBodies)
+            assertNull(open.bodyError)
+            assertTrue(open.thread.messages.all { !it.contentHtml.isNullOrBlank() })
+        }
+
+    /** A message whose body the list already carried is never re-fetched. */
+    @Test
+    fun `bodies already present cost no extra request`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val urls = mutableListOf<Url>()
+            val vm = MessagesViewModel(conversationClient(onRequest = { urls += it }), this)
+            vm.load("yarnie")
+            awaitChildren(coroutineContext[Job]!!)
+
+            vm.openThread(rootId = 1)
+            awaitChildren(coroutineContext[Job]!!)
+
+            assertTrue(urls.none { messageIdIn(it) != null })
+            assertEquals(false, vm.openThread.value?.loadingBodies)
+        }
+
+    /** A failed backfill is a partially blank conversation, never a dead screen. */
+    @Test
+    fun `a failed body backfill keeps the thread open and reports itself`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val client = conversationClient(
+                bodies = null,
+                route = { url ->
+                    if (messageIdIn(url) != null) {
+                        error("show exploded")
+                    } else {
+                        null
+                    }
+                },
+            )
+            val vm = MessagesViewModel(client, this)
+            vm.load("yarnie")
+            awaitChildren(coroutineContext[Job]!!)
+
+            vm.openThread(rootId = 1)
+            awaitChildren(coroutineContext[Job]!!)
+
+            val open = vm.openThread.value
+            assertEquals(false, open?.loadingBodies)
+            assertTrue(open?.bodyError != null)
+            assertEquals(3, open?.thread?.messages?.size)
+        }
+
+    @Test
+    fun `closing a thread returns to the list`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val vm = MessagesViewModel(conversationClient(), this)
+            vm.load("yarnie")
+            awaitChildren(coroutineContext[Job]!!)
+
+            vm.openThread(rootId = 1)
+            awaitChildren(coroutineContext[Job]!!)
+            assertTrue(vm.openThread.value != null)
+
+            vm.closeThread()
+
+            assertNull(vm.openThread.value)
+            assertIs<MessagesState.Loaded>(vm.state.value)
+        }
+
+    /**
+     * Backing out of a conversation must not cancel the read it started.
+     *
+     * `openThread` deliberately does not tie its work to the screen's lifetime: a user who
+     * taps Back faster than the network still expects the dot to go out, and losing the
+     * POST would put it straight back on the next probe. The gate here holds the POST open
+     * across the close so the two genuinely overlap.
+     */
+    @Test
+    fun `closing a thread mid mark-read still clears the row`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val gate = CompletableDeferred<Unit>()
+            val postStarted = CompletableDeferred<Unit>()
+            val client = conversationClient(
+                route = { url ->
+                    if (!url.encodedPath.endsWith("/mark_read.json")) {
+                        null
+                    } else {
+                        postStarted.complete(Unit)
+                        gate.await()
+                        "{}"
+                    }
+                },
+            )
+            val vm = MessagesViewModel(client, this)
+            vm.load("yarnie")
+            awaitChildren(coroutineContext[Job]!!)
+
+            vm.openThread(rootId = 1)
+            postStarted.await()
+            vm.closeThread()
+            gate.complete(Unit)
+            awaitChildren(coroutineContext[Job]!!)
+
+            assertNull(vm.openThread.value)
+            assertEquals(false, assertIs<MessagesState.Loaded>(vm.state.value).threads.single().hasUnread)
+        }
+
+    /** Same contract for the backfill: a late body lands in the list the user went back to. */
+    @Test
+    fun `closing a thread mid backfill still lands the bodies in the list`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val gate = CompletableDeferred<Unit>()
+            val showStarted = CompletableDeferred<Unit>()
+            val client = conversationClient(
+                bodies = null,
+                route = { url ->
+                    val id = messageIdIn(url) ?: return@conversationClient null
+                    showStarted.complete(Unit)
+                    gate.await()
+                    """{"message": ${messageJson(id = id, contentHtml = "<p>Body $id</p>")}}"""
+                },
+            )
+            val vm = MessagesViewModel(client, this)
+            vm.load("yarnie")
+            awaitChildren(coroutineContext[Job]!!)
+
+            vm.openThread(rootId = 1)
+            showStarted.await()
+            vm.closeThread()
+            gate.complete(Unit)
+            awaitChildren(coroutineContext[Job]!!)
+
+            assertNull(vm.openThread.value)
+            val threads = assertIs<MessagesState.Loaded>(vm.state.value).threads
+            assertTrue(threads.single().messages.all { !it.contentHtml.isNullOrBlank() })
+        }
+
+    /**
+     * Only the body-less messages are re-fetched — including one whose `content_html` came
+     * back as an empty string rather than absent, which is just as unrenderable. This is
+     * what bounds the backfill's cost when `output_format=full` half-works.
+     */
+    @Test
+    fun `only the messages actually missing a body are re-fetched`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val urls = mutableListOf<Url>()
+            val client = suspendableRoutingApiClient { url ->
+                urls += url
+                val id = messageIdIn(url)
+                when {
+                    id != null -> """
+                        {"message": {
+                          "id": $id, "subject": "Yarn talk",
+                          "sender": {"username":"friend"}, "recipient": {"username":"yarnie"},
+                          "read_message": true,
+                          "content_html": "<p>Fetched $id</p>",
+                          "content": "Fetched $id",
+                          "folder_name": "inbox"
+                        }}
+                    """.trimIndent()
+                    url.parameters["folder"] == "inbox" -> listJson(
+                        listOf(
+                            messageJson(id = 1, contentHtml = "<p>Already here</p>"),
+                            messageJson(id = 3, parentId = 1, contentHtml = ""),
+                        ),
+                    )
+                    else -> EMPTY_LIST_JSON
+                }
+            }
+            val vm = MessagesViewModel(client, this)
+            vm.load("yarnie")
+            awaitChildren(coroutineContext[Job]!!)
+
+            vm.openThread(rootId = 1)
+            awaitChildren(coroutineContext[Job]!!)
+
+            assertEquals(listOf(3L), urls.mapNotNull { messageIdIn(it) })
+            val messages = assertNotNull(vm.openThread.value).thread.messages.associateBy { it.id }
+            // Message 1 kept the body it already had; only 3 was replaced.
+            assertEquals("<p>Already here</p>", messages.getValue(1L).contentHtml)
+            assertEquals("<p>Fetched 3</p>", messages.getValue(3L).contentHtml)
+            // The full shape's other fields come along when the response carries them.
+            assertEquals("Fetched 3", messages.getValue(3L).content)
+            assertEquals("inbox", messages.getValue(3L).folderName)
+        }
+
+    /**
+     * A message that names neither party — a system notice, or an account since deleted —
+     * is [MessageDirection.UNKNOWN], and UNKNOWN is not INBOUND. Marking it read would be
+     * acting on a guess about whose message it even is, and `groupIntoThreads` already
+     * declines to make that guess for the unread dot.
+     */
+    @Test
+    fun `a message of unknown direction is never marked read`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val urls = mutableListOf<Url>()
+            val client = suspendableRoutingApiClient { url ->
+                urls += url
+                if (url.parameters["folder"] == "inbox") {
+                    listJson(
+                        listOf(
+                            messageJson(id = 1, sender = null, recipient = null, read = false),
+                        ),
+                    )
+                } else {
+                    EMPTY_LIST_JSON
+                }
+            }
+            val vm = MessagesViewModel(client, this)
+            vm.load("yarnie")
+            awaitChildren(coroutineContext[Job]!!)
+
+            vm.openThread(rootId = 1)
+            awaitChildren(coroutineContext[Job]!!)
+
+            assertEquals(emptyList(), markReadPaths(urls))
+        }
+
+    /**
+     * A mark-read landing while the LIST has fallen into an error state must apply to the
+     * open thread without resurrecting the list: republishing content over
+     * [MessagesState.Error] would turn a failed refresh into a screen that silently looks
+     * fine, hiding the failure the user still needs to retry.
+     */
+    @Test
+    fun `a late mark-read does not turn a failed list back into content`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val gate = CompletableDeferred<Unit>()
+            val postStarted = CompletableDeferred<Unit>()
+            var failList = false
+            val client = conversationClient(
+                route = { url ->
+                    when {
+                        url.encodedPath.endsWith("/mark_read.json") -> {
+                            postStarted.complete(Unit)
+                            gate.await()
+                            "{}"
+                        }
+                        failList && url.encodedPath == "/messages/list.json" ->
+                            error("Simulated network error")
+                        else -> null
+                    }
+                },
+            )
+            val vm = MessagesViewModel(client, this)
+            vm.load("yarnie")
+            awaitChildren(coroutineContext[Job]!!)
+
+            vm.openThread(rootId = 1)
+            postStarted.await()
+            failList = true
+            vm.retry()
+            // Awaited on the state rather than on the children: the gated mark-read job is
+            // a child too, so joining them all here would deadlock against the gate below.
+            assertIs<MessagesState.Error>(vm.state.first { it is MessagesState.Error })
+
+            gate.complete(Unit)
+            awaitChildren(coroutineContext[Job]!!)
+
+            assertIs<MessagesState.Error>(vm.state.value)
+            // The open conversation still took the read — it is what's on screen.
+            assertEquals(false, vm.openThread.value?.thread?.hasUnread)
+        }
+
+    /** Reachable if a notification deep link ever opens a thread before the list loads. */
+    @Test
+    fun `opening a thread before the list has loaded is a no-op`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val vm = MessagesViewModel(conversationClient(), this)
+
+            vm.openThread(rootId = 1)
+            awaitChildren(coroutineContext[Job]!!)
+
+            assertNull(vm.openThread.value)
+            assertIs<MessagesState.Loading>(vm.state.value)
+        }
+
+    /** Only reachable if a refresh dropped the conversation between render and tap. */
+    @Test
+    fun `opening an unknown thread is a no-op`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val vm = MessagesViewModel(conversationClient(), this)
+            vm.load("yarnie")
+            awaitChildren(coroutineContext[Job]!!)
+
+            vm.openThread(rootId = 999)
+            awaitChildren(coroutineContext[Job]!!)
+
+            assertNull(vm.openThread.value)
         }
 }

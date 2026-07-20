@@ -133,6 +133,7 @@ import com.myhobbyislearning.fibersocial.feed.models.RavelryUser
 import com.myhobbyislearning.fibersocial.feed.models.VoteType
 import com.myhobbyislearning.fibersocial.composeapp.resources.Res
 import com.myhobbyislearning.fibersocial.composeapp.resources.app_logo_content_description
+import com.myhobbyislearning.fibersocial.messages.MessageThreadScreen
 import com.myhobbyislearning.fibersocial.messages.MessagesScreen
 import com.myhobbyislearning.fibersocial.profile.UserProfileScreen
 import com.myhobbyislearning.fibersocial.profile.UserProfileState
@@ -386,6 +387,13 @@ fun FeedScreen(
     val eventsState by viewModel.events.state.collectAsState()
     val eventDetailState by viewModel.eventDetail.state.collectAsState()
     val messagesState by viewModel.messages.state.collectAsState()
+    // THE conversation-detail nav flag (issue #371). Non-null means a thread is open, and
+    // it is the ViewModel's own state rather than a screen-level `mutableStateOf` like the
+    // other destinations here: the thread's content, its mark-read pass and the list row's
+    // dot are one piece of state, so a second flag beside it could only ever disagree with
+    // it. The cost is that a process death closes the thread and lands the user back on the
+    // list — the mailbox they can see the conversation in, with its read state applied.
+    val openMessageThread by viewModel.messages.openThread.collectAsState()
     val joinState by viewModel.feed.joinState.collectAsState()
     val leavingGroupId by viewModel.feed.leavingGroupId.collectAsState()
     val leaveError by viewModel.feed.leaveError.collectAsState()
@@ -925,6 +933,29 @@ fun FeedScreen(
         return
     }
 
+    // A conversation is open (issue #371). A pushed sub-screen with its own back arrow, so
+    // it early-returns like the topic detail rather than rendering inside the Scaffold the
+    // way the messages LIST does — the list is a drawer destination and has to keep the
+    // drawer; a thread is one level down from it and back is the way out.
+    val threadState = openMessageThread
+    if (threadState != null) {
+        MessageThreadScreen(
+            state = threadState,
+            // Blank only in the window before the feed has resolved the user, which the
+            // messages list can't be reached in — messageDirection treats it as "everything
+            // received", which mis-styles rather than mis-marks (mark-read already ran).
+            currentUsername = user?.username.orEmpty(),
+            // Read state is already applied by the time this fires: openThread() marked the
+            // thread read when it opened it, and updated the list row from the same
+            // regrouping, so the row behind is correct the instant it reappears.
+            onBack = { viewModel.messages.closeThread() },
+            // Left null on purpose — the mute affordance renders disabled until issue #377
+            // supplies the behaviour. See MessageThreadScreen.
+            onToggleMute = null,
+        )
+        return
+    }
+
     if (selectedTopic != null) {
         // Captured once: the send lambda runs later, when another handler may already
         // have nulled selectedTopic in the same frame — a !! there would crash.
@@ -1270,10 +1301,20 @@ fun FeedScreen(
                 // load events.'"). retry() always restarts the load.
                 onRetry = { viewModel.messages.retry() },
                 onLoadMore = { viewModel.messages.loadMore() },
-                // The conversation detail screen lands with #371; until then opening a
-                // thread has nowhere to go, so this only logs rather than pretending.
+                // Opens the conversation detail (issue #371), which also marks it read.
+                //
+                // THE MARK-READ RACE, closed here: the lambda handed over is the drawer
+                // dot's re-probe, and openThread() guarantees it runs only after every
+                // mark_read POST has returned. Firing it next to them instead would let
+                // the GET win and report the pre-read state, re-lighting the very dot
+                // reading the thread just cleared — the trap documented on
+                // FeedViewModel.refreshMessagesUnreadAfterReading and on
+                // RavelryApiClient.markMessageRead, and the same shape FeedScreen already
+                // sequences for topics via TopicDetailViewModel.markRead's onMarked.
                 onThreadClick = { thread ->
-                    println("FiberSocial: messages thread ${thread.rootId} tapped (detail screen: #371)")
+                    viewModel.messages.openThread(thread.rootId) {
+                        viewModel.feed.refreshMessagesUnreadAfterReading()
+                    }
                 },
                 modifier = Modifier.padding(padding),
                 listState = messagesListState,

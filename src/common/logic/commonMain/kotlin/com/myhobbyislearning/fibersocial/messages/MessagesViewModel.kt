@@ -74,6 +74,31 @@ sealed class MessagesState {
 }
 
 /**
+ * The conversation the user has open, emitted by [MessagesViewModel.openThread] (issue
+ * #371). `null` on the flow means no conversation is open — the list is what's showing.
+ *
+ * There is no `Loading` arm and no `Error` arm, because opening a thread never starts
+ * from nothing: the conversation is already in hand from the list, so the screen can
+ * render its participants, subject, order and every body the list happened to carry
+ * immediately. The only thing that can still be in flight is *bodies*, which is a partial
+ * degrade rather than a failure — hence [loadingBodies]/[bodyError] rather than a state
+ * that can replace the content.
+ *
+ * @property thread The conversation, oldest → newest. Re-derived from the accumulated
+ *   messages whenever they change, so a mark-read or a body fetch is reflected here and
+ *   in the list row from the same regrouping.
+ * @property loadingBodies Whether the per-message body backfill is in flight. Only ever
+ *   true when at least one message actually lacked a body.
+ * @property bodyError Set when that backfill failed. The thread stays fully readable —
+ *   this only explains why some messages show no text.
+ */
+data class OpenThreadState(
+    val thread: MessageThread,
+    val loadingBodies: Boolean = false,
+    val bodyError: String? = null,
+)
+
+/**
  * Drives the Messages conversation list (issue #370, epic #365).
  *
  * Ravelry has no conversation object — see `MessageThreads.kt`. This fetches the flat
@@ -106,6 +131,18 @@ sealed class MessagesState {
  * When someone settles the ambiguity with one authenticated call, either this keeps
  * working unchanged or the fix is a one-word change in the client, not here.
  *
+ * ## The detail screen lives here too, not in a ViewModel of its own (#371)
+ *
+ * [openThread] and [OpenThreadState] deliberately sit on this class rather than a
+ * separate thread ViewModel, because reading a conversation MUTATES THE LIST: marking a
+ * message read has to clear the row's unread dot, and backfilling a body has to reach the
+ * row's preview. Both of those are edits to [accumulated], the one list every thread is
+ * regrouped from. A separate ViewModel would need either its own copy of that state (two
+ * sources of truth for the same messages, guaranteed to diverge the moment one is
+ * refreshed) or a write-back channel into this one, which is just this class with an
+ * extra hop. Here, one edit to [accumulated] plus one regroup updates the open thread AND
+ * the list row together, by construction.
+ *
  * @param apiClient Ravelry client used for the list calls.
  * @param scope Coroutine scope tied to the host ViewModel's lifecycle.
  */
@@ -114,10 +151,14 @@ class MessagesViewModel(
     private val scope: CoroutineScope,
 ) {
     private val _state = MutableStateFlow<MessagesState>(MessagesState.Loading)
+    private val _openThread = MutableStateFlow<OpenThreadState?>(null)
     private val sessionExpirySignal = SessionExpirySignal()
 
     /** Observable conversation-list state. */
     val state: StateFlow<MessagesState> = _state.asStateFlow()
+
+    /** The open conversation, or `null` when the list is what's showing. See [openThread]. */
+    val openThread: StateFlow<OpenThreadState?> = _openThread.asStateFlow()
 
     /** @see SessionExpirySignal.flow */
     val sessionExpired: Flow<Unit> = sessionExpirySignal.flow
@@ -283,6 +324,220 @@ class MessagesViewModel(
             updated[folder] = FolderCursor(nextPage = page.page + 1, hasMore = page.hasMore)
         }
         pages.flatMap { (_, page) -> page.messages } to updated.toMap()
+    }
+
+    /**
+     * Opens the conversation rooted at [rootId] and reads it (issue #371).
+     *
+     * Three things happen, in this order, and the order is the point:
+     *
+     * 1. The thread is published SYNCHRONOUSLY from the already-loaded list, so the screen
+     *    renders on the same frame as the tap. No spinner, no fetch to wait on.
+     * 2. Every unread INBOUND message is marked read, one POST at a time (see
+     *    [markThreadRead]), and the local state is updated so the list row's dot clears.
+     * 3. Missing bodies are backfilled (see [backfillBodies]).
+     *
+     * Mark-read runs BEFORE the body backfill rather than after or alongside it: it is the
+     * user-visible obligation of opening a thread, and it must not be queued behind — or
+     * lost to a failure in — a cosmetic fetch.
+     *
+     * No-ops when the list is not loaded or [rootId] names no thread, which is only
+     * reachable if a refresh dropped the conversation between render and tap.
+     *
+     * @param rootId [MessageThread.rootId] of the tapped conversation.
+     * @param onMarkedRead Invoked once, on the ViewModel's scope, AFTER every mark-read
+     *   POST has returned and only when at least one actually succeeded.
+     *
+     *   **THIS IS THE MARK-READ RACE HOOK, and it exists so callers cannot get the order
+     *   wrong.** The drawer's Messages dot is refreshed by a GET
+     *   ([FeedViewModel.refreshMessagesUnreadAfterReading]) which, if issued next to these
+     *   POSTs rather than after them, can win and observe the pre-POST state — re-lighting
+     *   the very dot reading the thread just cleared. Both
+     *   `RavelryApiClient.markMessageRead` and `FeedViewModel.refreshDrawerUnreadAfterReading`
+     *   document this trap. Sequencing it here rather than at the call site means the call
+     *   site has no ordering left to get wrong; it just hands over a lambda.
+     *
+     *   Not invoked when nothing was marked, so backing out of an already-read
+     *   conversation costs no request at all.
+     */
+    fun openThread(rootId: Long, onMarkedRead: () -> Unit = {}) {
+        val thread = (_state.value as? MessagesState.Loaded)
+            ?.threads?.firstOrNull { it.rootId == rootId }
+        if (thread == null) {
+            println("FiberSocial: MessagesViewModel.openThread($rootId) — no such thread")
+            return
+        }
+        println("FiberSocial: MessagesViewModel.openThread($rootId)")
+        _openThread.value = OpenThreadState(
+            thread = thread,
+            loadingBodies = thread.messages.any { it.contentHtml.isNullOrBlank() },
+        )
+        // Deliberately NOT cancelling a previous open's job, and deliberately not
+        // cancelled by closeThread: a mark-read POST that the user outran by tapping Back
+        // must still land, or the dot they just cleared comes back. Late results can't
+        // leak into the wrong thread because every write below re-checks the open rootId.
+        scope.launch {
+            markThreadRead(thread, onMarkedRead)
+            backfillBodies(rootId)
+        }
+    }
+
+    /** Returns to the conversation list. In-flight mark-read work continues — see [openThread]. */
+    fun closeThread() {
+        _openThread.value = null
+    }
+
+    /**
+     * POSTs `mark_read` for each unread INBOUND message in [thread], then updates local
+     * state and finally invokes [onMarkedRead].
+     *
+     * INBOUND ONLY, and unread only. An outbound message's [Message.readMessage] describes
+     * whether the *recipient* read it — flipping that would be a lie about someone else's
+     * mailbox — and [MessageDirection.UNKNOWN] messages are excluded because their
+     * direction is a genuine unknown rather than a default. Already-read messages are
+     * skipped so re-opening a conversation is free.
+     *
+     * Sequential rather than parallel: a thread holds a handful of messages, so there is
+     * nothing to win, and a serial loop keeps the "every POST has returned" guarantee
+     * [onMarkedRead] depends on trivially true.
+     *
+     * A failure NEVER wedges the screen: each POST is caught individually, whatever
+     * succeeded is still applied locally, and the thread stays open and readable. The
+     * unmarked messages simply stay unread and get another chance next time.
+     */
+    private suspend fun markThreadRead(thread: MessageThread, onMarkedRead: () -> Unit) {
+        val unreadInbound = thread.messages.filter {
+            !it.readMessage &&
+                messageDirection(it, currentUsername) == MessageDirection.INBOUND
+        }
+        if (unreadInbound.isEmpty()) return
+
+        val marked = mutableSetOf<Long>()
+        for (message in unreadInbound) {
+            try {
+                apiClient.markMessageRead(message.id)
+                marked += message.id
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: SessionExpiredException) {
+                // Signalled, never swallowed — and the loop stops, since every remaining
+                // POST would fail the same way.
+                println("FiberSocial: MessagesViewModel mark-read session expired")
+                sessionExpirySignal.signal()
+                break
+            } catch (e: Exception) {
+                println("FiberSocial: mark-read failed for message ${message.id}: ${e.message}")
+            }
+        }
+        if (marked.isEmpty()) return
+
+        applyLocalRead(marked)
+        println("FiberSocial: marked ${marked.size} message(s) read in thread ${thread.rootId}")
+        // Strictly after the loop above: see the race note on [openThread]'s onMarkedRead.
+        onMarkedRead()
+    }
+
+    /**
+     * Flips [Message.readMessage] on [ids] in [accumulated] and republishes both the list
+     * and the open thread from one regrouping, so the row's dot and the thread agree.
+     */
+    private fun applyLocalRead(ids: Set<Long>) {
+        accumulated = accumulated.map {
+            if (it.id in ids) it.copy(readMessage = true) else it
+        }
+        republish()
+    }
+
+    /**
+     * Fetches the full shape for every message in the open thread that has no body, and
+     * merges the bodies in.
+     *
+     * ## The cost, and why this is where it is paid
+     *
+     * `getMessages(full = true)` already asks for bodies inline, but whether that works is
+     * the unresolved `output_format`-vs-`format` ambiguity documented on this class and on
+     * `RavelryApiClient.getMessages`. So this is the FALLBACK the client's KDoc names:
+     * [RavelryApiClient.getMessage] always returns the full shape.
+     *
+     * It costs up to one extra GET per message in the opened thread — and ZERO when the
+     * list already carried bodies, because only body-less messages are fetched. That is
+     * why the backfill lives on thread-open and not on the list: doing it there would cost
+     * an extra request per *conversation in the mailbox*, on every page and every
+     * pull-to-refresh, to fill a one-line preview (see this class's KDoc for why that was
+     * rejected). Here it is bounded by one conversation the user explicitly asked to read,
+     * a handful of messages, once per open — and it is what makes the detail screen
+     * correct regardless of how the ambiguity resolves. If `full = true` turns out to
+     * work, this quietly becomes a no-op.
+     *
+     * Fetched in parallel, unlike the mark-read loop: nothing sequences after this, and a
+     * user staring at a blank body is waiting on the slowest one.
+     *
+     * MERGES ONLY THE BODY FIELDS, rather than replacing the message wholesale. Mark-read
+     * has already run by this point and the server's copy of `read_message` may or may not
+     * reflect it yet; taking the fetched message whole could resurrect the unread dot this
+     * open just cleared.
+     */
+    private suspend fun backfillBodies(rootId: Long) {
+        val open = _openThread.value?.takeIf { it.thread.rootId == rootId } ?: return
+        val missing = open.thread.messages.filter { it.contentHtml.isNullOrBlank() }
+        if (missing.isEmpty()) {
+            updateOpen(rootId) { it.copy(loadingBodies = false) }
+            return
+        }
+        try {
+            val fetched = coroutineScope {
+                missing.map { async { apiClient.getMessage(it.id) } }.awaitAll()
+            }.associateBy { it.id }
+            accumulated = accumulated.map { existing ->
+                val full = fetched[existing.id] ?: return@map existing
+                existing.copy(
+                    contentHtml = full.contentHtml ?: existing.contentHtml,
+                    content = full.content ?: existing.content,
+                    folderName = full.folderName ?: existing.folderName,
+                )
+            }
+            republish()
+            updateOpen(rootId) { it.copy(loadingBodies = false, bodyError = null) }
+            println("FiberSocial: backfilled ${fetched.size} message body/bodies in thread $rootId")
+        } catch (e: SessionExpiredException) {
+            println("FiberSocial: MessagesViewModel body backfill session expired")
+            sessionExpirySignal.signal()
+            updateOpen(rootId) { it.copy(loadingBodies = false) }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // The thread stays open with whatever bodies it had: a failed backfill is a
+            // partially-blank conversation, never a dead screen.
+            println("FiberSocial: MessagesViewModel body backfill failed: ${e.message}")
+            updateOpen(rootId) {
+                it.copy(loadingBodies = false, bodyError = e.message ?: "Couldn't load messages")
+            }
+        }
+    }
+
+    /**
+     * Re-emits the list and the open thread from the current [accumulated], via a single
+     * [groupIntoThreads] pass so the two can never disagree.
+     *
+     * The list is only rewritten while it is [MessagesState.Loaded] — a regroup must not
+     * turn an error or a first-load spinner into content behind the user's back — but the
+     * open thread is updated either way, since it is showing regardless of what the list
+     * behind it is doing.
+     */
+    private fun republish() {
+        val regrouped = groupIntoThreads(accumulated, currentUsername)
+        (_state.value as? MessagesState.Loaded)?.let { _state.value = it.copy(threads = regrouped) }
+        _openThread.value?.let { open ->
+            val refreshed = regrouped.firstOrNull { it.rootId == open.thread.rootId } ?: return
+            _openThread.value = open.copy(thread = refreshed)
+        }
+    }
+
+    /** Applies [transform] to the open thread, but only while [rootId] is still the open one. */
+    private fun updateOpen(rootId: Long, transform: (OpenThreadState) -> OpenThreadState) {
+        val open = _openThread.value ?: return
+        if (open.thread.rootId != rootId) return
+        _openThread.value = transform(open)
     }
 
     private fun loadedState(): MessagesState.Loaded = MessagesState.Loaded(
