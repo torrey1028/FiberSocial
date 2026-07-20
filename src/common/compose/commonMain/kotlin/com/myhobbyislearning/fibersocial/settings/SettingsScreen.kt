@@ -66,6 +66,8 @@ import com.myhobbyislearning.fibersocial.ui.UserAvatar
  * @param onNewGroupEventsEnabledChange Invoked with the new value when toggled.
  * @param topicRepliesEnabled Whether reply notifications (My Posts) are on.
  * @param onTopicRepliesEnabledChange Invoked with the new value when toggled.
+ * @param newMessagesEnabled Whether new private-message notifications are on (issue #376).
+ * @param onNewMessagesEnabledChange Invoked with the new value when toggled.
  * @param onOpenAbout Opens the "About FiberSocial" disclosure screen (issue #289).
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -84,6 +86,8 @@ fun SettingsScreen(
     onNewGroupEventsEnabledChange: (Boolean) -> Unit = {},
     topicRepliesEnabled: Boolean = true,
     onTopicRepliesEnabledChange: (Boolean) -> Unit = {},
+    newMessagesEnabled: Boolean = true,
+    onNewMessagesEnabledChange: (Boolean) -> Unit = {},
     // Non-null on debug builds only: shows a "Debug panel" entry (issue #207).
     onOpenDebugPanel: (() -> Unit)? = null,
     onOpenAbout: () -> Unit = {},
@@ -207,6 +211,12 @@ fun SettingsScreen(
                     subtitle = "New replies in topics you've posted in",
                     checked = topicRepliesEnabled,
                     onCheckedChange = onTopicRepliesEnabledChange,
+                )
+                SwitchSettingRow(
+                    title = "New messages",
+                    subtitle = "When someone sends you a private message",
+                    checked = newMessagesEnabled,
+                    onCheckedChange = onNewMessagesEnabledChange,
                 )
                 HorizontalDivider()
             }
