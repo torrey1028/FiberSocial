@@ -22,6 +22,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.backhandler.BackHandler
 import androidx.compose.ui.viewinterop.AndroidView
 import com.myhobbyislearning.fibersocial.auth.RavelryAuthManager
+import com.myhobbyislearning.fibersocial.debug.describeSessionCookie
 
 @Composable
 actual fun WebViewLoginScreen(
@@ -87,8 +88,10 @@ actual fun WebViewLoginScreen(
                             val wwwCookie = cm.getCookie("https://www.ravelry.com") ?: ""
                             val rootCookie = cm.getCookie("https://ravelry.com") ?: ""
                             println("FiberSocial: OAuth complete")
-                            println("FiberSocial: www.ravelry.com cookies: $wwwCookie")
-                            println("FiberSocial: ravelry.com cookies: $rootCookie")
+                            // Never interpolate a cookie directly — describeSessionCookie
+                            // hides the value unless a debug build opted in (issue #395).
+                            println("FiberSocial: www.ravelry.com cookie ${describeSessionCookie(wwwCookie)}")
+                            println("FiberSocial: ravelry.com cookie ${describeSessionCookie(rootCookie)}")
                             val cookie = wwwCookie.ifEmpty { rootCookie }
                             onAuthComplete(code, state, cookie)
                             return true

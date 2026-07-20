@@ -1799,7 +1799,17 @@ class RavelryApiClient(
                 // authenticatedRequest passes non-401/403 error bodies (500s, HTML) through;
                 // decode failures here would otherwise surface raw SerializationException
                 // text in the composer.
-                println("FiberSocial: uploadForumImage unexpected token response: ${tokenRaw.take(200)}")
+                //
+                // tokenRaw is a raw upload_token response body — never log it directly
+                // (issue #395's sweep for credential-shaped values in logs). A decode
+                // failure here is usually an HTML error page or a differently-shaped JSON
+                // error, but "usually" isn't a guarantee the real token isn't present under
+                // an unexpected key, so this stays to shape/length diagnostics only.
+                val looksLikeHtml = tokenRaw.trimStart().startsWith("<")
+                println(
+                    "FiberSocial: uploadForumImage unexpected token response " +
+                        "(${tokenRaw.length} chars, looks like ${if (looksLikeHtml) "HTML" else "JSON/other"})",
+                )
                 error("Unexpected Ravelry response requesting an upload token.")
             }
 
