@@ -4,6 +4,7 @@ import com.myhobbyislearning.fibersocial.events.EventDetailViewModel
 import com.myhobbyislearning.fibersocial.events.EventsViewModel
 import com.myhobbyislearning.fibersocial.events.NewEventViewModel
 import com.myhobbyislearning.fibersocial.feedback.FeedbackViewModel
+import com.myhobbyislearning.fibersocial.messages.MessagesViewModel
 import com.myhobbyislearning.fibersocial.profile.UserProfileViewModel
 import com.myhobbyislearning.fibersocial.projects.ProjectPageViewModel
 import com.myhobbyislearning.fibersocial.projects.ProjectPhotoPickerViewModel
@@ -26,6 +27,7 @@ interface FeedScreenModel {
     val events: EventsViewModel
     val eventDetail: EventDetailViewModel
     val newEvent: NewEventViewModel
+    val messages: MessagesViewModel
 
     /** Reads the picked image behind [uri] (a platform URI string) and uploads it for the new-topic composer. */
     fun attachNewTopicImage(uri: String)

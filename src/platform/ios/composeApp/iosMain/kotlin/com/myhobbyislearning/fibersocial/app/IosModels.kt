@@ -16,6 +16,7 @@ import com.myhobbyislearning.fibersocial.feed.readPickedImage
 import com.myhobbyislearning.fibersocial.feed.NewTopicViewModel
 import com.myhobbyislearning.fibersocial.feed.TopicDetailViewModel
 import com.myhobbyislearning.fibersocial.feedback.FeedbackViewModel
+import com.myhobbyislearning.fibersocial.messages.MessagesViewModel
 import com.myhobbyislearning.fibersocial.profile.UserProfileViewModel
 import com.myhobbyislearning.fibersocial.net.ravelryApiClient
 import com.myhobbyislearning.fibersocial.notifications.EventSync
@@ -133,6 +134,9 @@ class IosFeedModel(scope: CoroutineScope) : FeedScreenModel {
     override val userProfile = UserProfileViewModel(apiClient, scope)
     override val feedback = FeedbackViewModel(apiClient, scope)
     override val events = EventsViewModel(apiClient, scope)
+
+    // Private-message conversation list (issue #370, epic #365).
+    override val messages = MessagesViewModel(apiClient, scope)
     override val newEvent = NewEventViewModel(
         apiClient,
         scope,
@@ -163,6 +167,7 @@ class IosFeedModel(scope: CoroutineScope) : FeedScreenModel {
         events.sessionExpired,
         eventDetail.sessionExpired,
         newEvent.sessionExpired,
+        messages.sessionExpired,
     )
 
     init {

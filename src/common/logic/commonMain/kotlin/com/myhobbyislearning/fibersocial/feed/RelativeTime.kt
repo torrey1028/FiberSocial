@@ -47,7 +47,21 @@ fun parseRavelryTimestamp(dateString: String?): Instant? {
  */
 fun relativeTime(dateString: String?, now: Instant = Clock.System.now()): String {
     val then = parseRavelryTimestamp(dateString) ?: return ""
-    val minutes = (now - then).inWholeMinutes
+    return relativeTimeSince(then.toEpochMilliseconds(), now)
+}
+
+/**
+ * Same wording as [relativeTime], for callers that already hold epoch millis rather than a
+ * Ravelry timestamp string.
+ *
+ * Exists for [com.myhobbyislearning.fibersocial.messages.MessageThread.lastActivityAt],
+ * which is the newest PARSEABLE timestamp across a whole conversation — a thread's newest
+ * message may itself have an unparseable `sent_at`, so re-deriving the string to hand to
+ * [relativeTime] would silently render the wrong message's age (or nothing at all).
+ * [relativeTime] delegates here so both surfaces can never drift apart in their bucketing.
+ */
+fun relativeTimeSince(epochMillis: Long, now: Instant = Clock.System.now()): String {
+    val minutes = (now.toEpochMilliseconds() - epochMillis) / 60_000
     return when {
         minutes < 60 -> "${minutes}m ago"
         minutes < 60 * 24 -> "${minutes / 60}h ago"

@@ -133,6 +133,7 @@ import com.myhobbyislearning.fibersocial.feed.models.RavelryUser
 import com.myhobbyislearning.fibersocial.feed.models.VoteType
 import com.myhobbyislearning.fibersocial.composeapp.resources.Res
 import com.myhobbyislearning.fibersocial.composeapp.resources.app_logo_content_description
+import com.myhobbyislearning.fibersocial.messages.MessagesScreen
 import com.myhobbyislearning.fibersocial.profile.UserProfileScreen
 import com.myhobbyislearning.fibersocial.profile.UserProfileState
 import com.myhobbyislearning.fibersocial.notifications.DeepLink
@@ -384,6 +385,7 @@ fun FeedScreen(
     val topicDetailState by viewModel.topicDetail.state.collectAsState()
     val eventsState by viewModel.events.state.collectAsState()
     val eventDetailState by viewModel.eventDetail.state.collectAsState()
+    val messagesState by viewModel.messages.state.collectAsState()
     val joinState by viewModel.feed.joinState.collectAsState()
     val leavingGroupId by viewModel.feed.leavingGroupId.collectAsState()
     val leaveError by viewModel.feed.leaveError.collectAsState()
@@ -435,6 +437,11 @@ fun FeedScreen(
         else -> false
     }
     val feedListState = key(if (showingMyPosts) "my-posts" else selectedGroupId) { rememberLazyListState() }
+    // Messages' own scroll position, hoisted for the same reason as feedListState: the
+    // Messages body is removed from composition whenever the user switches to Posts or a
+    // group, so a list state owned down inside MessagesScreen would reset scroll (and
+    // re-trigger paging from the top) on every visit.
+    val messagesListState = rememberLazyListState()
     // "Unread only" filter (issue #210): a purely client-side toggle over the already-
     // loaded feed. Unlike feedListState above, this is intentionally NOT scoped per
     // group — it's a standing preference the user sets once and expects to carry across
@@ -588,6 +595,23 @@ fun FeedScreen(
     val groups = loaded?.groups ?: emptyList()
 
     val feedIsLoaded = state is FeedState.Loaded
+
+    // Load the inbox when the Messages destination opens (issue #370).
+    //
+    // The username comes from the feed's ALREADY-RESOLVED current user rather than a fresh
+    // getCurrentUser() call — MessagesViewModel needs it to tell inbound from outbound, and
+    // the feed has fetched it before Messages can be reached. Keying on it (not just on
+    // showingMessages) is what handles the one case where it isn't available yet:
+    // showingMessages is rememberSaveable, so a process death while Messages was open
+    // restores it as true while the feed is still loading. The effect then simply re-runs
+    // once the user arrives instead of loading with a blank username.
+    //
+    // Re-entering Messages reloads rather than showing a cached list — a mailbox the user
+    // just navigated back to is exactly where stale contents are most noticeable.
+    LaunchedEffect(showingMessages, user?.username) {
+        val username = user?.username ?: return@LaunchedEffect
+        if (showingMessages) viewModel.messages.load(username)
+    }
     // The My Posts items available right now — Loaded, or a Refreshing snapshot of them.
     // This is the lookup table a Topic deep link resolves its id against.
     val myPostsItems = if (loaded?.myPosts == true) loaded.items else emptyList()
@@ -1201,9 +1225,24 @@ fun FeedScreen(
             },
         ) { padding ->
             // Messages replaces the feed content while keeping the drawer and top bar, so the
-            // user can navigate back out to Posts or a group. Placeholder for now — the real
-            // inbox arrives with the messages API work in epic #365.
-            if (showingMessages) MessagesPlaceholder(modifier = Modifier.padding(padding))
+            // user can navigate back out to Posts or a group (issue #370, epic #365).
+            if (showingMessages) MessagesScreen(
+                state = messagesState,
+                onRefresh = { viewModel.messages.refresh() },
+                // NOT refresh(): retry has to work from the error state, where refresh has
+                // no loaded content to refresh and would no-op — that is exactly the open
+                // bug #330 on the events screen ("pull-to-refresh doesn't work on 'Couldn't
+                // load events.'"). retry() always restarts the load.
+                onRetry = { viewModel.messages.retry() },
+                onLoadMore = { viewModel.messages.loadMore() },
+                // The conversation detail screen lands with #371; until then opening a
+                // thread has nowhere to go, so this only logs rather than pretending.
+                onThreadClick = { thread ->
+                    println("FiberSocial: messages thread ${thread.rootId} tapped (detail screen: #371)")
+                },
+                modifier = Modifier.padding(padding),
+                listState = messagesListState,
+            )
             else when (val s = state) {
                 // Loading is handled by the full-page LaunchLoadingScreen early-return
                 // above (issue #233), so it never reaches the Scaffold; this arm only
@@ -1572,30 +1611,6 @@ internal fun UnreadFilterEmptyState(
                 TextButton(onClick = onLoadMore) { Text("Check more topics") }
             }
         }
-    }
-}
-
-/**
- * Placeholder body for the Messages destination (issue #369).
- *
- * This PR is deliberately navigation-only — it lands the drawer row, the destination flag and
- * the chrome behaviour without touching the API, so it can merge independently of the messages
- * endpoints being built in parallel (epic #365). The real inbox replaces this composable.
- */
-@Composable
-internal fun MessagesPlaceholder(modifier: Modifier = Modifier) {
-    Column(
-        modifier = modifier.fillMaxSize().testTag("MessagesPlaceholder"),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
-    ) {
-        Text(
-            text = "No messages yet",
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.padding(horizontal = 32.dp),
-        )
     }
 }
 
