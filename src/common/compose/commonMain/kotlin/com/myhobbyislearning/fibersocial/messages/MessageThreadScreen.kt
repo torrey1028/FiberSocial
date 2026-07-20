@@ -34,6 +34,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -41,6 +43,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -56,6 +59,7 @@ import com.myhobbyislearning.fibersocial.feed.html.HtmlPostParser
 import com.myhobbyislearning.fibersocial.feed.parseRavelryTimestamp
 import com.myhobbyislearning.fibersocial.feed.relativeTimeSince
 import com.myhobbyislearning.fibersocial.ui.UserAvatar
+import kotlinx.coroutines.launch
 
 /** Label an outbound message is attributed to, in place of the signed-in user's own name. */
 private const val SELF_LABEL = "You"
@@ -80,8 +84,8 @@ private const val BUBBLE_WIDTH_FRACTION = 0.88f
  *
  * ## Bodies render through the shared [PostBody], entered at the HTML parser
  *
- * PMs read back as `content_html` and nothing else — `Message.content` is documented
- * write-only and its presence on reads is unresolved (see `Message.content`). So a body is
+ * PMs read back as `content_html` and nothing else — `Message.content` is write-only,
+ * verified live against the API (issue #396 follow-up on `Message.content`). So a body is
  * parsed with [HtmlPostParser], the project's single HTML→`PostDocument` converter, and
  * handed to the same [PostBody] the forum uses. Adding a second HTML path is an explicit
  * project trap; this adds none.
@@ -116,12 +120,14 @@ private const val BUBBLE_WIDTH_FRACTION = 0.88f
  *   mark-read POSTs are issued on open, not on exit (unlike `TopicDetailScreen`, whose
  *   read marker is a scroll high-water mark that can only be known when leaving).
  * @param onReply Opens the reply composer (issue #374). `null` hides the affordance entirely,
- *   which is what a caller with no composer wired up should pass. Note the button is shown
- *   even for a conversation that turns out to have nothing repliable — Ravelry only allows a
- *   reply to a message someone sent *you*, so a thread the user started and nobody answered
- *   has no target. That is reported by [MessagesViewModel.sendReply] as composer copy
- *   explaining why, rather than by a silently missing button: an absent control tells the
- *   user nothing, and the case is rare enough not to be worth a third state on this screen.
+ *   which is what a caller with no composer wired up should pass. For a conversation with
+ *   nothing repliable — Ravelry only allows a reply to a message someone sent *you*, so a
+ *   thread the user started and nobody answered has no target ([hasReplyTarget]) — the
+ *   button renders GRAYED OUT but stays tappable: a tap shows a snackbar explaining why
+ *   ([noReplyTargetMessage]) instead of opening the composer. Grayed-but-explaining beats
+ *   both alternatives: a hidden button tells the user nothing, and a dead-looking button
+ *   that silently ignores taps reads as broken. [MessagesViewModel.sendReply] keeps the
+ *   same guard as a backstop for a stale thread copy.
  * @param onToggleMute Placeholder hook for per-thread muting. `null` — the current state —
  *   renders the menu item disabled rather than hiding it, so the affordance is visibly
  *   coming rather than silently absent. Issue #377 owns the behaviour and only needs to
@@ -143,8 +149,11 @@ fun MessageThreadScreen(
     BackHandler(onBack = onBack)
 
     val thread = state.thread
+    val snackbarHostState = remember { SnackbarHostState() }
+    val snackbarScope = rememberCoroutineScope()
     Scaffold(
         modifier = modifier.testTag("MessageThreadScreen"),
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = {
@@ -163,13 +172,33 @@ fun MessageThreadScreen(
             )
         },
         floatingActionButton = {
-            onReply?.let {
-                ExtendedFloatingActionButton(
-                    onClick = it,
-                    modifier = Modifier.testTag("ReplyFab"),
-                    icon = { Icon(Icons.Default.Edit, contentDescription = null) },
-                    text = { Text("Reply") },
-                )
+            onReply?.let { openComposer ->
+                if (thread.hasReplyTarget(currentUsername)) {
+                    ExtendedFloatingActionButton(
+                        onClick = openComposer,
+                        modifier = Modifier.testTag("ReplyFab"),
+                        icon = { Icon(Icons.Default.Edit, contentDescription = null) },
+                        text = { Text("Reply") },
+                    )
+                } else {
+                    // Grayed out, not gone, and still tappable: the tap explains itself
+                    // instead of opening a composer whose send is doomed. See the KDoc.
+                    ExtendedFloatingActionButton(
+                        onClick = {
+                            snackbarScope.launch {
+                                snackbarHostState.currentSnackbarData?.dismiss()
+                                snackbarHostState.showSnackbar(
+                                    noReplyTargetMessage(thread.counterpart?.username),
+                                )
+                            }
+                        },
+                        modifier = Modifier.testTag("ReplyFabDisabled"),
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                        contentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
+                        icon = { Icon(Icons.Default.Edit, contentDescription = null) },
+                        text = { Text("Reply") },
+                    )
+                }
             }
         },
     ) { padding ->

@@ -119,8 +119,23 @@ data class MessageThread(
  * @param currentUsername the signed-in user's [RavelryUser.username]; compared
  *   case-insensitively. A blank value simply makes every message look inbound, which is
  *   the safe direction to be wrong in (it can over-report unread, never under-report).
+ * @param mergeBySubjectFallback Pass `true` when any of [messages] came from the website
+ *   scrape fallback ([com.myhobbyislearning.fibersocial.feed.MessagesPage.viaScrape],
+ *   issue #396): scraped messages carry NO `parent_message_id`, so without this every
+ *   message would surface as its own single-message thread. The fallback merges buckets
+ *   consisting entirely of parentless messages when they share a counterpart (by
+ *   username, case-insensitive) and a subject (case-insensitive, `Re:` prefixes
+ *   stripped). It is a heuristic: two genuinely separate conversations with the same
+ *   person under the same subject will merge — accepted, because that is also how the
+ *   messages *read*, and the alternative (no conversations at all in scrape mode) is
+ *   strictly worse. Buckets with a null counterpart or a blank subject never merge.
+ *   JSON-sourced buckets (any member with a parent id) are never touched.
  */
-fun groupIntoThreads(messages: List<Message>, currentUsername: String): List<MessageThread> {
+fun groupIntoThreads(
+    messages: List<Message>,
+    currentUsername: String,
+    mergeBySubjectFallback: Boolean = false,
+): List<MessageThread> {
     if (messages.isEmpty()) return emptyList()
 
     val byId = LinkedHashMap<Long, Message>(messages.size)
@@ -133,6 +148,8 @@ fun groupIntoThreads(messages: List<Message>, currentUsername: String): List<Mes
         roots[root.id] = root
         buckets.getOrPut(root.id) { mutableListOf() } += message
     }
+
+    if (mergeBySubjectFallback) mergeParentlessBucketsBySubject(roots, buckets, currentUsername)
 
     return buckets.map { (rootId, bucket) ->
         buildThread(roots.getValue(rootId), bucket, currentUsername)
@@ -179,6 +196,78 @@ private fun rootOf(message: Message, byId: Map<Long, Message>): Message {
         depth++
     }
 }
+
+/**
+ * Whether this thread contains anything the signed-in user can actually reply to.
+ *
+ * Ravelry only accepts a reply to a message the user RECEIVED (`reply.json` rejects a
+ * parent that doesn't list the current user as recipient), so a thread with no inbound
+ * message — one the user started and nobody has answered — has no reply target. Shared
+ * by `MessagesViewModel.sendReply`'s guard and the thread screen's disabled Reply
+ * button so the two can never disagree about when a reply is possible.
+ */
+fun MessageThread.hasReplyTarget(currentUsername: String): Boolean =
+    messages.any { messageDirection(it, currentUsername) == MessageDirection.INBOUND }
+
+/**
+ * The user-facing explanation for a conversation with no reply target — one string,
+ * shared by the composer's error state and the thread screen's disabled-Reply notice.
+ */
+fun noReplyTargetMessage(counterpartUsername: String?): String {
+    // "the other person" rather than "they": the sentence reads "once <name> writes
+    // back", which needs a singular noun phrase.
+    val name = counterpartUsername?.takeIf { it.isNotBlank() } ?: "the other person"
+    return "Ravelry only lets you reply to a message someone sent you, and this " +
+        "conversation has none yet — you can reply once $name writes back."
+}
+
+/**
+ * The scrape-mode merge described on `groupIntoThreads`' `mergeBySubjectFallback`:
+ * buckets made entirely of parentless messages are grouped by
+ * `(counterpart username lowercase, subject with Re:-prefixes stripped and lowercased)`
+ * and each group collapses into one bucket. The merged bucket's root is the oldest
+ * merged root (by parsed `sent_at`, unknowns last, then id) so the resulting `rootId` is
+ * deterministic across regroupings of the same data — the detail screen's identity for
+ * the conversation depends on that stability.
+ */
+private fun mergeParentlessBucketsBySubject(
+    roots: MutableMap<Long, Message>,
+    buckets: LinkedHashMap<Long, MutableList<Message>>,
+    currentUsername: String,
+) {
+    val mergeGroups = LinkedHashMap<Pair<String, String>, MutableList<Long>>()
+    for ((rootId, bucket) in buckets) {
+        if (bucket.any { it.parentMessageId != null }) continue
+        val root = roots.getValue(rootId)
+        val counterpart = counterpartOf(root, currentUsername)
+            ?: bucket.firstNotNullOfOrNull { counterpartOf(it, currentUsername) }
+            ?: continue
+        val subjectSource = root.subject.takeIf { it.isNotBlank() }
+            ?: bucket.firstOrNull { it.subject.isNotBlank() }?.subject
+            ?: continue
+        val normalized = normalizedSubject(subjectSource)
+        if (normalized.isEmpty()) continue
+        mergeGroups.getOrPut(counterpart.username.lowercase() to normalized) { mutableListOf() } += rootId
+    }
+
+    val oldestFirst = compareBy<Message, Long?>(nullsLast()) { sentAtMillis(it) }.thenBy { it.id }
+    for (rootIds in mergeGroups.values) {
+        if (rootIds.size < 2) continue
+        val merged = rootIds.flatMap { buckets.getValue(it) }.toMutableList()
+        val newRoot = rootIds.map { roots.getValue(it) }.minWith(oldestFirst)
+        rootIds.forEach {
+            buckets.remove(it)
+            if (it != newRoot.id) roots.remove(it)
+        }
+        buckets[newRoot.id] = merged
+    }
+}
+
+/** [subject] with every leading `Re:` stripped, trimmed, and lowercased. */
+private fun normalizedSubject(subject: String): String =
+    subject.replace(LEADING_RE_PREFIXES, "").trim().lowercase()
+
+private val LEADING_RE_PREFIXES = Regex("""^(\s*re:\s*)+""", RegexOption.IGNORE_CASE)
 
 /** Assembles one [MessageThread] from its root and the messages that resolved to it. */
 private fun buildThread(

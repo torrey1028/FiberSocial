@@ -363,6 +363,99 @@ class MessageThreadsTest {
         assertEquals("purlpete", threads[1].counterpart?.username)
     }
 
+    // --- the scrape-mode subject merge (issue #396) ----------------------------------
+
+    @Test
+    fun `subject merge folds parentless messages with one counterpart into one thread`() {
+        // Scrape-shaped data: no parent ids anywhere. An exchange under one subject —
+        // inbound and the Re: reply outbound — must become a single conversation.
+        val original = inbound(1L, subject = "Yarn swap", sentAt = at(1))
+        val reply = outbound(2L, subject = "Re: Yarn swap", sentAt = at(2))
+        val later = inbound(3L, subject = "Re: Re: Yarn swap", sentAt = at(3))
+
+        val threads = groupIntoThreads(listOf(original, reply, later), me, mergeBySubjectFallback = true)
+
+        val thread = threads.single()
+        assertEquals(listOf(1L, 2L, 3L), thread.messages.map { it.id })
+        // Root is the oldest message, so the thread's identity is stable.
+        assertEquals(1L, thread.rootId)
+        assertEquals("Yarn swap", thread.subject)
+        assertEquals("purlpete", thread.counterpart?.username)
+    }
+
+    @Test
+    fun `subject merge keeps different counterparts apart`() {
+        val toPete = inbound(1L, subject = "Hello", sentAt = at(1))
+        val toCaste = inbound(2L, subject = "Hello", sentAt = at(2))
+            .copy(sender = RavelryUser(username = "casteron"))
+
+        val threads = groupIntoThreads(listOf(toPete, toCaste), me, mergeBySubjectFallback = true)
+
+        assertEquals(2, threads.size)
+    }
+
+    @Test
+    fun `subject merge never touches buckets that carry real parent ids`() {
+        // JSON-shaped data mixed in: the reply chain groups by parent id, and the merge
+        // must not stitch an unrelated same-subject conversation onto it.
+        val root = inbound(1L, subject = "Yarn swap", sentAt = at(1))
+        val reply = outbound(2L, parent = 1L, subject = "Yarn swap", sentAt = at(2))
+        val separate = inbound(5L, subject = "Yarn swap", sentAt = at(5))
+
+        val threads = groupIntoThreads(listOf(root, reply, separate), me, mergeBySubjectFallback = true)
+
+        assertEquals(2, threads.size)
+        val chained = threads.first { it.rootId == 1L }
+        assertEquals(listOf(1L, 2L), chained.messages.map { it.id })
+    }
+
+    @Test
+    fun `subject merge skips blank subjects and unknown counterparts`() {
+        val blankA = inbound(1L, subject = "", sentAt = at(1))
+        val blankB = inbound(2L, subject = "", sentAt = at(2))
+        val nobodyA = inbound(3L, subject = "Hi", sentAt = at(3))
+            .copy(sender = null, recipient = null)
+        val nobodyB = inbound(4L, subject = "Hi", sentAt = at(4))
+            .copy(sender = null, recipient = null)
+
+        val threads = groupIntoThreads(listOf(blankA, blankB, nobodyA, nobodyB), me, mergeBySubjectFallback = true)
+
+        assertEquals(4, threads.size)
+    }
+
+    @Test
+    fun `subject merge skips subjects that are nothing but Re prefixes`() {
+        // "Re:" survives the blank-subject guard (it isn't blank) but normalizes to
+        // nothing — a subject with no identity of its own must never glue two unrelated
+        // conversations with the same person together.
+        val a = inbound(1L, subject = "Re:", sentAt = at(1))
+        val b = inbound(2L, subject = "Re: Re:", sentAt = at(2))
+
+        val threads = groupIntoThreads(listOf(a, b), me, mergeBySubjectFallback = true)
+
+        assertEquals(2, threads.size)
+    }
+
+    @Test
+    fun `without the fallback flag parentless messages stay separate threads`() {
+        val original = inbound(1L, subject = "Yarn swap", sentAt = at(1))
+        val reply = outbound(2L, subject = "Re: Yarn swap", sentAt = at(2))
+
+        val threads = groupIntoThreads(listOf(original, reply), me)
+
+        assertEquals(2, threads.size)
+    }
+
+    @Test
+    fun `subject merge reports unread from any inbound unread member`() {
+        val readOne = inbound(1L, subject = "Swap", sentAt = at(1))
+        val unreadReply = inbound(2L, subject = "Re: Swap", sentAt = at(2), read = false)
+
+        val threads = groupIntoThreads(listOf(readOne, unreadReply), me, mergeBySubjectFallback = true)
+
+        assertTrue(threads.single().hasUnread)
+    }
+
     private fun parsedMillis(wire: String): Long =
         com.myhobbyislearning.fibersocial.feed.parseRavelryTimestamp(wire)!!.toEpochMilliseconds()
 }

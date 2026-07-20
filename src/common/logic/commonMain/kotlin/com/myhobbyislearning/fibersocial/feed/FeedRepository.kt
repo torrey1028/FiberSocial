@@ -5,7 +5,6 @@ import com.myhobbyislearning.fibersocial.feed.models.FeedItem
 import com.myhobbyislearning.fibersocial.feed.models.Group
 import com.myhobbyislearning.fibersocial.feed.models.RavelryUser
 import com.myhobbyislearning.fibersocial.feed.models.Topic
-import com.myhobbyislearning.fibersocial.messages.MessageFolder
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
@@ -70,13 +69,6 @@ private const val UNREAD_SCAN_PAGE_SIZE = 100
 // is one request PER GROUP, and only the newest timestamp is wanted. It is deliberately
 // not 1 — see getGroupActivity for why taking the max over a short page matters.
 private const val GROUP_ACTIVITY_PAGE_SIZE = 10
-
-// Messages requested by the inbox unread probe. ONE, deliberately — unlike the per-group
-// leg above (where slot 1 can hold a stale pinned topic, so a page of 1 would lie), this
-// asks a pure existence question of a server-side `unread_only` filter: any row at all
-// means "unread mail exists". The inbox can be enormous and getDrawerUnread already costs
-// 1 + groups.size requests, so it fetches the smallest page that can answer it.
-private const val MESSAGES_UNREAD_PROBE_PAGE_SIZE = 1
 
 /**
  * Translates raw Ravelry API data into [FeedItem]s ready for display.
@@ -165,24 +157,17 @@ class FeedRepository(private val apiClient: RavelryApiClient) {
      * Whether the message inbox holds anything unread — the "Messages" dot on its own,
      * without the rest of [getDrawerUnread] (issue #372).
      *
-     * A pure existence probe: `unread_only` makes the server do the filtering, so any row
-     * at all in the response means unread mail exists and
-     * [MESSAGES_UNREAD_PROBE_PAGE_SIZE] rows are enough to find out. Exposed separately so
-     * re-checking the dot after the user reads a message costs one request instead of a
-     * full `2 + groups.size` pass — the message-side twin of [getYourPostsUnread].
+     * A pure existence probe, delegated to [RavelryApiClient.hasUnreadMessages] so the
+     * server does the counting on both of its routes (the JSON `unread_only` filter, or —
+     * while `message-read` is ungranted, issue #396 — the website's own
+     * `message_count.json` badge endpoint). Exposed separately so re-checking the dot
+     * after the user reads a message costs one request instead of a full
+     * `2 + groups.size` pass — the message-side twin of [getYourPostsUnread].
      *
      * Throws on failure. [getDrawerUnread] softens that itself (see
      * [getMessagesUnreadOrNone]); the ViewModel's narrow re-probe catches it there.
      */
-    suspend fun getMessagesUnread(): Boolean =
-        apiClient
-            .getMessages(
-                folder = MessageFolder.INBOX,
-                pageSize = MESSAGES_UNREAD_PROBE_PAGE_SIZE,
-                unreadOnly = true,
-            )
-            .messages
-            .isNotEmpty()
+    suspend fun getMessagesUnread(): Boolean = apiClient.hasUnreadMessages()
 
     /**
      * [getMessagesUnread] with the same soft-failure contract the per-group leg has: a
