@@ -2,7 +2,6 @@
 
 package com.myhobbyislearning.fibersocial.login
 
-import android.net.Uri
 import android.webkit.CookieManager
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
@@ -21,13 +20,18 @@ import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.backhandler.BackHandler
 import androidx.compose.ui.viewinterop.AndroidView
+import com.myhobbyislearning.fibersocial.auth.AuthCallback
+import com.myhobbyislearning.fibersocial.auth.MALFORMED_AUTH_CALLBACK_MESSAGE
 import com.myhobbyislearning.fibersocial.auth.RavelryAuthManager
+import com.myhobbyislearning.fibersocial.auth.authFailureMessage
+import com.myhobbyislearning.fibersocial.auth.parseAuthCallback
 import com.myhobbyislearning.fibersocial.debug.describeSessionCookie
 
 @Composable
 actual fun WebViewLoginScreen(
     authUrl: String,
     onAuthComplete: (code: String, state: String?, sessionCookie: String) -> Unit,
+    onAuthError: (message: String) -> Unit,
     onBack: () -> Unit,
 ) {
     println("FiberSocial: WebViewLoginScreen authUrl=$authUrl")
@@ -81,9 +85,22 @@ actual fun WebViewLoginScreen(
                         val url = request.url.toString()
                         println("FiberSocial: WebView navigating to ${url.take(120)}")
                         if (url.startsWith(RavelryAuthManager.REDIRECT_URI)) {
-                            val redirect = Uri.parse(url)
-                            val code = redirect.getQueryParameter("code") ?: return true
-                            val state = redirect.getQueryParameter("state")
+                            // Every branch below must call something. Returning true
+                            // cancels the navigation, so a silent return strands the user
+                            // on the authorize page with no way forward (issue #394).
+                            val callback = parseAuthCallback(url)
+                            if (callback is AuthCallback.Failure) {
+                                println("FiberSocial: OAuth failed: ${callback.error}")
+                                onAuthError(authFailureMessage(callback))
+                                return true
+                            }
+                            if (callback !is AuthCallback.Success) {
+                                println("FiberSocial: OAuth redirect carried neither code nor error")
+                                onAuthError(MALFORMED_AUTH_CALLBACK_MESSAGE)
+                                return true
+                            }
+                            val code = callback.code
+                            val state = callback.state
                             val cm = CookieManager.getInstance()
                             val wwwCookie = cm.getCookie("https://www.ravelry.com") ?: ""
                             val rootCookie = cm.getCookie("https://ravelry.com") ?: ""
