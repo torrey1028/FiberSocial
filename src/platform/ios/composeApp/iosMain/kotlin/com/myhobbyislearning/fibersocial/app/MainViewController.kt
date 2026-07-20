@@ -19,6 +19,7 @@ import coil3.ImageLoader
 import coil3.SingletonImageLoader
 import coil3.network.ktor2.KtorNetworkFetcherFactory
 import com.myhobbyislearning.fibersocial.auth.AuthState
+import com.myhobbyislearning.fibersocial.debug.DebugFlags
 import com.myhobbyislearning.fibersocial.auth.KeyValueTokenStorage
 import com.myhobbyislearning.fibersocial.feed.FeedScreen
 import com.myhobbyislearning.fibersocial.feed.LocalProjectLinkOpener
@@ -53,7 +54,12 @@ import platform.UIKit.UIViewController
  * The app's Compose root, embedded by the SwiftUI host (src/platform/ios). The iOS
  * counterpart of `MainActivity.onCreate/setContent`.
  */
+@OptIn(ExperimentalNativeApi::class)
 fun MainViewController(): UIViewController {
+    // Before anything can log: DebugFlags defaults to "not a debug build", so a missed
+    // call here fails closed (nothing sensitive logged) rather than open (issue #395).
+    // Same signal that gates the debug panel below.
+    DebugFlags.initDebugBuild(Platform.isDebugBinary)
     // App-lifetime scope: a single-window iOS app has no Activity recreation, so the
     // models simply live as long as the process (the ViewModel-shaped equivalent of
     // `by viewModels()` retention).

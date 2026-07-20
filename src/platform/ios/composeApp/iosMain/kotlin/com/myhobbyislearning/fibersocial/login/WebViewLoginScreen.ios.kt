@@ -10,6 +10,7 @@ import com.myhobbyislearning.fibersocial.auth.MALFORMED_AUTH_CALLBACK_MESSAGE
 import com.myhobbyislearning.fibersocial.auth.RavelryAuthManager
 import com.myhobbyislearning.fibersocial.auth.authFailureMessage
 import com.myhobbyislearning.fibersocial.auth.parseAuthCallback
+import com.myhobbyislearning.fibersocial.debug.describeSessionCookie
 import kotlinx.cinterop.ExperimentalForeignApi
 import platform.CoreGraphics.CGRectMake
 import platform.Foundation.NSHTTPCookie
@@ -104,8 +105,10 @@ private class LoginNavigationDelegate(
             val wwwCookie = cookieHeader(all, host = "www.ravelry.com")
             val rootCookie = cookieHeader(all, host = "ravelry.com")
             println("FiberSocial: OAuth complete")
-            println("FiberSocial: www.ravelry.com cookies: $wwwCookie")
-            println("FiberSocial: ravelry.com cookies: $rootCookie")
+            // Never interpolate a cookie directly — describeSessionCookie hides the value
+            // unless a debug build opted in (issue #395).
+            println("FiberSocial: www.ravelry.com cookie ${describeSessionCookie(wwwCookie)}")
+            println("FiberSocial: ravelry.com cookie ${describeSessionCookie(rootCookie)}")
             onAuthComplete(code, state, wwwCookie.ifEmpty { rootCookie })
         }
     }
