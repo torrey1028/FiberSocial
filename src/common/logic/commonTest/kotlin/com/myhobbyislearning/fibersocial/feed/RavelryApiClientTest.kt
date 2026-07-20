@@ -2712,6 +2712,363 @@ class RavelryApiClientTest {
 
         assertFailsWith<kotlinx.serialization.MissingFieldException> { client.getMessage(1001L) }
     }
+
+    // ---- Sending messages (issue #367) ----
+
+    @Test
+    fun `sendMessage posts the recipient and free text in the body and never in the query`() = runTest {
+        // THE RECURRING BUG THIS PINS: subject and content are user-authored free text.
+        // In the query string they blow the request line (414) on a long message and get
+        // recorded verbatim in server access logs. They belong in the body under either
+        // candidate encoding, so this assertion survives whichever way the documented
+        // form-vs-JSON ambiguity eventually resolves.
+        var path: String? = null
+        var method: String? = null
+        var form: io.ktor.http.Parameters? = null
+        var url: io.ktor.http.Url? = null
+        val engine = MockEngine { request ->
+            path = request.url.encodedPath
+            method = request.method.value
+            url = request.url
+            form = (request.body as io.ktor.client.request.forms.FormDataContent).formData
+            respond(MESSAGE_CREATED_JSON, HttpStatusCode.OK,
+                headersOf("Content-Type", ContentType.Application.Json.toString()))
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+
+        RavelryApiClient(httpClient, FakeFeedTokenStorage())
+            .sendMessage("yarnie", "Yarn swap?", "Do you still have that skein?")
+
+        assertEquals("/messages/create.json", path)
+        assertEquals("POST", method)
+        assertEquals("yarnie", form?.get("recipient_username"))
+        assertEquals("Yarn swap?", form?.get("subject"))
+        assertEquals("Do you still have that skein?", form?.get("content"))
+        assertNull(url?.parameters?.get("subject"))
+        assertNull(url?.parameters?.get("content"))
+        assertNull(url?.parameters?.get("recipient_username"))
+        // `data` is the doc generator's label for the request body, not a field to send;
+        // the bundles/create example puts the object's keys at the top level.
+        assertNull(form?.get("data"))
+    }
+
+    @Test
+    fun `sendMessage decodes the created message Ravelry echoes back`() = runTest {
+        // The response body may differ from what was submitted (Markdown is rendered and
+        // unsafe HTML stripped) so the caller must use the returned message rather than
+        // optimistically reusing its own input.
+        val client = routingApiClient { MESSAGE_CREATED_JSON }
+
+        val message = client.sendMessage("yarnie", "Yarn swap?", "Do you still have that skein?")
+
+        assertEquals(2001L, message.id)
+        assertEquals("Yarn swap?", message.subject)
+        assertEquals("<p>Do you still have that skein?</p>", message.contentHtml)
+        // A brand-new conversation has no parent — that is exactly what distinguishes it
+        // from a reply, and what makes routing a reply through here so damaging.
+        assertNull(message.parentMessageId)
+    }
+
+    @Test
+    fun `replyToMessage hits the reply endpoint and not create`() = runTest {
+        // THE HIGHEST-CONSEQUENCE INVARIANT IN THIS FILE. reply.json is the ONLY endpoint
+        // that sets parent_message_id, and that pointer is the only link Ravelry gives us
+        // between messages — our threading (#368) is a client-side walk of it. A reply
+        // sent via create.json still delivers and still looks right in the inbox; it just
+        // silently becomes its own orphan conversation, unfixably (messages cannot be
+        // edited). So assert the path we DO use and the path we must NOT.
+        var path: String? = null
+        var method: String? = null
+        var form: io.ktor.http.Parameters? = null
+        val engine = MockEngine { request ->
+            path = request.url.encodedPath
+            method = request.method.value
+            form = (request.body as io.ktor.client.request.forms.FormDataContent).formData
+            respond(MESSAGE_REPLY_JSON, HttpStatusCode.OK,
+                headersOf("Content-Type", ContentType.Application.Json.toString()))
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+
+        val reply = RavelryApiClient(httpClient, FakeFeedTokenStorage())
+            .replyToMessage(1001L, "Yarn swap?", "Yes I do!")
+
+        assertEquals("/messages/1001/reply.json", path)
+        assertFalse(path.orEmpty().contains("create"))
+        assertEquals("POST", method)
+        // The reply endpoint derives the recipient from the parent message; sending one
+        // would be at best redundant and at worst a mis-addressed message.
+        assertNull(form?.get("recipient_username"))
+        assertEquals("Yes I do!", form?.get("content"))
+        // The whole point of using this endpoint: the parent link comes back set.
+        assertEquals(1001L, reply.parentMessageId)
+    }
+
+    @Test
+    fun `replyToMessage keeps free text out of the query string too`() = runTest {
+        // Same free-text rule as sendMessage. Asserted separately because the two methods
+        // build their request independently at the call site even though they share a body
+        // builder — a future edit could regress one without the other.
+        var url: io.ktor.http.Url? = null
+        val client = routingApiClientCapturing(onRequest = { url = it }) { MESSAGE_REPLY_JSON }
+
+        client.replyToMessage(1001L, "Yarn swap?", "Yes I do!")
+
+        assertNull(url?.parameters?.get("content"))
+        assertNull(url?.parameters?.get("subject"))
+    }
+
+    @Test
+    fun `a messaging 403 surfaces as ForbiddenException and never as session expiry`() = runTest {
+        // Ravelry 403s create/reply when EITHER party has messaging disabled — a permanent
+        // permission fact, not an expired session. Treating it as expiry would log the user
+        // out to "fix" something logging out cannot fix. Issue #82 put this rule in
+        // authenticatedRequest; this asserts it still holds on the messaging path, and that
+        // no refresh or retry is attempted.
+        var callCount = 0
+        var refreshCalled = false
+        val engine = MockEngine {
+            callCount++
+            respond("""{"errors":["messaging is disabled"]}""", HttpStatusCode.Forbidden, headersOf())
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val client = RavelryApiClient(httpClient, FakeFeedTokenStorage(),
+            refreshToken = { refreshCalled = true })
+
+        val e = assertFailsWith<ForbiddenException> {
+            client.sendMessage("yarnie", "Hi", "Hello")
+        }
+
+        assertFalse(refreshCalled)
+        assertEquals(1, callCount)
+        val message = e.message ?: ""
+        // FeedErrorState pattern-matches "401"/"403" in error text to detect expiry, so
+        // leaking the digits here would route a permission error into the logout UI.
+        assertFalse(message.contains("403"))
+        assertFalse(message.contains("401"))
+    }
+
+    @Test
+    fun `the messaging 403 message names both causes rather than guessing one`() = runTest {
+        // The two 403 causes are indistinguishable by status code: messaging disabled on
+        // either profile, or a token minted before message-write joined SCOPE. Only the
+        // second is fixed by signing out and in. Committing to one story would be
+        // confidently wrong half the time, so the copy must cover both.
+        val engine = MockEngine { respond("", HttpStatusCode.Forbidden, headersOf()) }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val client = RavelryApiClient(httpClient, FakeFeedTokenStorage())
+
+        val e = assertFailsWith<ForbiddenException> {
+            client.replyToMessage(1001L, "Hi", "Hello")
+        }
+
+        val message = e.message ?: ""
+        assertTrue(message.contains("isn't accepting"), "no messaging-disabled cause: $message")
+        assertTrue(message.contains("signing"), "no re-login cause: $message")
+        // It must NOT degrade to the generic path-only text, which tells a user nothing.
+        assertFalse(message.contains("Permission denied"))
+    }
+
+    @Test
+    fun `archiveMessage and unarchiveMessage post to their own paths`() = runTest {
+        // Distinct endpoints rather than one toggle: posting archive twice is not an
+        // unarchive, so mixing them up leaves a message stuck out of the inbox.
+        val paths = mutableListOf<String>()
+        val methods = mutableListOf<String>()
+        val engine = MockEngine { request ->
+            paths += request.url.encodedPath
+            methods += request.method.value
+            respond("", HttpStatusCode.OK,
+                headersOf("Content-Type", ContentType.Application.Json.toString()))
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val client = RavelryApiClient(httpClient, FakeFeedTokenStorage())
+
+        client.archiveMessage(1001L)
+        client.unarchiveMessage(1001L)
+
+        assertEquals(listOf("/messages/1001/archive.json", "/messages/1001/unarchive.json"), paths)
+        assertEquals(listOf("POST", "POST"), methods)
+    }
+
+    @Test
+    fun `deleteMessage uses the DELETE verb on the bare message path`() = runTest {
+        // The only message endpoint that is not a POST and the only one with no verb
+        // segment in its path. POST /messages/{id}.json is a different route entirely, so
+        // the HTTP method here is load-bearing rather than stylistic.
+        var path: String? = null
+        var method: String? = null
+        val engine = MockEngine { request ->
+            path = request.url.encodedPath
+            method = request.method.value
+            respond("", HttpStatusCode.OK,
+                headersOf("Content-Type", ContentType.Application.Json.toString()))
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+
+        RavelryApiClient(httpClient, FakeFeedTokenStorage()).deleteMessage(1001L)
+
+        assertEquals("/messages/1001.json", path)
+        assertEquals("DELETE", method)
+    }
+
+    @Test
+    fun `message writes send the bearer token`() = runTest {
+        // These are the calls that need the message-write scope; without the header they
+        // 401 rather than 403 and the failure looks like expiry instead of permission.
+        var auth: String? = null
+        val engine = MockEngine { request ->
+            auth = request.headers[HttpHeaders.Authorization]
+            respond(MESSAGE_CREATED_JSON, HttpStatusCode.OK,
+                headersOf("Content-Type", ContentType.Application.Json.toString()))
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+
+        RavelryApiClient(httpClient, FakeFeedTokenStorage()).sendMessage("yarnie", "Hi", "Hello")
+
+        assertEquals("Bearer test-token", auth)
+    }
+
+    // ---- User search (issue #367) ----
+
+    @Test
+    fun `searchUsers restricts to the User type and decodes the nested record`() = runTest {
+        // There is NO /people/search.json — global search with types=User is the only user
+        // search Ravelry has. Its identity fields live one level down in `record`, so a
+        // flat decode would silently produce nameless rows.
+        var url: io.ktor.http.Url? = null
+        val client = routingApiClientCapturing(onRequest = { url = it }) { USER_SEARCH_JSON }
+
+        val results = client.searchUsers("yarn")
+
+        assertEquals("/search.json", url?.encodedPath)
+        assertEquals("yarn", url?.parameters?.get("query"))
+        assertEquals("User", url?.parameters?.get("types"))
+        val first = results.first()
+        // permalink, not title, is the addressable handle that /people/{username} and
+        // recipient_username both take.
+        assertEquals("yarnie", first.username)
+        assertEquals("Yarnie McKnits", first.displayName)
+        assertEquals(4242L, first.id)
+        // tiny_image_url is ~24x24 and sized for a picker row; image_url is ~500px.
+        assertEquals("https://example.com/tiny.jpg", first.avatarUrl)
+    }
+
+    @Test
+    fun `searchUsers asks for a picker-sized limit rather than Ravelry's default of fifty`() = runTest {
+        var url: io.ktor.http.Url? = null
+        val client = routingApiClientCapturing(onRequest = { url = it }) { USER_SEARCH_JSON }
+
+        client.searchUsers("yarn")
+        assertEquals("25", url?.parameters?.get("limit"))
+
+        client.searchUsers("yarn", limit = 5)
+        assertEquals("5", url?.parameters?.get("limit"))
+    }
+
+    @Test
+    fun `searchUsers falls back to the large image when there is no tiny one`() = runTest {
+        // Showing the 500px image is worse than showing the 24px one but far better than
+        // showing an empty avatar slot.
+        val client = routingApiClient {
+            """{"results":[{"title":"solo","record":{"type":"user","id":1,"permalink":"solo"},
+               "image_url":"https://example.com/big.jpg"}]}"""
+        }
+
+        assertEquals("https://example.com/big.jpg", client.searchUsers("solo").first().avatarUrl)
+    }
+
+    @Test
+    fun `searchUsers keeps hits whose record type is absent or spelled unexpectedly`() = runTest {
+        // The local type filter is a DENY-list of the non-user result types, not an
+        // allow-list of "user", and this is why. An allow-list would empty EVERY search the
+        // day Ravelry spells the user type differently than we guessed — and an empty
+        // picker reads as "no such person" rather than as a bug, so it would never get
+        // reported. A hit with no type at all, or one spelled "Person", must survive.
+        val client = routingApiClient {
+            """{"results":[
+               {"title":"No Record Type","record":{"id":1,"permalink":"notype"}},
+               {"title":"Odd Spelling","record":{"type":"Person","id":2,"permalink":"odd"}}
+            ]}"""
+        }
+
+        assertEquals(listOf("notype", "odd"), client.searchUsers("x").map { it.username })
+    }
+
+    @Test
+    fun `searchUsers drops hits that are explicitly not users`() = runTest {
+        // The other half of the same filter: a type that IS on the deny-list — one of the
+        // documented non-user result types — must not be offered as a message recipient.
+        val client = routingApiClient {
+            """{"results":[
+               {"title":"A Pattern","record":{"type":"pattern","id":9,"permalink":"a-pattern"}},
+               {"title":"Yarnie","record":{"type":"user","id":4242,"permalink":"yarnie"}}
+            ]}"""
+        }
+
+        assertEquals(listOf("yarnie"), client.searchUsers("yarn").map { it.username })
+    }
+
+    @Test
+    fun `searchUsers drops a hit with no usable username`() = runTest {
+        // An un-addressable row in a recipient picker is worse than a missing one: tapping
+        // it could only produce a send that fails.
+        val client = routingApiClient {
+            """{"results":[{"title":"","record":{"type":"user","id":7,"permalink":""}}]}"""
+        }
+
+        assertTrue(client.searchUsers("ghost").isEmpty())
+    }
+
+    @Test
+    fun `searchUsers shows the username when a hit has an addressable record but a blank title`() = runTest {
+        // title is a display string and record.permalink is the identifier; they fail
+        // independently. A blank title must not render a blank picker row when we do know
+        // who this is — an unlabelled but selectable row is unusable.
+        val client = routingApiClient {
+            """{"results":[{"title":"","record":{"type":"user","id":8,"permalink":"quietone"}}]}"""
+        }
+
+        val result = client.searchUsers("quiet").single()
+
+        assertEquals("quietone", result.username)
+        assertEquals("quietone", result.displayName)
+    }
+
+    @Test
+    fun `searchUsers survives a record-less hit by falling back to the title`() = runTest {
+        // `record` is documented but we must not assume it is always there. A hit we can
+        // still plausibly address by its displayed title is worth keeping; the id is simply
+        // unknown, which is why UserSearchResult.id is nullable.
+        val client = routingApiClient { """{"results":[{"title":"lonelytitle"}]}""" }
+
+        val result = client.searchUsers("lonely").single()
+
+        assertEquals("lonelytitle", result.username)
+        assertNull(result.id)
+        assertNull(result.avatarUrl)
+    }
+
+    @Test
+    fun `searchUsers returns an empty list rather than throwing on no results`() = runTest {
+        // An empty search is a normal outcome of typing, not an error state.
+        val client = routingApiClient { """{"results":[]}""" }
+
+        assertTrue(client.searchUsers("zzzz").isEmpty())
+    }
 }
 
 private val MESSAGES_LIST_JSON = """
@@ -2733,6 +3090,41 @@ private val MESSAGE_FULL_JSON = """
  "content_html":"<p>Hi!</p>","read_message":true,"replied":true,
  "replied_at":"2026/07/18 10:00:00 -0700","sent_at":"2026/07/18 09:00:00 -0700",
  "sender":{"username":"yarnie"},"recipient":{"username":"me"}}}
+"""
+
+/** The `Message (full)` echoed back by `messages/create.json` — note the null parent. */
+private val MESSAGE_CREATED_JSON = """
+{"message":{"id":2001,"subject":"Yarn swap?","parent_message_id":null,
+ "content_html":"<p>Do you still have that skein?</p>","read_message":true,
+ "sent_at":"2026/07/19 12:00:00 -0700",
+ "sender":{"username":"me"},"recipient":{"username":"yarnie"}}}
+"""
+
+/**
+ * The same shape from `messages/{id}/reply.json` — identical to [MESSAGE_CREATED_JSON]
+ * except for `parent_message_id`, which is the entire observable difference between the
+ * two endpoints and the only thing holding a conversation together.
+ */
+private val MESSAGE_REPLY_JSON = """
+{"message":{"id":2002,"subject":"Yarn swap?","parent_message_id":1001,
+ "content_html":"<p>Yes I do!</p>","read_message":true,
+ "sent_at":"2026/07/19 12:05:00 -0700",
+ "sender":{"username":"me"},"recipient":{"username":"yarnie"}}}
+"""
+
+/**
+ * A `/search.json?types=User` envelope. Global search is generic, so the addressable
+ * handle is `record.permalink` rather than the displayed `title` — the second hit exists
+ * to prove we read the permalink and not the title.
+ */
+private val USER_SEARCH_JSON = """
+{"results":[
+  {"title":"Yarnie McKnits","type_name":"User","caption":"Seattle WA",
+   "tiny_image_url":"https://example.com/tiny.jpg","image_url":"https://example.com/big.jpg",
+   "record":{"type":"user","id":4242,"permalink":"yarnie","uri":"/people/yarnie.json"}},
+  {"title":"Purl Jam","type_name":"User",
+   "record":{"type":"user","id":4243,"permalink":"purljam","uri":"/people/purljam.json"}}
+]}
 """
 
 private val NEW_EVENT_FORM = NewEventForm(
