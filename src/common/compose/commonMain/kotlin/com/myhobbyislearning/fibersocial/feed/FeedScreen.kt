@@ -130,6 +130,7 @@ import com.myhobbyislearning.fibersocial.projects.ProjectCommentsState
 import com.myhobbyislearning.fibersocial.projects.CommentPostState
 import com.myhobbyislearning.fibersocial.projects.ProjectPhotoPickerDialog
 import com.myhobbyislearning.fibersocial.feed.models.RavelryUser
+import com.myhobbyislearning.fibersocial.feed.models.UserSearchResult
 import com.myhobbyislearning.fibersocial.feed.models.VoteType
 import com.myhobbyislearning.fibersocial.composeapp.resources.Res
 import com.myhobbyislearning.fibersocial.composeapp.resources.app_logo_content_description
@@ -535,6 +536,16 @@ fun FeedScreen(
     // reply's Back has to land on the still-open thread while the new message's lands on the
     // list — which is exactly the distinction the early return below reads.
     var composingMessage by rememberSaveable { mutableStateOf(false) }
+    // Set when the composer was opened from someone's PROFILE (issue #373) rather than from
+    // the Messages FAB: the recipient is already decided, so the picker is skipped and this
+    // person is addressed. Rides alongside composingMessage rather than replacing it — the
+    // FAB entry still opens the same composer with this null and the picker showing.
+    //
+    // Plain remember, not rememberSaveable: UserSearchResult is not Saveable, the same trade
+    // NewMessageScreen documents for its own picked recipient. A process death mid-compose
+    // therefore degrades a locked composer to a searching one with the typing intact, which
+    // is a recoverable inconvenience rather than a wrong recipient.
+    var lockedMessageRecipient by remember { mutableStateOf<UserSearchResult?>(null) }
     var replyingToRootId by rememberSaveable { mutableStateOf<Long?>(null) }
     var sendingFeedback by rememberSaveable { mutableStateOf(false) }
 
@@ -561,6 +572,7 @@ fun FeedScreen(
         showingMessages = false
         composingTopic = false
         composingMessage = false
+        lockedMessageRecipient = null
         replyingToRootId = null
         composingEventGroup = null
         sendingFeedback = false
@@ -804,6 +816,32 @@ fun FeedScreen(
                 viewModel.userProfile.dismiss()
                 viewModel.feed.selectGroup(group)
             },
+            // Opens the composer addressed to this person (issue #373). The profile is
+            // DISMISSED rather than left underneath because this early return sits above
+            // the composer's — leaving it open would swallow the composer and the button
+            // would visibly do nothing. Back from the composer therefore lands on whatever
+            // the profile was opened over, which is where the user was reading anyway.
+            onSendMessage = { username ->
+                val profile = (userProfileState as? UserProfileState.Loaded)?.profile
+                lockedMessageRecipient = UserSearchResult(
+                    // UserProfile.id defaults to 0, which is "not supplied", not user 0.
+                    // Nothing reads it today — sendMessage addresses by username — but a
+                    // real id is worth carrying for the same reason UserSearchResult keeps
+                    // one at all: usernames are user-changeable, ids are not.
+                    id = profile?.id?.takeIf { it != 0L },
+                    username = username,
+                    // Falls back to the handle so the "To:" row is never blank for a user
+                    // who has set no first name.
+                    displayName = profile?.firstName?.takeIf { it.isNotBlank() } ?: username,
+                    avatarUrl = profile?.avatarUrl,
+                )
+                viewModel.userProfile.dismiss()
+                // Clears any error or stale picker state left by a previous compose, so the
+                // composer opens blank exactly as the FAB entry does.
+                viewModel.messages.resetCompose()
+                composingMessage = true
+            },
+            currentUsername = user?.username,
         )
         return
     }
@@ -924,6 +962,7 @@ fun FeedScreen(
         // which is still open behind this.
         val leaveComposer = {
             composingMessage = false
+            lockedMessageRecipient = null
             replyingToRootId = null
             viewModel.messages.resetCompose()
         }
@@ -949,6 +988,9 @@ fun FeedScreen(
                 // already show it.
             },
             onBack = leaveComposer,
+            // Null for the FAB entry, which searches; non-null only for the profile entry
+            // (issue #373). Ignored in reply mode, which fixes the recipient its own way.
+            lockedRecipient = lockedMessageRecipient,
             replyTo = replyThread?.let {
                 ReplyContext(
                     counterpartName = it.counterpart?.username?.takeIf { name -> name.isNotBlank() }
