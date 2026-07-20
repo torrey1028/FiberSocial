@@ -113,6 +113,15 @@ class MainActivity : ComponentActivity() {
                             showWebView = false
                             authVm.handleAuthCode(code, state, cookie)
                         },
+                        // Leave the web view and report it, rather than sitting on a
+                        // dead authorize page (issue #394). Routed through failLogin so
+                        // an authorization-server refusal lands in the same place as the
+                        // state-mismatch rejection: AuthState.Error on the login screen,
+                        // which already offers a retry.
+                        onAuthError = { message ->
+                            showWebView = false
+                            authVm.auth.failLogin(message)
+                        },
                         onBack = { showWebView = false },
                     )
                 } else {

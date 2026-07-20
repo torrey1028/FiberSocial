@@ -5,13 +5,15 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.UIKitView
+import com.myhobbyislearning.fibersocial.auth.AuthCallback
+import com.myhobbyislearning.fibersocial.auth.MALFORMED_AUTH_CALLBACK_MESSAGE
 import com.myhobbyislearning.fibersocial.auth.RavelryAuthManager
+import com.myhobbyislearning.fibersocial.auth.authFailureMessage
+import com.myhobbyislearning.fibersocial.auth.parseAuthCallback
 import kotlinx.cinterop.ExperimentalForeignApi
 import platform.CoreGraphics.CGRectMake
 import platform.Foundation.NSHTTPCookie
 import platform.Foundation.NSURL
-import platform.Foundation.NSURLComponents
-import platform.Foundation.NSURLQueryItem
 import platform.Foundation.NSURLRequest
 import platform.WebKit.WKNavigationAction
 import platform.WebKit.WKNavigationActionPolicy
@@ -33,12 +35,13 @@ import platform.darwin.NSObject
 actual fun WebViewLoginScreen(
     authUrl: String,
     onAuthComplete: (code: String, state: String?, sessionCookie: String) -> Unit,
+    onAuthError: (message: String) -> Unit,
     onBack: () -> Unit,
 ) {
     println("FiberSocial: WebViewLoginScreen authUrl=$authUrl")
     // remember: WKWebView.navigationDelegate is weak; the composition must hold the
     // strong reference or the delegate is collected mid-login.
-    val delegate = remember { LoginNavigationDelegate(onAuthComplete) }
+    val delegate = remember { LoginNavigationDelegate(onAuthComplete, onAuthError) }
     UIKitView(
         factory = {
             val configuration = WKWebViewConfiguration().apply {
@@ -64,6 +67,7 @@ actual fun WebViewLoginScreen(
 
 private class LoginNavigationDelegate(
     private val onAuthComplete: (code: String, state: String?, sessionCookie: String) -> Unit,
+    private val onAuthError: (message: String) -> Unit,
 ) : NSObject(), WKNavigationDelegateProtocol {
 
     override fun webView(
@@ -78,11 +82,21 @@ private class LoginNavigationDelegate(
             return
         }
         decisionHandler(WKNavigationActionPolicy.WKNavigationActionPolicyCancel)
-        val queryItems = NSURLComponents(string = url).queryItems
-            ?.filterIsInstance<NSURLQueryItem>()
-            .orEmpty()
-        val code = queryItems.firstOrNull { it.name == "code" }?.value ?: return
-        val state = queryItems.firstOrNull { it.name == "state" }?.value
+        // Every branch below must call something. The navigation is already cancelled, so
+        // a silent return strands the user on the authorize page (issue #394).
+        val callback = parseAuthCallback(url)
+        if (callback is AuthCallback.Failure) {
+            println("FiberSocial: OAuth failed: ${callback.error}")
+            onAuthError(authFailureMessage(callback))
+            return
+        }
+        if (callback !is AuthCallback.Success) {
+            println("FiberSocial: OAuth redirect carried neither code nor error")
+            onAuthError(MALFORMED_AUTH_CALLBACK_MESSAGE)
+            return
+        }
+        val code = callback.code
+        val state = callback.state
         webView.configuration.websiteDataStore.httpCookieStore.getAllCookies { cookies ->
             val all = cookies?.filterIsInstance<NSHTTPCookie>().orEmpty()
             // Same fallback as Android: cookies for www.ravelry.com first, then the
