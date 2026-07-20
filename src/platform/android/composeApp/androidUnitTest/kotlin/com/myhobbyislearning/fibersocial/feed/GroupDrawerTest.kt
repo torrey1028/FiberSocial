@@ -354,6 +354,42 @@ class GroupDrawerTest {
         compose.runOnIdle { assertEquals(1, unreadDotCount()) }
     }
 
+    @Test
+    fun `Messages shows an unread dot when the inbox has unread mail`() {
+        // Issue #372. Same dot treatment as the Posts row, but derived from Ravelry's own
+        // per-message read flag rather than a locally stored last-viewed time.
+        compose.setContent {
+            GroupDrawer(
+                groups = emptyList(),
+                selectedGroup = null,
+                messagesHasUnread = true,
+                eventCounts = emptyMap(),
+                user = user,
+                onGroupSelected = {},
+                onGroupEventsClick = {},
+                onSettingsClick = {},
+            )
+        }
+        compose.runOnIdle { assertEquals(1, unreadDotCount()) }
+    }
+
+    @Test
+    fun `Messages shows no unread dot when the inbox is clear`() {
+        compose.setContent {
+            GroupDrawer(
+                groups = emptyList(),
+                selectedGroup = null,
+                messagesHasUnread = false,
+                eventCounts = emptyMap(),
+                user = user,
+                onGroupSelected = {},
+                onGroupEventsClick = {},
+                onSettingsClick = {},
+            )
+        }
+        compose.runOnIdle { assertEquals(0, unreadDotCount()) }
+    }
+
     private val twoGroups = listOf(
         Group(id = 1L, name = "KAL Hub", permalink = "kal-hub", forumId = 42L),
         Group(id = 2L, name = "Sock Society", permalink = "sock", forumId = 43L),

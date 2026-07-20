@@ -17,6 +17,9 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
 
+/** An `unread_only` inbox probe that finds nothing — the "Messages" dot stays dark. */
+private const val NO_UNREAD_MESSAGES_JSON = """{"messages":[]}"""
+
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class FeedViewModelTest {
     private suspend fun awaitChildren(job: Job) =
@@ -111,6 +114,8 @@ class FeedViewModelTest {
                 when {
                     path.contains("filtered_topics") ->
                         """{"topics":[{"id":1,"title":"T","forum_id":42,"forum_posts_count":5,"last_read":3}]}"""
+                    // The messages leg is group-independent too, and quiet here.
+                    path.contains("/messages/list") -> """{"messages":[]}"""
                     else -> error("Unexpected: $path")
                 }
             })
@@ -167,10 +172,13 @@ class FeedViewModelTest {
             // here previously caused a Robolectric-only CI flake).
             //
             // NOTE vs the version of this fix that landed on main (#361): that one waits
-            // for TWO of call 1's requests to park, because there getDrawerUnread() fires
-            // two legs. On this branch the per-group leg is conditional on a loaded feed,
-            // so an un-loaded VM fires exactly ONE request per call — waiting for a second
-            // park would hang. This deliberately supersedes #361's version on merge.
+            // for TWO of call 1's requests to park. Here only the FIRST request to arrive
+            // is held, whichever leg it belongs to — an un-loaded VM has no groups to fan
+            // out over, so each call fires exactly two group-independent requests (the
+            // "Your Posts" leg and the messages probe, #372) and either may win the race
+            // to the gate. Whichever one it is, call 1 never completes and call 2 cancels
+            // it, which is the guarantee under test. This deliberately supersedes #361's
+            // version on merge.
             val holdMutex = Mutex()
             var holdNextRequest = true
             val firstRequestArrived = CompletableDeferred<Unit>()
@@ -193,9 +201,10 @@ class FeedViewModelTest {
             )
             val vm = FeedViewModel(repo, this, FakeGroupOrderStore(), FakeGroupLastViewedStore())
 
-            // With no feed loaded there are no groups to fan out over, so getDrawerUnread()
-            // fires exactly 1 request (the "Your Posts" leg) per call. The first call's
-            // request blocks on firstCallGate forever; the second call cancels it (the fix
+            // The first call's held request blocks on firstCallGate forever; its sibling
+            // leg resolves against the route below and is harmless either way (parsed as a
+            // messages page, `{"topics":…}` simply has no messages). The second call
+            // cancels the whole first call (the fix
             // under test) before starting its own, which resolves immediately. Without the
             // fix, the first call's request would still be in flight (not cancelled) when
             // the test ends, and this would hang / fail as an uncompleted coroutine instead
@@ -1405,8 +1414,10 @@ class FeedViewModelTest {
     private fun drawerDotRepo(
         payload: MutableStateFlow<String>,
         postsCount: Int = 10,
+        messagesPayload: MutableStateFlow<String> = MutableStateFlow(NO_UNREAD_MESSAGES_JSON),
     ): FeedRepository = FeedRepository(routingApiClient { path ->
         when {
+            path.contains("/messages/list") -> messagesPayload.value
             path.contains("/current_user") -> CURRENT_USER_JSON
             path.contains("memberships") -> MEMBERSHIPS_HTML
             path.contains("/groups/search") -> GROUPS_JSON
@@ -1424,6 +1435,11 @@ class FeedViewModelTest {
     /** One fully-read topic — lights nothing. */
     private val readTopicJson =
         """{"topics":[{"id":1,"title":"T","forum_id":42,"forum_posts_count":5,"last_read":5}]}"""
+
+    /** An `unread_only` inbox probe that finds mail — lights the "Messages" dot. */
+    private val unreadMessagesJson =
+        """{"messages":[{"id":5,"subject":"Hi","read_message":false}]}"""
+
 
     @Test
     fun `refreshDrawerUnreadAfterReading re-checks the Your Posts dot from the My Posts feed`() =
@@ -1453,6 +1469,79 @@ class FeedViewModelTest {
             vm.refreshDrawerUnreadAfterReading(item.id)
             awaitChildren(coroutineContext[Job]!!)
 
+            assertFalse(vm.drawerUnread.value.yourPostsHasUnread)
+        }
+
+    @Test
+    fun `refreshMessagesUnreadAfterReading clears the dot once the inbox has been read`() =
+        runTest(UnconfinedTestDispatcher()) {
+            // Issue #372. Reading is the only moment this dot can go out: drawer-open
+            // deliberately doesn't refresh, so without the re-probe it would linger until
+            // the next foreground activation or drawer pull-to-refresh.
+            val messages = MutableStateFlow(unreadMessagesJson)
+            val vm = FeedViewModel(
+                drawerDotRepo(MutableStateFlow(readTopicJson), messagesPayload = messages),
+                this,
+                FakeGroupOrderStore(),
+                FakeGroupLastViewedStore(),
+            )
+            vm.refreshDrawerUnread()
+            awaitChildren(coroutineContext[Job]!!)
+            assertTrue(vm.drawerUnread.value.messagesHaveUnread)
+
+            // THE RACE this ordering exists to avoid: the re-probe is a GET, and a GET that
+            // beats the mark-read POST still sees the message unread and re-lights the very
+            // dot it is meant to clear. So Ravelry's side is flipped FIRST — standing in for
+            // markMessageRead having returned — and only then does the re-probe run.
+            messages.value = NO_UNREAD_MESSAGES_JSON
+            vm.refreshMessagesUnreadAfterReading()
+            awaitChildren(coroutineContext[Job]!!)
+
+            assertFalse(vm.drawerUnread.value.messagesHaveUnread)
+        }
+
+    @Test
+    fun `refreshMessagesUnreadAfterReading skips the re-probe when the messages dot is dark`() =
+        runTest(UnconfinedTestDispatcher()) {
+            // With nothing lit there is nothing a read could clear, so the request is pure
+            // waste — the same gate the Your Posts version has.
+            val messages = MutableStateFlow(NO_UNREAD_MESSAGES_JSON)
+            val vm = FeedViewModel(
+                drawerDotRepo(MutableStateFlow(readTopicJson), messagesPayload = messages),
+                this,
+                FakeGroupOrderStore(),
+                FakeGroupLastViewedStore(),
+            )
+            vm.refreshDrawerUnread()
+            awaitChildren(coroutineContext[Job]!!)
+            assertFalse(vm.drawerUnread.value.messagesHaveUnread)
+
+            // If a re-probe fired it would pick this up and light the dot.
+            messages.value = unreadMessagesJson
+            vm.refreshMessagesUnreadAfterReading()
+            awaitChildren(coroutineContext[Job]!!)
+
+            assertFalse(vm.drawerUnread.value.messagesHaveUnread)
+        }
+
+    @Test
+    fun `refreshDrawerUnread lights the messages dot before the feed has loaded`() =
+        runTest(UnconfinedTestDispatcher()) {
+            // Group-independent, like the Your Posts leg: it resolves with no groups yet.
+            val vm = FeedViewModel(
+                drawerDotRepo(
+                    MutableStateFlow(readTopicJson),
+                    messagesPayload = MutableStateFlow(unreadMessagesJson),
+                ),
+                this,
+                FakeGroupOrderStore(),
+                FakeGroupLastViewedStore(),
+            )
+
+            vm.refreshDrawerUnread()
+            awaitChildren(coroutineContext[Job]!!)
+
+            assertTrue(vm.drawerUnread.value.messagesHaveUnread)
             assertFalse(vm.drawerUnread.value.yourPostsHasUnread)
         }
 

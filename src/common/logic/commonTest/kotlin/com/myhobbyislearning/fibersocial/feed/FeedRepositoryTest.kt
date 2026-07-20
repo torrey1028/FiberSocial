@@ -531,9 +531,17 @@ class FeedRepositoryTest {
     private fun drawerRepo(
         topicsByForumId: Map<Long, String>,
         postingJson: String = """{"topics":[]}""",
+        messagesJson: String = """{"messages":[]}""",
     ): FeedRepository {
         val engine = MockEngine { request ->
             val path = request.url.encodedPath
+            if (path.contains("/messages/list")) {
+                return@MockEngine respond(
+                    messagesJson,
+                    HttpStatusCode.OK,
+                    headersOf("Content-Type", ContentType.Application.Json.toString()),
+                )
+            }
             // filtered_topics lives under /forums/ too, so it must be matched first.
             if (path.contains("filtered_topics")) {
                 return@MockEngine respond(
@@ -581,10 +589,12 @@ class FeedRepositoryTest {
     @Test
     fun `getDrawerUnread propagates session expiry from a group fetch rather than hiding it`() = runTest {
         val engine = MockEngine { request ->
-            if (request.url.encodedPath.contains("filtered_topics")) {
-                // The "Your Posts" leg succeeds, so only the per-group leg sees the expiry.
+            val path = request.url.encodedPath
+            if (path.contains("filtered_topics") || path.contains("/messages/list")) {
+                // The "Your Posts" and messages legs succeed, so only the per-group leg
+                // sees the expiry.
                 respond(
-                    """{"topics":[]}""",
+                    if (path.contains("/messages/list")) """{"messages":[]}""" else """{"topics":[]}""",
                     HttpStatusCode.OK,
                     headersOf("Content-Type", ContentType.Application.Json.toString()),
                 )
@@ -655,7 +665,10 @@ class FeedRepositoryTest {
         // timestamp is wanted, never the topics themselves.
         var capturedPageSize: String? = null
         val engine = MockEngine { request ->
-            if (!request.url.encodedPath.contains("filtered_topics")) {
+            val path = request.url.encodedPath
+            // Neither sibling leg is the subject here: filtered_topics pages 100, and the
+            // messages probe deliberately pages 1 (see its own test below).
+            if (!path.contains("filtered_topics") && !path.contains("/messages/list")) {
                 capturedPageSize = request.url.parameters["page_size"]
             }
             respond(
@@ -738,6 +751,154 @@ class FeedRepositoryTest {
         )
 
         assertFalse(repo.getYourPostsUnread())
+    }
+
+    // ---- the messages leg (issue #372) ----
+
+    /** An inbox row as `/messages/list.json` serves it. */
+    private fun unreadMessageJson(id: Long = 5L) =
+        """{"messages":[{"id":$id,"subject":"Hi","read_message":false}]}"""
+
+    @Test
+    fun `getDrawerUnread lights the messages dot when the unread probe returns a message`() =
+        runTest {
+            // Unlike the group dots this is a straight server answer: `unread_only` did the
+            // filtering, so any row at all means unread mail exists.
+            val repo = drawerRepo(
+                topicsByForumId = mapOf(42L to """{"topics":[]}""", 77L to """{"topics":[]}"""),
+                messagesJson = unreadMessageJson(),
+            )
+
+            val result = repo.getDrawerUnread(dotGroups, emptyMap(), now = 0L)
+
+            assertTrue(result.unread.messagesHaveUnread)
+        }
+
+    @Test
+    fun `getDrawerUnread leaves the messages dot dark when the unread probe is empty`() = runTest {
+        val repo = drawerRepo(
+            topicsByForumId = mapOf(42L to """{"topics":[]}""", 77L to """{"topics":[]}"""),
+            messagesJson = """{"messages":[]}""",
+        )
+
+        val result = repo.getDrawerUnread(dotGroups, emptyMap(), now = 0L)
+
+        assertFalse(result.unread.messagesHaveUnread)
+    }
+
+    @Test
+    fun `getDrawerUnread keeps the other dots when the messages leg fails`() = runTest {
+        // Same soft-failure contract as a per-group fetch: a broken probe degrades to "no
+        // dot" instead of blanking (or failing) the whole call.
+        val engine = MockEngine { request ->
+            val path = request.url.encodedPath
+            when {
+                path.contains("/messages/list") ->
+                    respond("boom", HttpStatusCode.InternalServerError)
+                path.contains("filtered_topics") -> respond(
+                    """{"topics":[
+                        {"id":3,"title":"C","forum_id":42,"forum_posts_count":9,"last_read":2}
+                    ]}""",
+                    HttpStatusCode.OK,
+                    headersOf("Content-Type", ContentType.Application.Json.toString()),
+                )
+                else -> respond(
+                    """{"topics":[${activityTopic(1, "2026/07/10 12:00:00 +0000")}]}""",
+                    HttpStatusCode.OK,
+                    headersOf("Content-Type", ContentType.Application.Json.toString()),
+                )
+            }
+        }
+        val client = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val repo = FeedRepository(RavelryApiClient(client, FakeFeedTokenStorage()))
+
+        val result = repo.getDrawerUnread(
+            groups = listOf(dotGroups.first()),
+            groupLastViewed = mapOf(1L to at("2026/07/05 00:00:00 +0000")),
+            now = at("2026/07/19 00:00:00 +0000"),
+        )
+
+        assertFalse(result.unread.messagesHaveUnread)
+        assertTrue(result.unread.yourPostsHasUnread)
+        assertEquals(setOf(42L), result.unread.unreadGroupForumIds)
+    }
+
+    @Test
+    fun `getDrawerUnread propagates session expiry from the messages leg`() = runTest {
+        // The other two legs succeed, so the messages probe is the only one that can raise
+        // it — and softening it would render an expired session as "no mail".
+        val engine = MockEngine { request ->
+            val path = request.url.encodedPath
+            if (path.contains("/messages/list")) {
+                throw SessionExpiredException("Token expired")
+            }
+            respond(
+                """{"topics":[]}""",
+                HttpStatusCode.OK,
+                headersOf("Content-Type", ContentType.Application.Json.toString()),
+            )
+        }
+        val client = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val repo = FeedRepository(RavelryApiClient(client, FakeFeedTokenStorage()))
+
+        assertFailsWith<SessionExpiredException> {
+            repo.getDrawerUnread(dotGroups, emptyMap(), now = 0L)
+        }
+    }
+
+    @Test
+    fun `getDrawerUnread probes the inbox for a single unread message`() = runTest {
+        // A "does anything exist" question against a potentially enormous inbox, on top of
+        // a call that already costs 2 + groups.size requests — so it asks for one row.
+        var pageSize: String? = null
+        var unreadOnly: String? = null
+        var folder: String? = null
+        val engine = MockEngine { request ->
+            if (request.url.encodedPath.contains("/messages/list")) {
+                pageSize = request.url.parameters["page_size"]
+                unreadOnly = request.url.parameters["unread_only"]
+                folder = request.url.parameters["folder"]
+                respond(
+                    """{"messages":[]}""",
+                    HttpStatusCode.OK,
+                    headersOf("Content-Type", ContentType.Application.Json.toString()),
+                )
+            } else {
+                respond(
+                    """{"topics":[]}""",
+                    HttpStatusCode.OK,
+                    headersOf("Content-Type", ContentType.Application.Json.toString()),
+                )
+            }
+        }
+        val client = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val repo = FeedRepository(RavelryApiClient(client, FakeFeedTokenStorage()))
+
+        repo.getDrawerUnread(listOf(dotGroups.first()), emptyMap(), now = 0L)
+
+        assertEquals("1", pageSize)
+        assertEquals("1", unreadOnly)
+        assertEquals("inbox", folder)
+    }
+
+    @Test
+    fun `getMessagesUnread is true when the inbox holds an unread message`() = runTest {
+        val repo = drawerRepo(topicsByForumId = emptyMap(), messagesJson = unreadMessageJson())
+
+        assertTrue(repo.getMessagesUnread())
+    }
+
+    @Test
+    fun `getMessagesUnread is false when the inbox has nothing unread`() = runTest {
+        val repo = drawerRepo(topicsByForumId = emptyMap(), messagesJson = """{"messages":[]}""")
+
+        assertFalse(repo.getMessagesUnread())
     }
 
     @Test
