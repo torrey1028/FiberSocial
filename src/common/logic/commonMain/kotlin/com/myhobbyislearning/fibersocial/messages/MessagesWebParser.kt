@@ -94,6 +94,7 @@ object MessagesWebParser {
                 sentAt = parseWebTimestamp(row.selectFirst(".message_row__date")?.text(), today),
                 readMessage = !row.classNames().contains("message_row--unread"),
                 replied = row.selectFirst(".message_row__reply_status--replied") != null,
+                viaScrape = true,
             )
         }
     }
@@ -149,6 +150,7 @@ object MessagesWebParser {
             ),
             readMessage = true,
             contentHtml = content,
+            viaScrape = true,
         )
     }
 

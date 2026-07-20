@@ -59,6 +59,12 @@ enum class MessageFolder(val wireName: String) {
  * @property contentHtml Server-rendered HTML body. Full shape only.
  * @property content Plain-text body — see the note below. Full shape only, and possibly
  *   never present at all.
+ * @property viaScrape Client-only provenance flag, never present on the wire (defaults to
+ *   `false`, so every JSON-API-decoded message gets it for free): `true` only for messages
+ *   built by [MessagesWebParser] from the website scrape fallback (issue #396). Scraped
+ *   rows carry no [parentMessageId], but so can a genuine standalone JSON message — this
+ *   flag is what [groupIntoThreads]' subject+counterpart merge uses to tell those two
+ *   apart, rather than treating every parentless message as scrape-sourced.
  */
 @Serializable
 data class Message(
@@ -84,4 +90,5 @@ data class Message(
      * cleanup (it touches the send-echo path and tests).
      */
     val content: String? = null,
+    val viaScrape: Boolean = false,
 )

@@ -399,23 +399,28 @@ class MessagesViewModelTest {
 
     /**
      * The latch can flip mid-session: a load that succeeded over JSON followed by a
-     * loadMore that 403s. The scraped round must switch the ALREADY-LOADED messages to
-     * subject-merge grouping too — this is exactly why `anyPageViaScrape` accumulates with
-     * OR instead of being overwritten per round.
+     * loadMore that 403s. `anyPageViaScrape` (and therefore `groupIntoThreads`'
+     * `mergeBySubjectFallback`) is session-wide — it accumulates with OR across rounds —
+     * but the subject+counterpart merge itself is gated per-message by [Message.viaScrape],
+     * so messages that were genuinely fetched over JSON in an earlier round must NOT be
+     * swept into the merge just because a LATER round in the same session fell back to
+     * scraping. Regression pin for the bug where a session-wide flag caused the merge to
+     * run over the entire accumulated corpus, including pure-JSON pages.
      */
     @Test
-    fun `a loadMore that falls back to scrape regroups earlier pages by subject`() =
+    fun `a loadMore that falls back to scrape does not merge earlier all JSON pages`() =
         runTest(UnconfinedTestDispatcher()) {
             val client = scrapeModeClient(
                 // The scraped folder re-serves the same mail the JSON pages already
-                // delivered; duplicate ids collapse in the grouping.
+                // delivered; duplicate ids collapse in the grouping, and the JSON
+                // (non-scraped) copy wins as the first occurrence.
                 inboxHtml = folderRowHtml(1, "friend", "Yarn talk", "July 3, 2026 10:00 AM"),
                 sentHtml = folderRowHtml(2, "friend", "Re: Yarn talk", "July 3, 2026 11:00 AM"),
                 jsonListPages = 2,
                 jsonListPage = { url ->
                     if (url.parameters["folder"] == "sent") {
-                        // Parentless (scrape-shaped subjects, no parent_message_id): stays
-                        // its own thread until the fallback engages.
+                        // Genuinely parentless JSON message — NOT scrape-shaped data, even
+                        // though it (like a scraped row) carries no parent_message_id.
                         listJson(
                             listOf(
                                 messageJson(
@@ -445,10 +450,14 @@ class MessagesViewModelTest {
             vm.loadMore() // inbox page 2 403s -> latches -> scrapes
             awaitChildren(coroutineContext[Job]!!)
 
+            // The scraped round re-serves the same two ids, which dedup collapses onto
+            // the ORIGINAL JSON messages (first occurrence wins) — so both stay
+            // non-scrape and the subject+counterpart merge must still leave them apart,
+            // even though `anyPageViaScrape` is now true for the session.
             val state = assertIs<MessagesState.Loaded>(vm.state.value)
-            val thread = state.threads.single()
-            assertEquals(listOf(1L, 2L), thread.messages.map { it.id })
-            assertEquals("Yarn talk", thread.subject)
+            assertEquals(2, state.threads.size)
+            assertEquals(setOf(1L), state.threads.first { it.rootId == 1L }.messages.map { it.id }.toSet())
+            assertEquals(setOf(2L), state.threads.first { it.rootId == 2L }.messages.map { it.id }.toSet())
         }
 
     /**

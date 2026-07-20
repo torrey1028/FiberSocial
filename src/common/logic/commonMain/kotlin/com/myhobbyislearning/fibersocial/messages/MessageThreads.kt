@@ -129,7 +129,13 @@ data class MessageThread(
  *   person under the same subject will merge — accepted, because that is also how the
  *   messages *read*, and the alternative (no conversations at all in scrape mode) is
  *   strictly worse. Buckets with a null counterpart or a blank subject never merge.
- *   JSON-sourced buckets (any member with a parent id) are never touched.
+ *   Eligibility is per-message, via [Message.viaScrape] — NOT "no member has a parent
+ *   id". A page can fall back to scraping while earlier pages in the same session were
+ *   pure JSON (the caller's `mergeBySubjectFallback` gate is session-wide, per
+ *   `MessagesViewModel`'s `anyPageViaScrape`), so a genuinely standalone JSON message
+ *   (parentless, but real) is structurally identical to a scraped row and must not be
+ *   swept into this merge just because it also lacks a parent id. Only buckets whose
+ *   every member is [Message.viaScrape] are eligible.
  */
 fun groupIntoThreads(
     messages: List<Message>,
@@ -237,7 +243,7 @@ private fun mergeParentlessBucketsBySubject(
 ) {
     val mergeGroups = LinkedHashMap<Pair<String, String>, MutableList<Long>>()
     for ((rootId, bucket) in buckets) {
-        if (bucket.any { it.parentMessageId != null }) continue
+        if (bucket.any { !it.viaScrape }) continue
         val root = roots.getValue(rootId)
         val counterpart = counterpartOf(root, currentUsername)
             ?: bucket.firstNotNullOfOrNull { counterpartOf(it, currentUsername) }

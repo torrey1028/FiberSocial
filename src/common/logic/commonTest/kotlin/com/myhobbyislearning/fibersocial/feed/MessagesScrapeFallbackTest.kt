@@ -149,6 +149,46 @@ class MessagesScrapeFallbackTest {
     }
 
     @Test
+    fun `a 403 that is not the message-read scope error does not latch the scrape fallback`() = runTest {
+        // A moderator-only or otherwise unrelated 403 on the same endpoint shape must NOT
+        // be mistaken for the ungrantable message-read scope: it should propagate as-is
+        // and must not engage the permanent scrape latch (issue #396's latch is keyed on
+        // the specific scope-error body, not "any 403 from a messages endpoint").
+        val world = ScrapeWorld()
+        val engine = MockEngine { request ->
+            val host = request.url.host
+            val path = request.url.encodedPath
+            when {
+                host == "api.ravelry.com" && path == "/current_user.json" ->
+                    respond(
+                        CURRENT_USER_JSON,
+                        HttpStatusCode.OK,
+                        headersOf("Content-Type", ContentType.Application.Json.toString()),
+                    )
+                host == "api.ravelry.com" && path == "/messages/list.json" -> {
+                    world.apiListRequests += path
+                    respond(
+                        """{"error":"you do not have permission to view this"}""",
+                        HttpStatusCode.Forbidden,
+                        headersOf("Content-Type", ContentType.Application.Json.toString()),
+                    )
+                }
+                else -> error("Unexpected request to $host$path")
+            }
+        }
+        val client = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val ravelryClient = RavelryApiClient(client, FakeFeedTokenStorage())
+
+        assertFailsWith<ForbiddenException> { ravelryClient.getMessages(MessageFolder.INBOX) }
+        // The latch never engaged, so a second read still tries the API rather than
+        // jumping straight to the (unconfigured, would-error) web fallback.
+        assertFailsWith<ForbiddenException> { ravelryClient.getMessages(MessageFolder.INBOX) }
+        assertEquals(listOf("/messages/list.json", "/messages/list.json"), world.apiListRequests)
+    }
+
+    @Test
     fun `getMessages slices and filters the scraped folder client side`() = runTest {
         val world = ScrapeWorld()
         val client = scrapeFallbackClient(world)

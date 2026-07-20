@@ -192,7 +192,7 @@ class RavelryApiClient(
         // moderator-only action). Refreshing or re-logging-in cannot fix it, so it must
         // not be classified as session expiry (issue #82).
         if (response.status == HttpStatusCode.Forbidden) {
-            throw ForbiddenException(forbiddenMessage(response))
+            throw ForbiddenException(forbiddenMessage(response), body = response.bodyAsText())
         }
         if (response.status == HttpStatusCode.Unauthorized) {
             val tokenUsedForFailedRequest = response.request.headers[HttpHeaders.Authorization]
@@ -205,7 +205,7 @@ class RavelryApiClient(
                 throw SessionExpiredException("Session expired")
             }
             if (retried.status == HttpStatusCode.Forbidden) {
-                throw ForbiddenException(forbiddenMessage(retried))
+                throw ForbiddenException(forbiddenMessage(retried), body = retried.bodyAsText())
             }
             return retried.bodyAsText()
         }
@@ -1236,6 +1236,7 @@ class RavelryApiClient(
             try {
                 return getMessagesFromApi(folder, page, pageSize, unreadOnly, full)
             } catch (e: ForbiddenException) {
+                if (!isMessageReadScopeError(e)) throw e
                 noteMessagesReadBlocked(e)
             }
         }
@@ -1285,6 +1286,7 @@ class RavelryApiClient(
             try {
                 return getMessageFromApi(messageId)
             } catch (e: ForbiddenException) {
+                if (!isMessageReadScopeError(e)) throw e
                 noteMessagesReadBlocked(e)
             }
         }
@@ -1352,6 +1354,15 @@ class RavelryApiClient(
             )
         }
     }
+
+    // A 403 on a messages endpoint isn't necessarily the ungrantable `message-read` scope
+    // (#396) — it could be a moderator/ownership check on that same URL shape. Only latch
+    // to web-scraping mode when the body actually confirms Ravelry's documented scope
+    // error text; any other 403 propagates unlatched so it's surfaced like a normal
+    // ForbiddenException instead of silently and permanently switching this client to
+    // scraping for an unrelated reason.
+    private fun isMessageReadScopeError(e: ForbiddenException): Boolean =
+        e.body?.contains("message-read", ignoreCase = true) == true
 
     // The web message box lives under /people/{username}/…. The username comes from
     // current_user.json once and is cached for this client's lifetime — it cannot change
@@ -1454,6 +1465,7 @@ class RavelryApiClient(
                     full = false,
                 ).messages.isNotEmpty()
             } catch (e: ForbiddenException) {
+                if (!isMessageReadScopeError(e)) throw e
                 noteMessagesReadBlocked(e)
             }
         }
