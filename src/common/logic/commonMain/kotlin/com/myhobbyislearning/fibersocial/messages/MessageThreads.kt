@@ -48,8 +48,15 @@ private const val MAX_PARENT_WALK_DEPTH = 64
  * [UNKNOWN] is a real, expected state — a message whose sender is absent and whose
  * recipient isn't us tells us nothing, and inventing a direction there would invent an
  * unread dot. It is treated as neither inbound nor outbound.
+ *
+ * PUBLIC because two callers outside this file need exactly the classification the
+ * unread rule already depends on, and a second implementation of it would be free to
+ * drift: the conversation detail screen (#371) styles sent messages differently from
+ * received ones, and its mark-read pass must POST for INBOUND messages only. Marking an
+ * outbound message read would be meaningless (its `read_message` describes whether the
+ * *recipient* read it), and marking an [UNKNOWN] one would be a guess.
  */
-private enum class Direction { INBOUND, OUTBOUND, UNKNOWN }
+enum class MessageDirection { INBOUND, OUTBOUND, UNKNOWN }
 
 /**
  * One reconstructed conversation.
@@ -193,7 +200,7 @@ private fun buildThread(
     val lastActivityAt = ordered.mapNotNull { sentAtMillis(it) }.maxOrNull()
 
     val hasUnread = ordered.any {
-        directionOf(it, currentUsername) == Direction.INBOUND && !it.readMessage
+        messageDirection(it, currentUsername) == MessageDirection.INBOUND && !it.readMessage
     }
 
     return MessageThread(
@@ -230,13 +237,22 @@ private fun counterpartOf(message: Message, currentUsername: String): RavelryUse
 
 /**
  * Which way [message] travelled. Falls back to the recipient when the sender is absent,
- * and reports [Direction.UNKNOWN] rather than guessing when neither party identifies us.
+ * and reports [MessageDirection.UNKNOWN] rather than guessing when neither party
+ * identifies us.
+ *
+ * @param currentUsername the signed-in user's [RavelryUser.username], compared
+ *   case-insensitively. A blank value makes every message look inbound — the same safe
+ *   direction to be wrong in that [groupIntoThreads] documents.
  */
-private fun directionOf(message: Message, currentUsername: String): Direction {
+fun messageDirection(message: Message, currentUsername: String): MessageDirection {
     val sender = message.sender
     if (sender != null) {
-        return if (isCurrentUser(sender, currentUsername)) Direction.OUTBOUND else Direction.INBOUND
+        return if (isCurrentUser(sender, currentUsername)) {
+            MessageDirection.OUTBOUND
+        } else {
+            MessageDirection.INBOUND
+        }
     }
-    if (isCurrentUser(message.recipient, currentUsername)) return Direction.INBOUND
-    return Direction.UNKNOWN
+    if (isCurrentUser(message.recipient, currentUsername)) return MessageDirection.INBOUND
+    return MessageDirection.UNKNOWN
 }
