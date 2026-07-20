@@ -118,13 +118,11 @@ data class OpenThreadState(
  * ## Getting preview bodies: `full = true`, no per-thread fallback
  *
  * Rows preview the newest message's body, and bodies only exist on the `full` shape.
- * `getMessages(full = true)` asks for them, but WHETHER THAT WORKS IS UNRESOLVED —
- * Ravelry's docs contradict themselves over `output_format` vs `format` and we have no
- * live token to settle it (the full analysis is on `RavelryApiClient.getMessages`).
- *
- * This does not assume it works. The risk there is documented as one-sided: if the
- * parameter name is wrong, bodies come back `null` and nothing errors. So the contract
- * here is that a null body is ROUTINE — [messagePreviewText] renders it as an empty
+ * `getMessages(full = true)` asks for them; `output_format` is verified live as the
+ * working parameter name (see `RavelryApiClient.getMessages`). But bodies still go
+ * missing routinely: while the `message-read` scope is ungranted (issue #396) the
+ * listing comes from the website scrape fallback, whose rows carry NO bodies at all.
+ * So the contract here is that a null body is ROUTINE — [messagePreviewText] renders it as an empty
  * preview and the row still shows counterpart, subject, timestamp and unread dot. The
  * screen degrades by one line; it never breaks.
  *
@@ -205,6 +203,15 @@ class MessagesViewModel(
     /** Every message fetched so far, across folders and pages. Regrouped wholesale. */
     private var accumulated: List<Message> = emptyList()
 
+    /**
+     * True when any page in [accumulated] came from the website scrape fallback
+     * ([MessagesPage.viaScrape], issue #396). Scraped messages carry no
+     * `parent_message_id`, so every [groupIntoThreads] call switches to its
+     * subject+counterpart merge fallback while this is set. Reset by [load]/[refresh]
+     * alongside [accumulated] so a later scope grant cleanly restores parent-id grouping.
+     */
+    private var anyPageViaScrape = false
+
     private var cursors: Map<MessageFolder, FolderCursor> = freshCursors()
 
     /**
@@ -264,10 +271,11 @@ class MessagesViewModel(
         loadJob = scope.launch {
             println("FiberSocial: MessagesViewModel.load user=$currentUsername")
             _state.value = try {
-                val (messages, updated) = fetchRound(freshCursors())
+                val (messages, updated, viaScrape) = fetchRound(freshCursors())
                 // Committed only on success, so a failed refresh leaves the previous
                 // conversations intact rather than blanking the screen.
                 accumulated = messages
+                anyPageViaScrape = viaScrape
                 cursors = updated
                 pagingBlocked = false
                 println("FiberSocial: MessagesViewModel loaded ${messages.size} messages")
@@ -297,10 +305,11 @@ class MessagesViewModel(
         _state.value = loaded.copy(loadingMore = true)
         loadMoreJob = scope.launch {
             _state.value = try {
-                val (messages, updated) = fetchRound(cursors)
+                val (messages, updated, viaScrape) = fetchRound(cursors)
                 // Append, never replace. Duplicate ids across overlapping pages collapse
                 // in groupIntoThreads, so a message arriving twice is harmless.
                 accumulated = accumulated + messages
+                anyPageViaScrape = anyPageViaScrape || viaScrape
                 cursors = updated
                 println("FiberSocial: MessagesViewModel loadMore added ${messages.size} messages")
                 loadedState()
@@ -331,7 +340,7 @@ class MessagesViewModel(
      */
     private suspend fun fetchRound(
         from: Map<MessageFolder, FolderCursor>,
-    ): Pair<List<Message>, Map<MessageFolder, FolderCursor>> = coroutineScope {
+    ): Triple<List<Message>, Map<MessageFolder, FolderCursor>, Boolean> = coroutineScope {
         val pending = LISTED_FOLDERS.filter { from.getValue(it).hasMore }
         val pages = pending.map { folder ->
             async {
@@ -348,7 +357,11 @@ class MessagesViewModel(
         pages.forEach { (folder, page) ->
             updated[folder] = FolderCursor(nextPage = page.page + 1, hasMore = page.hasMore)
         }
-        pages.flatMap { (_, page) -> page.messages } to updated.toMap()
+        Triple(
+            pages.flatMap { (_, page) -> page.messages },
+            updated.toMap(),
+            pages.any { (_, page) -> page.viaScrape },
+        )
     }
 
     /**
@@ -479,10 +492,10 @@ class MessagesViewModel(
      *
      * ## The cost, and why this is where it is paid
      *
-     * `getMessages(full = true)` already asks for bodies inline, but whether that works is
-     * the unresolved `output_format`-vs-`format` ambiguity documented on this class and on
-     * `RavelryApiClient.getMessages`. So this is the FALLBACK the client's KDoc names:
-     * [RavelryApiClient.getMessage] always returns the full shape.
+     * `getMessages(full = true)` already asks for bodies inline, but the scrape-fallback
+     * listing (issue #396, see `RavelryApiClient.getMessages`) carries no bodies at all.
+     * So this is the FALLBACK the client's KDoc names: [RavelryApiClient.getMessage]
+     * always returns the full shape, on either of its routes.
      *
      * It costs up to one extra GET per message in the opened thread — and ZERO when the
      * list already carried bodies, because only body-less messages are fetched. That is
@@ -550,7 +563,7 @@ class MessagesViewModel(
      * behind it is doing.
      */
     private fun republish() {
-        val regrouped = groupIntoThreads(accumulated, currentUsername)
+        val regrouped = groupIntoThreads(accumulated, currentUsername, anyPageViaScrape)
         (_state.value as? MessagesState.Loaded)?.let { _state.value = it.copy(threads = regrouped) }
         _openThread.value?.let { open ->
             val refreshed = regrouped.firstOrNull { it.rootId == open.thread.rootId } ?: return
@@ -695,13 +708,11 @@ class MessagesViewModel(
             messageDirection(it, currentUsername) == MessageDirection.INBOUND
         }
         if (target == null) {
-            // "the other person" rather than "they": the sentence below reads
-            // "once <name> writes back", which needs a singular noun phrase.
-            val name = thread.counterpart?.username?.takeIf { it.isNotBlank() }
-                ?: "the other person"
+            // The thread screen grays its Reply button out via the same hasReplyTarget
+            // rule, so normally this is unreachable from the UI — it stays as the
+            // backstop for a stale thread copy or a caller without that affordance.
             _sendState.value = SendMessageState.Error(
-                "Ravelry only lets you reply to a message someone sent you, and this " +
-                    "conversation has none yet — you can reply once $name writes back.",
+                noReplyTargetMessage(thread.counterpart?.username),
             )
             return
         }
@@ -816,7 +827,7 @@ class MessagesViewModel(
     )
 
     private fun loadedState(): MessagesState.Loaded = MessagesState.Loaded(
-        threads = groupIntoThreads(accumulated, currentUsername),
+        threads = groupIntoThreads(accumulated, currentUsername, anyPageViaScrape),
         hasMore = !pagingBlocked && cursors.values.any { it.hasMore },
         loadingMore = false,
         refreshing = false,

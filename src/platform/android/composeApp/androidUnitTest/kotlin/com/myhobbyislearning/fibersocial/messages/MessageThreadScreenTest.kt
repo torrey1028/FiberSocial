@@ -208,4 +208,51 @@ class MessageThreadScreenTest {
 
         compose.onNodeWithTag("ReplyFab").assertDoesNotExist()
     }
+
+    /**
+     * A conversation with nothing repliable — the user started it and nobody answered —
+     * grays the Reply button out instead of opening a composer whose send is doomed
+     * (Ravelry only accepts replies to a message someone sent *you*). The gray button
+     * still explains itself on tap rather than silently ignoring it.
+     */
+    @Test
+    fun `an outbound only conversation grays the reply button and explains on tap`() {
+        var replies = 0
+        setScreen(
+            OpenThreadState(
+                conversation(listOf(message(1, from = ME, to = "friend", body = "Anyone there?"))),
+            ),
+            onReply = { replies++ },
+        )
+
+        compose.onNodeWithTag("ReplyFab").assertDoesNotExist()
+        compose.onNodeWithTag("ReplyFabDisabled").assertIsDisplayed()
+        compose.onNodeWithTag("ReplyFabDisabled").performClick()
+
+        assertEquals(0, replies)
+        compose.onNodeWithText("you can reply once friend writes back", substring = true)
+            .assertIsDisplayed()
+    }
+
+    /** The counterpart of the gray-out: any inbound message keeps the real button. */
+    @Test
+    fun `a conversation with an inbound message keeps the live reply button`() {
+        var replies = 0
+        setScreen(
+            OpenThreadState(
+                conversation(
+                    listOf(
+                        message(1, from = ME, to = "friend", body = "Hello?"),
+                        message(2, from = "friend", to = ME, body = "Hi!"),
+                    ),
+                ),
+            ),
+            onReply = { replies++ },
+        )
+
+        compose.onNodeWithTag("ReplyFabDisabled").assertDoesNotExist()
+        compose.onNodeWithTag("ReplyFab").performClick()
+
+        assertEquals(1, replies)
+    }
 }

@@ -29,6 +29,10 @@ import com.myhobbyislearning.fibersocial.profile.UserProfile
 import com.myhobbyislearning.fibersocial.feed.models.Topic
 import com.myhobbyislearning.fibersocial.messages.Message
 import com.myhobbyislearning.fibersocial.messages.MessageFolder
+import com.myhobbyislearning.fibersocial.messages.MessagesWebParser
+import kotlinx.datetime.LocalDate
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.toLocalDateTime
 import com.myhobbyislearning.fibersocial.feed.models.VoteType
 import com.myhobbyislearning.fibersocial.projects.PatternInfo
 import com.myhobbyislearning.fibersocial.projects.ProjectComment
@@ -188,7 +192,7 @@ class RavelryApiClient(
         // moderator-only action). Refreshing or re-logging-in cannot fix it, so it must
         // not be classified as session expiry (issue #82).
         if (response.status == HttpStatusCode.Forbidden) {
-            throw ForbiddenException(forbiddenMessage(response))
+            throw ForbiddenException(forbiddenMessage(response), body = response.bodyAsText())
         }
         if (response.status == HttpStatusCode.Unauthorized) {
             val tokenUsedForFailedRequest = response.request.headers[HttpHeaders.Authorization]
@@ -201,7 +205,7 @@ class RavelryApiClient(
                 throw SessionExpiredException("Session expired")
             }
             if (retried.status == HttpStatusCode.Forbidden) {
-                throw ForbiddenException(forbiddenMessage(retried))
+                throw ForbiddenException(forbiddenMessage(retried), body = retried.bodyAsText())
             }
             return retried.bodyAsText()
         }
@@ -1176,9 +1180,15 @@ class RavelryApiClient(
      * Returns one page of the signed-in user's private messages from [folder]
      * (`/messages/list.json`, issue #366, epic #365).
      *
-     * Needs NO extra OAuth scope — reading messages works with ordinary authentication,
-     * so this must not motivate a `SCOPE` change or a forced re-login. (The write half,
-     * issue #367, is the part that needs `message-write`.)
+     * SCOPE REALITY (issue #396) — the API docs claim reads need no permission, but the
+     * live API 403s every read demanding a `message-read` scope that Ravelry's OAuth
+     * servers will not issue (verified against OAuth 2, OAuth 1.0a, and a token carrying
+     * every documented scope; only personal-key basic auth passes). So this method tries
+     * the JSON API first and, on the 403, falls back to scraping the website message box
+     * via [getMessagesFromWeb] — see [MessagesWebParser] for what the web can and cannot
+     * provide (notably: no `parent_message_id`, approximate timestamps, `full` bodies
+     * unavailable). Do NOT add `message-read` to `SCOPE`: the authorize endpoint rejects
+     * the whole login as `invalid_scope` when it is present.
      *
      * `folder` is REQUIRED by Ravelry; there is no "all messages" listing, so a caller
      * wanting the full picture pages [MessageFolder.INBOX] and [MessageFolder.SENT]
@@ -1193,34 +1203,17 @@ class RavelryApiClient(
      * `time_` as this endpoint's default too, but we send it explicitly rather than
      * trusting an undefaulted server-side default to stay put.
      *
-     * UNRESOLVED DOC AMBIGUITY (#366) — `output_format` vs `format`. The parameter table
-     * documents `output_format` (accepting `list` / `full`); the worked example directly
-     * beneath it uses `format=full`. Exactly one of them is presumably honoured and we
-     * had no live token to find out which.
+     * `output_format` vs `format` — SETTLED (was an #366 doc ambiguity; the docs'
+     * parameter table and worked example contradict each other). Verified live with
+     * personal-key basic auth (the only credential that can read messages, see #396):
+     * `output_format=full` adds `content_html`/`folder_name` to list rows;
+     * `format=full` is silently ignored (plain list shape, no error). We send only
+     * `output_format`, which is also the safe choice — `format` is Rails' reserved
+     * response-format selector.
      *
-     * We send ONLY `output_format`, the name the parameter table documents. Sending both
-     * as a hedge was considered and rejected: `format` is not an arbitrary unknown param
-     * that Ravelry would harmlessly ignore. This API is Rails and every path here ends in
-     * `.json`, where `params[:format]` is the RESERVED response-format selector. The path
-     * extension normally wins over the query param, so `?format=full` is probably inert —
-     * but "probably" is the whole problem. The plausible bad outcome is a 406 / unknown-
-     * format error on the entire request, which is strictly worse than the failure we'd
-     * be hedging against (a silent degrade to the body-less `list` shape).
-     *
-     * So the risk is deliberately one-sided: if `output_format` is the wrong name, bodies
-     * come back null and callers fall back to [getMessage], which always returns the full
-     * shape. Nothing errors.
-     *
-     * TO SETTLE IT: one authenticated call with only `output_format=full`, then one with
-     * only `format=full`; whichever response contains `content_html` names the winner.
-     * Note the second experiment may return an HTTP error rather than a body — that is
-     * itself the answer. Then hard-code the winner here and delete this paragraph.
-     *
-     * DO THIS BEFORE a caller sets `full = true` (#370's list-with-previews is the first
-     * one that will want to) — today the branch is unreachable in shipped code.
-     *
-     * Even if [full] is wrong, [getMessage] always returns the full shape, so a detail
-     * screen is never blocked on this question — only a list-with-previews optimisation.
+     * Also settled the same way: full shapes carry `content_html` ONLY — there is no
+     * plain-text `content` field on reads (it is write-only, exactly as the field table
+     * said).
      *
      * @param folder Which box to list. Required by Ravelry; see [MessageFolder].
      * @param page 1-based page number.
@@ -1238,6 +1231,25 @@ class RavelryApiClient(
         pageSize: Int = DEFAULT_MESSAGES_PAGE_SIZE,
         unreadOnly: Boolean = false,
         full: Boolean = false,
+    ): MessagesPage {
+        if (!messagesReadScopeBlocked) {
+            try {
+                return getMessagesFromApi(folder, page, pageSize, unreadOnly, full)
+            } catch (e: ForbiddenException) {
+                if (!isMessageReadScopeError(e)) throw e
+                noteMessagesReadBlocked(e)
+            }
+        }
+        return getMessagesFromWeb(folder, page, pageSize, unreadOnly)
+    }
+
+    /** The JSON-API half of [getMessages]; 403s while `message-read` is ungranted (#396). */
+    private suspend fun getMessagesFromApi(
+        folder: MessageFolder,
+        page: Int,
+        pageSize: Int,
+        unreadOnly: Boolean,
+        full: Boolean,
     ): MessagesPage {
         val raw = authenticatedRequest {
             httpClient.get("$BASE_URL/messages/list.json") {
@@ -1270,6 +1282,19 @@ class RavelryApiClient(
      * @param messageId Ravelry message ID.
      */
     suspend fun getMessage(messageId: Long): Message {
+        if (!messagesReadScopeBlocked) {
+            try {
+                return getMessageFromApi(messageId)
+            } catch (e: ForbiddenException) {
+                if (!isMessageReadScopeError(e)) throw e
+                noteMessagesReadBlocked(e)
+            }
+        }
+        return getMessageFromWeb(messageId)
+    }
+
+    /** The JSON-API half of [getMessage]; 403s while `message-read` is ungranted (#396). */
+    private suspend fun getMessageFromApi(messageId: Long): Message {
         val raw = authenticatedRequest {
             httpClient.get("$BASE_URL/messages/$messageId.json") {
                 header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
@@ -1310,6 +1335,148 @@ class RavelryApiClient(
                 header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
             }
         }
+    }
+
+    // Latch: once a messages READ 403s — the ungrantable `message-read` scope, issue
+    // #396 — stop paying a doomed JSON round-trip on every read for the rest of this
+    // client's life and go straight to the website. Never set by writes or mark-read
+    // (they sit behind different gates that our tokens do pass). A fresh launch always
+    // retries the JSON path first, so if Ravelry ever starts granting the scope, the
+    // API route resumes on its own with no code change and no re-login.
+    private var messagesReadScopeBlocked = false
+
+    private fun noteMessagesReadBlocked(cause: ForbiddenException) {
+        if (!messagesReadScopeBlocked) {
+            messagesReadScopeBlocked = true
+            println(
+                "FiberSocial: messages read forbidden (${cause.message}) — " +
+                    "falling back to the website message box (#396)"
+            )
+        }
+    }
+
+    // A 403 on a messages endpoint isn't necessarily the ungrantable `message-read` scope
+    // (#396) — it could be a moderator/ownership check on that same URL shape. Only latch
+    // to web-scraping mode when the body actually confirms Ravelry's documented scope
+    // error text; any other 403 propagates unlatched so it's surfaced like a normal
+    // ForbiddenException instead of silently and permanently switching this client to
+    // scraping for an unrelated reason.
+    private fun isMessageReadScopeError(e: ForbiddenException): Boolean =
+        e.body?.contains("message-read", ignoreCase = true) == true
+
+    // The web message box lives under /people/{username}/…. The username comes from
+    // current_user.json once and is cached for this client's lifetime — it cannot change
+    // without a re-login, which builds a fresh client.
+    private var scrapeUsernameCache: String? = null
+
+    private suspend fun scrapeUsername(): String =
+        scrapeUsernameCache ?: getCurrentUser().username.also { scrapeUsernameCache = it }
+
+    private fun todayLocalDate(): LocalDate =
+        Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault()).date
+
+    /**
+     * The web half of [getMessages]: scrapes the folder page, which renders the ENTIRE
+     * folder (no pagination markup exists even at dozens of rows — see
+     * [MessagesWebParser]), so `page`/`pageSize` slicing and the `unreadOnly` filter
+     * happen client-side and are exact, and `hasMore` is plain arithmetic.
+     *
+     * `full` has no web equivalent — rows carry no bodies. Callers already treat a null
+     * [Message.contentHtml] as a routine degrade and hydrate via [getMessage].
+     */
+    private suspend fun getMessagesFromWeb(
+        folder: MessageFolder,
+        page: Int,
+        pageSize: Int,
+        unreadOnly: Boolean,
+    ): MessagesPage {
+        val username = scrapeUsername()
+        val suffix = when (folder) {
+            MessageFolder.INBOX -> ""
+            MessageFolder.SENT -> "/sent"
+            // The box Ravelry's API calls "archived" is /saved on the website — the same
+            // naming trap documented on MessageFolder.
+            MessageFolder.ARCHIVED -> "/saved"
+        }
+        val html = scrapeHtml(
+            "https://www.ravelry.com/people/$username/messages$suffix",
+            "/people/",
+            "message box",
+        )
+        var all = MessagesWebParser.parseFolderPage(html, username, folder, todayLocalDate())
+        if (unreadOnly) all = all.filter { !it.readMessage }
+        val from = (page - 1) * pageSize
+        val slice = if (from >= all.size) emptyList() else all.subList(from, minOf(from + pageSize, all.size))
+        return MessagesPage(
+            messages = slice,
+            page = page,
+            hasMore = from + pageSize < all.size,
+            viaScrape = true,
+        )
+    }
+
+    /**
+     * The web half of [getMessage]: fetches the site's own XHR fragment
+     * (`GET www.ravelry.com/messages/{id}` with `X-Requested-With`), which carries the
+     * rendered body. SIDE EFFECT: Ravelry marks the message read while serving it — the
+     * same behavior as opening the message on the website, and aligned with the app's own
+     * open-thread-marks-read flow (#371), so no compensating [markMessageRead] is needed
+     * on this path (issuing one anyway is harmless).
+     */
+    private suspend fun getMessageFromWeb(messageId: Long): Message {
+        val username = scrapeUsername()
+        val response = httpClient.get("https://www.ravelry.com/messages/$messageId") {
+            header(HttpHeaders.Cookie, sessionCookie())
+            header("X-Requested-With", "XMLHttpRequest")
+        }
+        when {
+            response.status == HttpStatusCode.Forbidden ->
+                throw ForbiddenException(forbiddenMessage(response))
+            response.status == HttpStatusCode.Unauthorized ->
+                throw SessionExpiredException("message fragment returned ${response.status}")
+            !response.request.url.encodedPath.startsWith("/messages/") ->
+                throw SessionExpiredException(
+                    "message fragment redirected to ${response.request.url.encodedPath}"
+                )
+            !response.status.isSuccess() -> error("message fragment returned ${response.status}")
+        }
+        return MessagesWebParser.parseMessageFragment(
+            rjs = response.bodyAsText(),
+            messageId = messageId,
+            currentUsername = username,
+            today = todayLocalDate(),
+        ) ?: error("Could not parse message $messageId from the web fragment")
+    }
+
+    /**
+     * Whether the inbox holds anything unread — the drawer-dot probe (issue #372), pulled
+     * out of [getMessages] so its fallback can use the site's dedicated counter
+     * (`/people/message_count.json`, the endpoint the website's own navigation badge
+     * polls) instead of scraping the full inbox page for a yes/no answer.
+     */
+    suspend fun hasUnreadMessages(): Boolean {
+        if (!messagesReadScopeBlocked) {
+            try {
+                return getMessagesFromApi(
+                    folder = MessageFolder.INBOX,
+                    page = 1,
+                    pageSize = 1,
+                    unreadOnly = true,
+                    full = false,
+                ).messages.isNotEmpty()
+            } catch (e: ForbiddenException) {
+                if (!isMessageReadScopeError(e)) throw e
+                noteMessagesReadBlocked(e)
+            }
+        }
+        val raw = scrapeHtml(
+            "https://www.ravelry.com/people/message_count.json",
+            "/people/",
+            "message count",
+        )
+        val count = MessagesWebParser.parseUnreadCount(raw)
+            ?: error("Could not parse /people/message_count.json")
+        return count > 0
     }
 
     /**
@@ -1992,4 +2159,11 @@ data class MessagesPage(
     val messages: List<Message>,
     val page: Int,
     val hasMore: Boolean,
+    /**
+     * True when this page came from the website scrape fallback rather than the JSON API
+     * (issue #396). Scraped messages carry no `parent_message_id`, so callers that group
+     * conversations must switch `groupIntoThreads` to its subject+counterpart fallback
+     * when any page arrived this way.
+     */
+    val viaScrape: Boolean = false,
 )

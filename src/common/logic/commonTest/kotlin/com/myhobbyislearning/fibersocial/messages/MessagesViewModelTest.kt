@@ -1,10 +1,22 @@
 package com.myhobbyislearning.fibersocial.messages
 
+import com.myhobbyislearning.fibersocial.feed.CURRENT_USER_JSON
+import com.myhobbyislearning.fibersocial.feed.FakeFeedTokenStorage
+import com.myhobbyislearning.fibersocial.feed.RavelryApiClient
 import com.myhobbyislearning.fibersocial.feed.errorApiClient
 import com.myhobbyislearning.fibersocial.feed.routingApiClientCapturing
 import com.myhobbyislearning.fibersocial.feed.sessionExpiredApiClient
 import com.myhobbyislearning.fibersocial.feed.suspendableRoutingApiClient
+import io.ktor.client.HttpClient
+import io.ktor.client.engine.mock.MockEngine
+import io.ktor.client.engine.mock.respond
+import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.http.ContentType
+import io.ktor.http.HttpStatusCode
 import io.ktor.http.Url
+import io.ktor.http.headersOf
+import io.ktor.serialization.kotlinx.json.json
+import kotlinx.serialization.json.Json
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -243,6 +255,209 @@ class MessagesViewModelTest {
 
             assertTrue(requested.contains("inbox" to "2"))
             assertTrue(!requested.contains("sent" to "2"))
+        }
+
+    /** loadMore is documented as a no-op unless loaded — before the first load there is
+     * nothing to append to, and firing requests would race the initial round. */
+    @Test
+    fun `loadMore before anything has loaded makes no requests`() =
+        runTest(UnconfinedTestDispatcher()) {
+            var requests = 0
+            val client = routingApiClientCapturing(onRequest = { requests++ }) { EMPTY_LIST_JSON }
+
+            val vm = MessagesViewModel(client, this)
+            vm.loadMore()
+            awaitChildren(coroutineContext[Job]!!)
+
+            assertIs<MessagesState.Loading>(vm.state.value)
+            assertEquals(0, requests)
+        }
+
+    /** The scroll trigger fires repeatedly near the list end; a second loadMore while one
+     * is in flight must not double-fetch (and double-append) the same page. */
+    @Test
+    fun `a second loadMore while one is in flight is ignored`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val gate = CompletableDeferred<Unit>()
+            var pageTwoRequests = 0
+            val client = suspendableRoutingApiClient { url ->
+                val page = url.parameters["page"]?.toInt() ?: 1
+                if (url.parameters["folder"] == "sent") {
+                    listJson(listOf(messageJson(id = 100)), pageCount = 1)
+                } else if (page == 1) {
+                    listJson(listOf(messageJson(id = 1)), page = 1, pageCount = 2)
+                } else {
+                    pageTwoRequests++
+                    gate.await()
+                    listJson(listOf(messageJson(id = 2)), page = 2, pageCount = 2)
+                }
+            }
+
+            val vm = MessagesViewModel(client, this)
+            vm.load("yarnie")
+            awaitChildren(coroutineContext[Job]!!)
+
+            vm.loadMore()
+            vm.loadMore() // in-flight: must be ignored, not queued
+            gate.complete(Unit)
+            awaitChildren(coroutineContext[Job]!!)
+
+            assertEquals(1, pageTwoRequests)
+            val state = assertIs<MessagesState.Loaded>(vm.state.value)
+            assertEquals(setOf(1L, 2L, 100L), state.threads.map { it.rootId }.toSet())
+        }
+
+    // --- the scrape fallback reaching the screen (issue #396) -------------------------
+
+    /**
+     * An API host that 403s message reads (the ungrantable `message-read` scope) after
+     * [jsonListPages] successful list calls, plus a web host serving [inboxHtml]/[sentHtml]
+     * folder pages. `jsonListPages = 0` is scrape-from-the-start; a positive value lets the
+     * revocation land mid-session, on a loadMore.
+     */
+    private fun scrapeModeClient(
+        inboxHtml: String,
+        sentHtml: String,
+        jsonListPages: Int = 0,
+        jsonListPage: (Url) -> String = { EMPTY_LIST_JSON },
+    ): RavelryApiClient {
+        var listCalls = 0
+        val engine = MockEngine { request ->
+            val host = request.url.host
+            val path = request.url.encodedPath
+            when {
+                host == "api.ravelry.com" && path == "/current_user.json" ->
+                    respond(
+                        CURRENT_USER_JSON,
+                        HttpStatusCode.OK,
+                        headersOf("Content-Type", ContentType.Application.Json.toString()),
+                    )
+                host == "api.ravelry.com" && path == "/messages/list.json" -> {
+                    listCalls++
+                    if (listCalls <= jsonListPages) {
+                        respond(
+                            jsonListPage(request.url),
+                            HttpStatusCode.OK,
+                            headersOf("Content-Type", ContentType.Application.Json.toString()),
+                        )
+                    } else {
+                        respond(
+                            """{"error":"message-read scope is required for this action"}""",
+                            HttpStatusCode.Forbidden,
+                            headersOf("Content-Type", ContentType.Application.Json.toString()),
+                        )
+                    }
+                }
+                host == "www.ravelry.com" && path.endsWith("/sent") ->
+                    respond(sentHtml, HttpStatusCode.OK, headersOf("Content-Type", "text/html"))
+                host == "www.ravelry.com" ->
+                    respond(inboxHtml, HttpStatusCode.OK, headersOf("Content-Type", "text/html"))
+                else -> error("Unexpected request to $host$path")
+            }
+        }
+        val client = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        return RavelryApiClient(client, FakeFeedTokenStorage())
+    }
+
+    private fun folderRowHtml(id: Long, username: String, subject: String, date: String) = """
+        <div class="message_row message_row--read" id="message_row_$id">
+          <div class="resizable_table__cell message_row__date rsp_only">$date</div>
+          <div class="message_row___avatar"><div class="message_row__username">$username</div></div>
+          <div class="message_row__subject resizable_table__cell"><a href="#">$subject</a></div>
+        </div>
+    """.trimIndent()
+
+    /**
+     * End-to-end through the ViewModel: scraped pages carry no `parent_message_id`, so
+     * without the subject-merge fallback engaging the exchange below would render as three
+     * one-message "conversations". The `viaScrape` flag must survive the trip from
+     * `MessagesPage` through `fetchRound` into `groupIntoThreads`.
+     */
+    @Test
+    fun `a scraped load merges the folders into conversations by subject`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val client = scrapeModeClient(
+                inboxHtml = folderRowHtml(101, "WoolyWendy", "Yarn swap?", "July 11, 2026 3:38 AM") +
+                    folderRowHtml(103, "WoolyWendy", "Re: Yarn swap?", "July 13, 2026 9:00 AM"),
+                sentHtml = folderRowHtml(102, "WoolyWendy", "Re: Yarn swap?", "July 12, 2026 8:00 AM"),
+            )
+
+            val vm = MessagesViewModel(client, this)
+            vm.load("yarnie")
+            awaitChildren(coroutineContext[Job]!!)
+
+            val state = assertIs<MessagesState.Loaded>(vm.state.value)
+            val thread = state.threads.single()
+            assertEquals(listOf(101L, 102L, 103L), thread.messages.map { it.id })
+            assertEquals("Yarn swap?", thread.subject)
+            assertEquals("WoolyWendy", thread.counterpart?.username)
+            // The whole web folder arrives in one page.
+            assertTrue(!state.hasMore)
+        }
+
+    /**
+     * The latch can flip mid-session: a load that succeeded over JSON followed by a
+     * loadMore that 403s. `anyPageViaScrape` (and therefore `groupIntoThreads`'
+     * `mergeBySubjectFallback`) is session-wide — it accumulates with OR across rounds —
+     * but the subject+counterpart merge itself is gated per-message by [Message.viaScrape],
+     * so messages that were genuinely fetched over JSON in an earlier round must NOT be
+     * swept into the merge just because a LATER round in the same session fell back to
+     * scraping. Regression pin for the bug where a session-wide flag caused the merge to
+     * run over the entire accumulated corpus, including pure-JSON pages.
+     */
+    @Test
+    fun `a loadMore that falls back to scrape does not merge earlier all JSON pages`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val client = scrapeModeClient(
+                // The scraped folder re-serves the same mail the JSON pages already
+                // delivered; duplicate ids collapse in the grouping, and the JSON
+                // (non-scraped) copy wins as the first occurrence.
+                inboxHtml = folderRowHtml(1, "friend", "Yarn talk", "July 3, 2026 10:00 AM"),
+                sentHtml = folderRowHtml(2, "friend", "Re: Yarn talk", "July 3, 2026 11:00 AM"),
+                jsonListPages = 2,
+                jsonListPage = { url ->
+                    if (url.parameters["folder"] == "sent") {
+                        // Genuinely parentless JSON message — NOT scrape-shaped data, even
+                        // though it (like a scraped row) carries no parent_message_id.
+                        listJson(
+                            listOf(
+                                messageJson(
+                                    id = 2,
+                                    subject = "Re: Yarn talk",
+                                    sender = "yarnie",
+                                    recipient = "friend",
+                                    sentAt = "2026/07/03 11:00:00 +0000",
+                                ),
+                            ),
+                            pageCount = 1,
+                        )
+                    } else {
+                        listJson(listOf(messageJson(id = 1, subject = "Yarn talk")), pageCount = 2)
+                    }
+                },
+            )
+
+            val vm = MessagesViewModel(client, this)
+            vm.load("yarnie")
+            awaitChildren(coroutineContext[Job]!!)
+            // Over JSON, with no parent ids, the two messages are two threads.
+            val beforeFallback = assertIs<MessagesState.Loaded>(vm.state.value)
+            assertEquals(2, beforeFallback.threads.size)
+            assertTrue(beforeFallback.hasMore)
+
+            vm.loadMore() // inbox page 2 403s -> latches -> scrapes
+            awaitChildren(coroutineContext[Job]!!)
+
+            // The scraped round re-serves the same two ids, which dedup collapses onto
+            // the ORIGINAL JSON messages (first occurrence wins) — so both stay
+            // non-scrape and the subject+counterpart merge must still leave them apart,
+            // even though `anyPageViaScrape` is now true for the session.
+            val state = assertIs<MessagesState.Loaded>(vm.state.value)
+            assertEquals(2, state.threads.size)
+            assertEquals(setOf(1L), state.threads.first { it.rootId == 1L }.messages.map { it.id }.toSet())
+            assertEquals(setOf(2L), state.threads.first { it.rootId == 2L }.messages.map { it.id }.toSet())
         }
 
     /**

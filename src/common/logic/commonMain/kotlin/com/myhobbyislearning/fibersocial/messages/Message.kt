@@ -59,6 +59,12 @@ enum class MessageFolder(val wireName: String) {
  * @property contentHtml Server-rendered HTML body. Full shape only.
  * @property content Plain-text body — see the note below. Full shape only, and possibly
  *   never present at all.
+ * @property viaScrape Client-only provenance flag, never present on the wire (defaults to
+ *   `false`, so every JSON-API-decoded message gets it for free): `true` only for messages
+ *   built by [MessagesWebParser] from the website scrape fallback (issue #396). Scraped
+ *   rows carry no [parentMessageId], but so can a genuine standalone JSON message — this
+ *   flag is what [groupIntoThreads]' subject+counterpart merge uses to tell those two
+ *   apart, rather than treating every parentless message as scrape-sourced.
  */
 @Serializable
 data class Message(
@@ -75,21 +81,14 @@ data class Message(
     @SerialName("folder_name") val folderName: String? = null,
     @SerialName("content_html") val contentHtml: String? = null,
     /**
-     * UNRESOLVED DOC AMBIGUITY (#366) — does a read carry plain text alongside HTML?
-     *
-     * Ravelry's own field table for `Message (full)` lists ONLY `content_html`; `content`
-     * appears exclusively on `Message (POST)`, i.e. it looks write-only. But third-party
-     * clients refer to a `content` field on reads, and the docs are demonstrably sloppy
-     * elsewhere in this same section (see [MessageFolder] and the `output_format`
-     * comment on `getMessages`). We had no live token to settle it, so this field is
-     * nullable and optional: the model decodes identically whether the key is present,
-     * absent, or explicitly null, and nothing here commits to an answer.
-     *
-     * TO SETTLE IT: one authenticated `GET /messages/{id}.json` against a real account —
-     * if the returned JSON has a `content` key, plain text exists on reads and the
-     * detail screen may prefer it; if not, bodies MUST render through the HTML path
-     * ([contentHtml]) and this field should be deleted rather than left as a trap.
-     * Until then, treat [contentHtml] as the only body you can rely on.
+     * SETTLED (was an #366 ambiguity): reads carry NO plain-text `content` — verified
+     * live with personal-key basic auth (issue #396), the only credential that can read
+     * messages: list, full-list and show shapes all carry `content_html` only, exactly
+     * as Ravelry's field table said. Only `Message (POST)` (the write direction) has
+     * `content`. This field therefore stays `null` on every read and exists so the
+     * write-echo shape still decodes; deleting it outright is tracked as #366 follow-up
+     * cleanup (it touches the send-echo path and tests).
      */
     val content: String? = null,
+    val viaScrape: Boolean = false,
 )

@@ -20,9 +20,8 @@ private val WHITESPACE_RUN = Regex("\\s+")
  *
  * ## This REUSES the existing preview machinery rather than adding a flattener
  *
- * Bodies arrive as `content_html` and nothing else: `Message.content` is documented as
- * write-only and its presence on reads is an unresolved ambiguity (see its KDoc), so HTML
- * is the only body we can rely on. That is already a solved problem here —
+ * Bodies arrive as `content_html` and nothing else: `Message.content` is write-only,
+ * verified live (see its KDoc), so HTML is the only body reads ever carry. That is already a solved problem here —
  * [HtmlPostParser] is the project's single HTML→`PostDocument` converter (adding a second
  * HTML path is an explicit project trap), and [previewInlines] is the existing walker that
  * collapses a document to a compact preview run.
