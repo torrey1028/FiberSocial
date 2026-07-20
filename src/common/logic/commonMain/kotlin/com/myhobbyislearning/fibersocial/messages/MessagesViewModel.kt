@@ -1,14 +1,19 @@
 package com.myhobbyislearning.fibersocial.messages
 
+import com.myhobbyislearning.fibersocial.auth.ForbiddenException
 import com.myhobbyislearning.fibersocial.auth.SessionExpiredException
 import com.myhobbyislearning.fibersocial.auth.SessionExpirySignal
 import com.myhobbyislearning.fibersocial.feed.RavelryApiClient
+import com.myhobbyislearning.fibersocial.feed.models.RavelryUser
+import com.myhobbyislearning.fibersocial.feed.parseRavelryTimestamp
+import kotlin.time.Clock
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -143,15 +148,28 @@ data class OpenThreadState(
  * extra hop. Here, one edit to [accumulated] plus one regroup updates the open thread AND
  * the list row together, by construction.
  *
+ * ## Composing and replying live here too, for the same reason (#374)
+ *
+ * A sent message has to APPEAR — in the conversation the user is looking at and in the list
+ * row behind it — and the only way to do that without a refetch is to append it to
+ * [accumulated] and regroup, exactly as mark-read and the body backfill already do. So
+ * [sendNewMessage] and [sendReply] sit here rather than in a composer ViewModel of their
+ * own, and the "did it work" state they expose is about the send, not about the mailbox.
+ *
  * @param apiClient Ravelry client used for the list calls.
  * @param scope Coroutine scope tied to the host ViewModel's lifecycle.
+ * @param now Wall clock, injectable for tests. Used ONLY to stamp a just-sent message whose
+ *   response carried no usable `sent_at` — see [ravelryTimestamp].
  */
 class MessagesViewModel(
     private val apiClient: RavelryApiClient,
     private val scope: CoroutineScope,
+    private val now: () -> Long = { Clock.System.now().toEpochMilliseconds() },
 ) {
     private val _state = MutableStateFlow<MessagesState>(MessagesState.Loading)
     private val _openThread = MutableStateFlow<OpenThreadState?>(null)
+    private val _recipientSearch = MutableStateFlow<RecipientSearchState>(RecipientSearchState.Idle)
+    private val _sendState = MutableStateFlow<SendMessageState>(SendMessageState.Idle)
     private val sessionExpirySignal = SessionExpirySignal()
 
     /** Observable conversation-list state. */
@@ -159,6 +177,12 @@ class MessagesViewModel(
 
     /** The open conversation, or `null` when the list is what's showing. See [openThread]. */
     val openThread: StateFlow<OpenThreadState?> = _openThread.asStateFlow()
+
+    /** Recipient picker state for the new-message composer. See [searchRecipients]. */
+    val recipientSearch: StateFlow<RecipientSearchState> = _recipientSearch.asStateFlow()
+
+    /** State of the in-flight send, for both a new conversation and a reply. */
+    val sendState: StateFlow<SendMessageState> = _sendState.asStateFlow()
 
     /** @see SessionExpirySignal.flow */
     val sessionExpired: Flow<Unit> = sessionExpirySignal.flow
@@ -196,6 +220,7 @@ class MessagesViewModel(
 
     private var loadJob: Job? = null
     private var loadMoreJob: Job? = null
+    private var searchJob: Job? = null
 
     /**
      * Loads the first page of every listed folder, replacing whatever was there.
@@ -533,6 +558,256 @@ class MessagesViewModel(
         if (open.thread.rootId != rootId) return
         _openThread.value = transform(open)
     }
+
+    /**
+     * Debounced recipient search for the new-message composer (issue #374).
+     *
+     * Cancelling the previous job IS the debounce: each keystroke starts a coroutine that
+     * sleeps [RECIPIENT_SEARCH_DEBOUNCE_MS] before calling out, and the next keystroke kills
+     * it while it is still sleeping. That also removes the out-of-order problem a plain
+     * throttle leaves behind — a cancelled job cannot publish a stale result over a newer
+     * one, because there is only ever one job alive.
+     *
+     * Queries shorter than [MIN_RECIPIENT_QUERY_LENGTH] never reach the network and reset
+     * the picker to [RecipientSearchState.Idle]: a one-letter global search matches
+     * thousands of people and answers nothing.
+     *
+     * @param query Raw text from the "To" field; trimmed here so the caller need not.
+     */
+    fun searchRecipients(query: String) {
+        searchJob?.cancel()
+        val term = query.trim()
+        if (term.length < MIN_RECIPIENT_QUERY_LENGTH) {
+            _recipientSearch.value = RecipientSearchState.Idle
+            return
+        }
+        // Set BEFORE the delay, not inside the job after it: the spinner should appear on
+        // the keystroke, not 300ms later, or the picker looks inert while it waits.
+        _recipientSearch.value = RecipientSearchState.Searching
+        searchJob = scope.launch {
+            delay(RECIPIENT_SEARCH_DEBOUNCE_MS)
+            _recipientSearch.value = try {
+                val users = apiClient.searchUsers(term)
+                println("FiberSocial: MessagesViewModel recipient search '$term' -> ${users.size}")
+                RecipientSearchState.Results(users)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: SessionExpiredException) {
+                println("FiberSocial: MessagesViewModel recipient search session expired")
+                sessionExpirySignal.signal()
+                RecipientSearchState.Idle
+            } catch (e: Exception) {
+                println("FiberSocial: MessagesViewModel recipient search failed: ${e.message}")
+                RecipientSearchState.Error("Couldn't search for people. Check your connection.")
+            }
+        }
+    }
+
+    /**
+     * Sends a NEW private message, starting a conversation (issue #374).
+     *
+     * Goes through `create.json`. [sendReply] is what every answer to an existing message
+     * must use instead — see its KDoc, and
+     * [com.myhobbyislearning.fibersocial.feed.RavelryApiClient.replyToMessage].
+     *
+     * @param recipientUsername The COMMITTED recipient's handle, from a picker selection.
+     *   The composer never passes raw free text: a mistyped username fails server-side with
+     *   an error that reads like a general failure.
+     * @param subject Subject line, user-authored.
+     * @param content Message body, user-authored.
+     */
+    fun sendNewMessage(recipientUsername: String, subject: String, content: String) {
+        if (_sendState.value is SendMessageState.Sending) return
+        val to = recipientUsername.trim()
+        val trimmedSubject = subject.trim()
+        val trimmedContent = content.trim()
+        val problem = when {
+            to.isEmpty() -> "Choose who this message is going to."
+            else -> validationProblem(trimmedSubject, trimmedContent)
+        }
+        if (problem != null) {
+            _sendState.value = SendMessageState.Error(problem)
+            return
+        }
+        _sendState.value = SendMessageState.Sending
+        scope.launch {
+            runSend(parentId = null, fallbackCounterpart = RavelryUser(username = to)) {
+                apiClient.sendMessage(to, trimmedSubject, trimmedContent)
+            }
+        }
+    }
+
+    /**
+     * Replies within the conversation rooted at [rootId] (issue #374).
+     *
+     * ## Always `reply.json`, and never `create.json`
+     *
+     * This calls [com.myhobbyislearning.fibersocial.feed.RavelryApiClient.replyToMessage] and
+     * nothing else. `reply.json` is the only endpoint that sets `parent_message_id`, and that
+     * pointer is the entire basis of [groupIntoThreads]. A reply routed through `create.json`
+     * delivers, shows the right subject, and looks correct everywhere — until the list is
+     * regrouped and the conversation has silently split in two, unfixably, because messages
+     * cannot be edited. There is deliberately NO fallback to [sendNewMessage] on any path
+     * here, including the one below where a reply is impossible.
+     *
+     * ## Which message it replies TO
+     *
+     * The newest INBOUND message. Ravelry requires the signed-in user to be the recipient of
+     * the message being replied to — replying to one's own sent message is rejected — so an
+     * arbitrary "last message in the thread" would 4xx exactly when the user's own message is
+     * the newest, which is most of the time right after sending one.
+     *
+     * A thread with NO inbound message at all (the user opened it and nobody has answered)
+     * therefore has nothing to reply to, and this reports that rather than falling back to
+     * `create.json`. Following up on your own unanswered message is a genuine Ravelry
+     * limitation, not something we can work around without fragmenting the thread.
+     *
+     * The subject comes from [replySubject] over the thread's ROOT subject, so it cannot
+     * accrete `Re:` prefixes.
+     *
+     * @param rootId [MessageThread.rootId] of the conversation being replied to.
+     * @param content Reply body, user-authored.
+     */
+    fun sendReply(rootId: Long, content: String) {
+        if (_sendState.value is SendMessageState.Sending) return
+        // Prefer the open thread: a reply is sent from inside one, and it is the copy that
+        // is guaranteed current even if a refresh dropped the row from the list underneath.
+        val thread = _openThread.value?.thread?.takeIf { it.rootId == rootId }
+            ?: (_state.value as? MessagesState.Loaded)?.threads?.firstOrNull { it.rootId == rootId }
+        if (thread == null) {
+            println("FiberSocial: MessagesViewModel.sendReply($rootId) — no such thread")
+            _sendState.value = SendMessageState.Error("That conversation is no longer open.")
+            return
+        }
+        val trimmedContent = content.trim()
+        val problem = validationProblem(subject = replySubject(thread.subject), content = trimmedContent)
+        if (problem != null) {
+            _sendState.value = SendMessageState.Error(problem)
+            return
+        }
+        val target = thread.messages.lastOrNull {
+            messageDirection(it, currentUsername) == MessageDirection.INBOUND
+        }
+        if (target == null) {
+            // "the other person" rather than "they": the sentence below reads
+            // "once <name> writes back", which needs a singular noun phrase.
+            val name = thread.counterpart?.username?.takeIf { it.isNotBlank() }
+                ?: "the other person"
+            _sendState.value = SendMessageState.Error(
+                "Ravelry only lets you reply to a message someone sent you, and this " +
+                    "conversation has none yet — you can reply once $name writes back.",
+            )
+            return
+        }
+        _sendState.value = SendMessageState.Sending
+        scope.launch {
+            runSend(parentId = target.id, fallbackCounterpart = thread.counterpart) {
+                apiClient.replyToMessage(target.id, replySubject(thread.subject), trimmedContent)
+            }
+        }
+    }
+
+    /**
+     * Clears a finished send and the recipient picker when the composer opens or closes.
+     * No-op mid-send: an in-flight result still needs somewhere to land.
+     */
+    fun resetCompose() {
+        searchJob?.cancel()
+        _recipientSearch.value = RecipientSearchState.Idle
+        if (_sendState.value !is SendMessageState.Sending) _sendState.value = SendMessageState.Idle
+    }
+
+    /** Resets [sendState] from [SendMessageState.Sent] once the UI has navigated away. */
+    fun acknowledgeSent() {
+        if (_sendState.value is SendMessageState.Sent) _sendState.value = SendMessageState.Idle
+    }
+
+    /** Blank-field validation, shared by [sendNewMessage] and [sendReply]. `null` means valid. */
+    private fun validationProblem(subject: String, content: String): String? = when {
+        subject.isEmpty() -> "Add a subject before sending."
+        content.isEmpty() -> "Write a message before sending."
+        else -> null
+    }
+
+    /**
+     * Runs [call], files the result into [accumulated], and translates every failure.
+     *
+     * ## The sent message reaches the screen WITHOUT a refetch
+     *
+     * The created message is appended to [accumulated] and everything is regrouped, so the
+     * open thread and the list row behind it update from the same pass — the same mechanism
+     * mark-read and the body backfill use, and the reason this lives on this class at all.
+     * A blind refresh instead would re-request every page, throw away the accumulation,
+     * and still be racing Ravelry's own indexing for a message sent milliseconds earlier.
+     *
+     * ## A 403 IS NOT A SESSION EXPIRY (issue #82)
+     *
+     * [ForbiddenException] is caught ahead of the generic arm and turned into an ordinary
+     * composer error carrying the client's own both-causes copy. It NEVER signals
+     * [sessionExpired], so it can never log the user out. Its two causes — the recipient (or
+     * sender) having messaging disabled, and a token minted before `message-write` joined
+     * `SCOPE` — are indistinguishable by status code; see
+     * [com.myhobbyislearning.fibersocial.feed.RavelryApiClient] for the full analysis and
+     * `NewMessageScreen` for why we show copy naming both rather than probing to tell them
+     * apart.
+     */
+    private suspend fun runSend(
+        parentId: Long?,
+        fallbackCounterpart: RavelryUser?,
+        call: suspend () -> Message,
+    ) {
+        _sendState.value = try {
+            val sent = normalizeSent(call(), parentId, fallbackCounterpart)
+            accumulated = accumulated + sent
+            republish()
+            println("FiberSocial: MessagesViewModel sent message ${sent.id} parent=${sent.parentMessageId}")
+            SendMessageState.Sent(sent)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: SessionExpiredException) {
+            // The genuine expiry, and the only failure here that logs anyone out.
+            println("FiberSocial: MessagesViewModel send session expired")
+            sessionExpirySignal.signal()
+            SendMessageState.Idle
+        } catch (e: ForbiddenException) {
+            println("FiberSocial: MessagesViewModel send forbidden: ${e.message}")
+            SendMessageState.Error(
+                message = e.message ?: "Ravelry wouldn't deliver this message.",
+                messagingBlocked = true,
+            )
+        } catch (e: Exception) {
+            println("FiberSocial: MessagesViewModel send failed: ${e.message}")
+            SendMessageState.Error(e.message ?: "Couldn't send your message.")
+        }
+    }
+
+    /**
+     * Fills in what Ravelry's create/reply response may leave out, so the message groups and
+     * renders correctly the instant it is appended.
+     *
+     * Every field here is a REPAIR, never an override — a value Ravelry supplied always
+     * wins, and the next refresh replaces all of this with the server's own copy:
+     *
+     *  - A null `sender` would make [messageDirection] report [MessageDirection.UNKNOWN],
+     *    which the detail screen renders as *received* — attributing the user's own words to
+     *    the other party.
+     *  - A null `recipient` on a new conversation would leave the thread with no counterpart,
+     *    so the list row would render "(unknown)" for someone the user just picked by name.
+     *  - An absent or unparseable `sent_at` sorts the thread LAST (see [ravelryTimestamp]).
+     *  - A null `parent_message_id` on a reply would root it as its own thread locally, which
+     *    is the fragmented-conversation symptom [sendReply] exists to prevent — here it
+     *    would be a purely local illusion, but an alarming one.
+     */
+    private fun normalizeSent(
+        sent: Message,
+        parentId: Long?,
+        fallbackCounterpart: RavelryUser?,
+    ): Message = sent.copy(
+        sender = sent.sender ?: currentUsername.takeIf { it.isNotBlank() }?.let { RavelryUser(it) },
+        recipient = sent.recipient ?: fallbackCounterpart,
+        sentAt = sent.sentAt?.takeIf { parseRavelryTimestamp(it) != null } ?: ravelryTimestamp(now()),
+        parentMessageId = sent.parentMessageId ?: parentId,
+    )
 
     private fun loadedState(): MessagesState.Loaded = MessagesState.Loaded(
         threads = groupIntoThreads(accumulated, currentUsername),

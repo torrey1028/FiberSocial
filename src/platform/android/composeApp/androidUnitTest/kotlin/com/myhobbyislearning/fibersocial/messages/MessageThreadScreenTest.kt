@@ -66,12 +66,14 @@ class MessageThreadScreenTest {
     private fun setScreen(
         state: OpenThreadState = OpenThreadState(conversation()),
         onBack: () -> Unit = {},
+        onReply: (() -> Unit)? = null,
         onToggleMute: (() -> Unit)? = null,
     ) = compose.setContent {
         MessageThreadScreen(
             state = state,
             currentUsername = ME,
             onBack = onBack,
+            onReply = onReply,
             onToggleMute = onToggleMute,
         )
     }
@@ -185,5 +187,25 @@ class MessageThreadScreenTest {
         compose.onNodeWithTag("MessageBodiesError").assertIsDisplayed()
         // The conversation is still there — a failed backfill is not a dead screen.
         compose.onNodeWithText("First message").assertIsDisplayed()
+    }
+
+    /** The reply entry point (issue #374) — the only way into the composer from a thread. */
+    @Test
+    fun `the reply button opens the composer`() {
+        var replies = 0
+        setScreen(onReply = { replies++ })
+
+        compose.onNodeWithTag("ReplyFab").assertIsDisplayed()
+        compose.onNodeWithTag("ReplyFab").performClick()
+
+        assertEquals(1, replies)
+    }
+
+    /** A caller with no composer wired up gets no dead control. */
+    @Test
+    fun `no reply button without a reply handler`() {
+        setScreen()
+
+        compose.onNodeWithTag("ReplyFab").assertDoesNotExist()
     }
 }
