@@ -12,6 +12,7 @@ import io.ktor.http.headersOf
 import io.ktor.serialization.kotlinx.json.json
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.test.runTest
 import kotlin.time.Instant
@@ -64,6 +65,8 @@ private fun syncApiClient(): RavelryApiClient {
         val (body, type) = when {
             path.contains("filtered_topics") ->
                 """{"topics":[]}""" to ContentType.Application.Json
+            path.contains("/messages/list") ->
+                """{"messages":[]}""" to ContentType.Application.Json
             path.contains("current_user") ->
                 """{"user":{"username":"yarnie"}}""" to ContentType.Application.Json
             path.contains("memberships") ->
@@ -119,6 +122,8 @@ class EventSyncRunnerTest {
             val (body, type) = when {
                 path.contains("filtered_topics") ->
                     """{"topics":[]}""" to ContentType.Application.Json
+                path.contains("/messages/list") ->
+                    """{"messages":[]}""" to ContentType.Application.Json
                 path.contains("current_user") ->
                     """{"user":{"username":"yarnie"}}""" to ContentType.Application.Json
                 path.contains("memberships") ->
@@ -172,8 +177,9 @@ class EventSyncRunnerTest {
             // async'd in sync()) — give it a well-formed response so this test
             // deterministically exercises only the intended current_user failure,
             // not an incidental JSON-parse failure racing it.
-            if (path.contains("filtered_topics")) {
-                return@MockEngine respond("""{"topics":[]}""", HttpStatusCode.OK, headersOf("Content-Type", ContentType.Application.Json.toString()))
+            if (path.contains("filtered_topics") || path.contains("/messages/list")) {
+                val body = if (path.contains("/messages/list")) """{"messages":[]}""" else """{"topics":[]}"""
+                return@MockEngine respond(body, HttpStatusCode.OK, headersOf("Content-Type", ContentType.Application.Json.toString()))
             }
             respond("<div class=\"event_list\"></div>", HttpStatusCode.OK, headersOf("Content-Type", ContentType.Text.Html.toString()))
         }
@@ -197,6 +203,8 @@ class EventSyncRunnerTest {
             val (body, type) = when {
                 path.contains("filtered_topics") ->
                     """{"topics":[]}""" to ContentType.Application.Json
+                path.contains("/messages/list") ->
+                    """{"messages":[]}""" to ContentType.Application.Json
                 path.contains("current_user") ->
                     """{"user":{"username":"yarnie"}}""" to ContentType.Application.Json
                 path.contains("memberships") ->
@@ -257,6 +265,8 @@ class EventSyncRunnerTest {
                     """{"topics":[{"id":500,"title":"Cast-on question","forum_id":9,
                         "forum_posts_count":${postsCount()},"last_read":${lastRead()}}]}""" to
                         ContentType.Application.Json
+                path.contains("/messages/list") ->
+                    """{"messages":[]}""" to ContentType.Application.Json
                 path.contains("current_user") ->
                     """{"user":{"username":"yarnie"}}""" to ContentType.Application.Json
                 path.contains("memberships") ->
@@ -425,6 +435,131 @@ class EventSyncRunnerTest {
 
         assertEquals(setOf(500L), muted.muted)
         assertEquals(0, muted.saveCount)
+    }
+
+    // --- Messages leg (issue #375) ---
+
+    /**
+     * Like [syncApiClient] but serving a mutable unread inbox. [unreadIds] are returned as
+     * unread inbox messages from "wooliam" to the signed-in user.
+     */
+    private fun syncApiClientWithInbox(unreadIds: () -> List<Long>): RavelryApiClient {
+        val engine = MockEngine { request ->
+            val path = request.url.encodedPath
+            val (body, type) = when {
+                path.contains("filtered_topics") ->
+                    """{"topics":[]}""" to ContentType.Application.Json
+                path.contains("/messages/list") -> {
+                    val entries = unreadIds().joinToString(",") { id ->
+                        """{"id":$id,"subject":"Yarn swap $id","read_message":false,
+                           "sender":{"username":"wooliam"},"recipient":{"username":"yarnie"}}"""
+                    }
+                    """{"messages":[$entries]}""" to ContentType.Application.Json
+                }
+                path.contains("current_user") ->
+                    """{"user":{"username":"yarnie"}}""" to ContentType.Application.Json
+                path.contains("memberships") ->
+                    """<a href="https://www.ravelry.com/groups/kirkland-fiber-arts-circle-2">K</a>""" to ContentType.Text.Html
+                path.contains("groups/search") ->
+                    """{"groups":[{"id":1,"name":"Kirkland Fiber Arts Circle","permalink":"kirkland-fiber-arts-circle-2","forum_id":9}]}""" to ContentType.Application.Json
+                path.endsWith("/events/saved") ->
+                    """<div class="event_list"></div>""" to ContentType.Text.Html
+                path.contains("/groups/") ->
+                    """<div id="upcoming_events"></div>""" to ContentType.Text.Html
+                else -> error("Unexpected path: $path")
+            }
+            respond(body, HttpStatusCode.OK, headersOf("Content-Type", type.toString()))
+        }
+        val client = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        return RavelryApiClient(client, FakeFeedTokenStorage())
+    }
+
+    @Test
+    fun `the first messages sync seeds the mark silently`() = runTest {
+        // The highest-risk bug in #375: an inbox full of unread history must produce no
+        // notifications at all on the first sync after upgrading.
+        val store = InMemoryStateStore()
+        val plan = EventSyncRunner(
+            syncApiClientWithInbox { listOf(101L, 102L, 103L) },
+            store,
+            InMemorySettingsStore(),
+        ).sync(NOW, ZONE)
+
+        assertTrue(plan.newMessageNotifications.isEmpty())
+        assertEquals(103L, plan.newState.knownMessages?.newestMessageId)
+    }
+
+    @Test
+    fun `a message arriving after the first sync notifies`() = runTest {
+        var unread = listOf(101L)
+        val store = InMemoryStateStore()
+        val runner = EventSyncRunner(syncApiClientWithInbox { unread }, store, InMemorySettingsStore())
+
+        assertTrue(runner.sync(NOW, ZONE).newMessageNotifications.isEmpty()) // seeds
+
+        unread = listOf(101L, 102L)
+        val plan = runner.sync(NOW, ZONE)
+
+        val notification = plan.newMessageNotifications.single()
+        assertEquals(102L, notification.messageId)
+        assertEquals("wooliam", notification.senderName)
+        assertEquals("Yarn swap 102", notification.subject)
+        assertEquals(102L, plan.newState.knownMessages?.newestMessageId)
+    }
+
+    @Test
+    fun `messages disabled skips the messages leg and clears the mark`() = runTest {
+        var unread = listOf(101L)
+        val store = InMemoryStateStore()
+        EventSyncRunner(syncApiClientWithInbox { unread }, store, InMemorySettingsStore()).sync(NOW, ZONE)
+
+        // With messages off, new arrivals notify nothing and the mark is cleared so a
+        // later re-enable seeds silently instead of firing the backlog.
+        unread = listOf(101L, 102L, 103L)
+        val plan = EventSyncRunner(
+            syncApiClientWithInbox { unread },
+            store,
+            InMemorySettingsStore(NotificationSettings(newMessagesEnabled = false)),
+        ).sync(NOW, ZONE)
+
+        assertTrue(plan.newMessageNotifications.isEmpty())
+        assertNull(plan.newState.knownMessages)
+    }
+
+    @Test
+    fun `re-enabling messages seeds silently rather than firing the backlog`() = runTest {
+        var unread = listOf(101L)
+        val store = InMemoryStateStore()
+        val enabled = InMemorySettingsStore()
+        val disabled = InMemorySettingsStore(NotificationSettings(newMessagesEnabled = false))
+
+        EventSyncRunner(syncApiClientWithInbox { unread }, store, enabled).sync(NOW, ZONE)
+        // A pile of messages arrives while the kind is off.
+        unread = (101L..130L).toList()
+        EventSyncRunner(syncApiClientWithInbox { unread }, store, disabled).sync(NOW, ZONE)
+        // First sync after re-enabling must NOT announce the 29-message backlog.
+        val reenabled = EventSyncRunner(syncApiClientWithInbox { unread }, store, enabled).sync(NOW, ZONE)
+
+        assertTrue(reenabled.newMessageNotifications.isEmpty())
+        assertEquals(130L, reenabled.newState.knownMessages?.newestMessageId)
+
+        // A genuine new message after re-seeding notifies from the fresh baseline.
+        unread = unread + 131L
+        val next = EventSyncRunner(syncApiClientWithInbox { unread }, store, enabled).sync(NOW, ZONE)
+        assertEquals(listOf(131L), next.newMessageNotifications.map { it.messageId })
+    }
+
+    @Test
+    fun `the messages leg leaves the other legs' state alone`() = runTest {
+        // A regression guard for the newState.copy() merge: adding knownMessages must not
+        // drop knownEvents or knownTopics on the way through.
+        val store = InMemoryStateStore()
+        val plan = EventSyncRunner(syncApiClient(), store, InMemorySettingsStore()).sync(NOW, ZONE)
+
+        assertEquals(setOf("sunday-circle"), plan.newState.knownEvents.keys)
+        assertTrue(plan.newState.scheduledReminders.isNotEmpty())
     }
 
     @Test

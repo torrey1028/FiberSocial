@@ -43,6 +43,19 @@ const val NOTIFICATION_OPEN_MY_POSTS_KEY = "open_my_posts"
 const val NOTIFICATION_TOPIC_ID_KEY = "topic_id"
 
 /**
+ * userInfo key: the conversation a new-message notification is about (issue #375); the tap
+ * handler opens the Messages destination. Stored as a decimal string for the same reason
+ * as [NOTIFICATION_EVENT_GROUP_ID_KEY].
+ */
+const val NOTIFICATION_MESSAGE_THREAD_ID_KEY = "message_thread_id"
+
+/**
+ * userInfo key: the specific message that arrived, alongside its conversation — see
+ * `DeepLink.Message` for why both travel. Decimal string, same convention.
+ */
+const val NOTIFICATION_MESSAGE_ID_KEY = "message_id"
+
+/**
  * Posts the two kinds of event notifications via `UNUserNotificationCenter` — the iOS
  * counterpart of Android's `EventNotifier` + `ReminderScheduler` in one: on iOS a
  * scheduled local notification IS the reminder, fired by the OS with no receiver or
@@ -124,6 +137,53 @@ class IosEventNotifier(
         center.replaceDelivered(identifier)
         center.addNotificationRequest(request) { error ->
             error?.let { println("FiberSocial: showNewReplies(${notification.topicId}) failed: ${it.localizedDescription}") }
+        }
+    }
+
+    /**
+     * Announces new private messages (posts immediately), one banner per CONVERSATION.
+     *
+     * Takes the whole batch rather than one notification at a time (unlike [showNewReplies],
+     * whose input is already one entry per topic): the planner emits one
+     * [NewMessageNotification] per *message*, so several messages in one conversation would
+     * otherwise become several banners for the same thread. Grouping them here keeps that
+     * collapsing rule identical to Android's, in one place per platform.
+     *
+     * The identifier is per-conversation, so a later batch in the same conversation
+     * replaces the earlier banner (with a fresh count) while different conversations stack.
+     * `threadIdentifier` coalesces them into one Notification Center stack — iOS's own
+     * grouping, so no explicit summary notification is needed (unlike Android's).
+     */
+    fun showNewMessages(batch: List<NewMessageNotification>) {
+        batch.groupBy { it.threadRootId }.forEach { (rootId, messages) ->
+            // Newest message is the banner's face; the count covers the rest. Message ids
+            // are monotonic on Ravelry, so the max id really is the newest.
+            showNewMessage(messages.maxBy { it.messageId }, messages.size, rootId)
+        }
+    }
+
+    private fun showNewMessage(notification: NewMessageNotification, count: Int, rootId: Long) {
+        val content = UNMutableNotificationContent().apply {
+            setTitle(MessageNotificationContent.messageTitle(notification))
+            setBody(MessageNotificationContent.messageText(notification, count))
+            setSound(UNNotificationSound.defaultSound)
+            setUserInfo(
+                mapOf(
+                    NOTIFICATION_MESSAGE_THREAD_ID_KEY to rootId.toString(),
+                    NOTIFICATION_MESSAGE_ID_KEY to notification.messageId.toString(),
+                ),
+            )
+            setThreadIdentifier("new-messages")
+        }
+        val identifier = "message-thread/$rootId"
+        val request = UNNotificationRequest.requestWithIdentifier(
+            identifier,
+            content = content,
+            trigger = null, // deliver now
+        )
+        center.replaceDelivered(identifier)
+        center.addNotificationRequest(request) { error ->
+            error?.let { println("FiberSocial: showNewMessages($rootId) failed: ${it.localizedDescription}") }
         }
     }
 
