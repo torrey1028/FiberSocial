@@ -2,6 +2,7 @@ package com.myhobbyislearning.fibersocial.settings
 
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
@@ -247,6 +248,7 @@ class SettingsScreenTest {
         compose.onNodeWithText("Event reminders").assertDoesNotExist()
         compose.onNodeWithText("New group events").assertDoesNotExist()
         compose.onNodeWithText("Replies to your topics").assertDoesNotExist()
+        compose.onNodeWithText("New messages").assertDoesNotExist()
     }
 
     @Test
@@ -260,6 +262,7 @@ class SettingsScreenTest {
         compose.onNodeWithText("Event reminders").assertIsDisplayed()
         compose.onNodeWithText("New group events").assertIsDisplayed()
         compose.onNodeWithText("Replies to your topics").assertIsDisplayed()
+        compose.onNodeWithText("New messages").assertIsDisplayed()
     }
 
     @Test
@@ -275,5 +278,32 @@ class SettingsScreenTest {
         }
         compose.onNodeWithText("Replies to your topics").performClick()
         compose.runOnIdle { assertEquals(false, replies) }
+    }
+
+    @Test
+    fun `toggling new messages invokes its callback with the flipped value`() {
+        var messages: Boolean? = null
+        compose.setContent {
+            SettingsScreen(
+                user = user, onBack = {}, onSignOut = {},
+                pollCadence = PollCadence.A_FEW_TIMES_A_DAY,
+                newMessagesEnabled = true,
+                onNewMessagesEnabledChange = { messages = it },
+            )
+        }
+        compose.onNodeWithText("New messages").performClick()
+        compose.runOnIdle { assertEquals(false, messages) }
+    }
+
+    @Test
+    fun `the new messages row reflects a disabled setting`() {
+        compose.setContent {
+            SettingsScreen(
+                user = user, onBack = {}, onSignOut = {},
+                pollCadence = PollCadence.A_FEW_TIMES_A_DAY,
+                newMessagesEnabled = false,
+            )
+        }
+        compose.onNodeWithText("New messages").assertIsOff()
     }
 }
