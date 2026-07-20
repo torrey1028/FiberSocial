@@ -110,6 +110,83 @@ class UserProfileScreenTest {
         compose.runOnIdle { assertEquals(1, retries) }
     }
 
+    // --- "Send message" action (issue #373) ---
+
+    @Test
+    fun `loaded state offers send message when viewing someone else`() {
+        compose.setContent {
+            UserProfileScreen(
+                UserProfileState.Loaded(profile, emptyList(), emptyList()),
+                onBack = {}, onRetry = {}, currentUsername = "someoneelse",
+            )
+        }
+        compose.onNodeWithText("Send message").assertIsDisplayed()
+    }
+
+    @Test
+    fun `tapping send message invokes onSendMessage with the profile username`() {
+        var messaged: String? = null
+        compose.setContent {
+            UserProfileScreen(
+                UserProfileState.Loaded(profile, emptyList(), emptyList()),
+                onBack = {}, onRetry = {},
+                onSendMessage = { messaged = it },
+                currentUsername = "someoneelse",
+            )
+        }
+        compose.onNodeWithText("Send message").performClick()
+        // The handle, never the display name — it is what create.json addresses.
+        compose.runOnIdle { assertEquals("yarnie", messaged) }
+    }
+
+    @Test
+    fun `send message is absent on your own profile`() {
+        compose.setContent {
+            UserProfileScreen(
+                UserProfileState.Loaded(profile, emptyList(), emptyList()),
+                onBack = {}, onRetry = {}, currentUsername = "yarnie",
+            )
+        }
+        compose.onNodeWithText("Send message").assertDoesNotExist()
+    }
+
+    @Test
+    fun `send message is absent when your own username differs only in case`() {
+        // Ravelry handles are case-insensitive, so a casing mismatch between the feed's
+        // resolved user and the profile fetch must not resurrect the action.
+        compose.setContent {
+            UserProfileScreen(
+                UserProfileState.Loaded(profile, emptyList(), emptyList()),
+                onBack = {}, onRetry = {}, currentUsername = "YarNie",
+            )
+        }
+        compose.onNodeWithText("Send message").assertDoesNotExist()
+    }
+
+    @Test
+    fun `send message is absent while the current user is still unknown`() {
+        // currentUsername defaults to null (feed not yet loaded); hiding beats risking an
+        // offer to message yourself.
+        compose.setContent {
+            UserProfileScreen(
+                UserProfileState.Loaded(profile, emptyList(), emptyList()),
+                onBack = {}, onRetry = {},
+            )
+        }
+        compose.onNodeWithText("Send message").assertDoesNotExist()
+    }
+
+    @Test
+    fun `send message is absent in the loading and error states`() {
+        compose.setContent {
+            UserProfileScreen(
+                UserProfileState.Error("yarnie", "private profile"),
+                onBack = {}, onRetry = {}, currentUsername = "someoneelse",
+            )
+        }
+        compose.onNodeWithText("Send message").assertDoesNotExist()
+    }
+
     @Test
     fun `back arrow invokes onBack`() {
         var backs = 0

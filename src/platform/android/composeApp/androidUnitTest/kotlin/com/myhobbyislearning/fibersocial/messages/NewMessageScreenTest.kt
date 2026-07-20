@@ -50,6 +50,7 @@ class NewMessageScreenTest {
         sendState: SendMessageState = SendMessageState.Idle,
         searchState: RecipientSearchState = RecipientSearchState.Idle,
         replyTo: ReplyContext? = null,
+        lockedRecipient: UserSearchResult? = null,
         onSent: () -> Unit = {},
     ) = compose.setContent {
         NewMessageScreen(
@@ -60,6 +61,7 @@ class NewMessageScreenTest {
             onSent = onSent,
             onBack = { backs++ },
             replyTo = replyTo,
+            lockedRecipient = lockedRecipient,
         )
     }
 
@@ -218,6 +220,103 @@ class NewMessageScreenTest {
         compose.onNodeWithTag("MessageSubjectField")
             .assert(SemanticsMatcher.keyNotDefined(SemanticsActions.SetText))
         compose.onNodeWithText("Re: Yarn talk").assertIsDisplayed()
+    }
+
+    // ---- locked recipient (from a profile, issue #373) ----------------------------------
+
+    @Test
+    fun `a locked recipient replaces the picker entirely`() {
+        setScreen(searchState = RESULTS, lockedRecipient = hit("yarnbarn", "Yarn Barn"))
+
+        // Still a NEW message, not a reply.
+        compose.onNodeWithText("New message").assertIsDisplayed()
+        compose.onNodeWithTag("FixedRecipient").assertIsDisplayed()
+        compose.onNodeWithText("Yarn Barn").assertIsDisplayed()
+        // Even with search results on hand, there is nothing to search or choose.
+        compose.onNodeWithTag("RecipientQueryField").assertDoesNotExist()
+        compose.onNodeWithTag("RecipientResults").assertDoesNotExist()
+        compose.onNodeWithTag("SelectedRecipient").assertDoesNotExist()
+    }
+
+    @Test
+    fun `a locked recipient shows the handle when it differs from the display name`() {
+        setScreen(lockedRecipient = hit("yarnbarn", "Yarn Barn"))
+
+        compose.onNodeWithText("@yarnbarn").assertIsDisplayed()
+    }
+
+    @Test
+    fun `a locked recipient omits a handle that is just the display name again`() {
+        setScreen(lockedRecipient = hit("yarnbarn"))
+
+        compose.onNodeWithText("yarnbarn").assertIsDisplayed()
+        compose.onNodeWithText("@yarnbarn").assertDoesNotExist()
+    }
+
+    @Test
+    fun `a locked recipient needs only a subject and body to send and is handed back`() {
+        setScreen(lockedRecipient = hit("yarnbarn", "Yarn Barn"))
+
+        compose.onNodeWithTag("SendMessageButton").assertIsNotEnabled()
+        compose.onNodeWithTag("MessageSubjectField").performTextInput("Yarn swap")
+        compose.onNodeWithTag("MessageBodyField").performTextInput("Interested?")
+        compose.onNodeWithTag("SendMessageButton").assertIsEnabled()
+
+        compose.onNodeWithTag("SendMessageButton").performClick()
+
+        // create.json, addressed by the locked handle — not null the way a reply is.
+        assertEquals("yarnbarn", sent?.recipient?.username)
+        assertEquals("Yarn swap", sent?.subject)
+        assertEquals("Interested?", sent?.body)
+    }
+
+    @Test
+    fun `a locked recipient still allows an editable subject unlike a reply`() {
+        setScreen(lockedRecipient = hit("yarnbarn"))
+
+        compose.onNodeWithTag("MessageSubjectField")
+            .assert(SemanticsMatcher.keyIsDefined(SemanticsActions.SetText))
+    }
+
+    @Test
+    fun `backing out of an untouched locked composer leaves without asking`() {
+        // The locked recipient is navigation, not typing — there is nothing to lose yet.
+        setScreen(lockedRecipient = hit("yarnbarn"))
+
+        compose.onNodeWithContentDescription("Back").performClick()
+
+        assertEquals(1, backs)
+        compose.onNodeWithTag("MessageDiscardConfirm").assertDoesNotExist()
+    }
+
+    @Test
+    fun `backing out of a locked composer with a typed body still asks`() {
+        setScreen(lockedRecipient = hit("yarnbarn"))
+        compose.onNodeWithTag("MessageBodyField").performTextInput("Half a thought")
+
+        compose.onNodeWithContentDescription("Back").performClick()
+
+        compose.onNodeWithTag("MessageDiscardConfirm").assertIsDisplayed()
+        assertEquals("nothing should be discarded yet", 0, backs)
+    }
+
+    @Test
+    fun `reply mode wins over a locked recipient`() {
+        // Never set together by FeedScreen; asserted so a future caller that does gets the
+        // reply's fixed recipient rather than a new-message send to the locked one.
+        setScreen(
+            replyTo = ReplyContext(counterpartName = "friend", subject = "Re: Yarn talk"),
+            lockedRecipient = hit("yarnbarn", "Yarn Barn"),
+        )
+
+        compose.onNodeWithText("Reply").assertIsDisplayed()
+        compose.onNodeWithText("friend").assertIsDisplayed()
+        compose.onNodeWithText("Yarn Barn").assertDoesNotExist()
+
+        compose.onNodeWithTag("MessageBodyField").performTextInput("Yes please")
+        compose.onNodeWithTag("SendMessageButton").performClick()
+
+        assertNull("reply.json derives its own recipient", sent?.recipient)
     }
 
     // ---- send state -------------------------------------------------------------------

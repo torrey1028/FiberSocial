@@ -91,6 +91,12 @@ data class ReplyContext(val counterpartName: String, val subject: String)
  * failure — the user has no way to tell "no such person" from "Ravelry is down", and the
  * message they wrote is what is at stake.
  *
+ * [lockedRecipient] is the same rule reached from the other direction (issue #373): opened
+ * from someone's profile, the recipient is already decided by the navigation that got the
+ * user here, so the picker is skipped entirely rather than pre-filled and editable. A
+ * pre-filled but changeable "To" would re-open exactly the free-text hole the picker
+ * closes — the user could type over an unambiguous, already-verified handle.
+ *
  * ## Why a 403 shows copy naming BOTH causes rather than a probe
  *
  * A messaging 403 has two indistinguishable causes — the other party (or the user) has
@@ -127,6 +133,8 @@ data class ReplyContext(val counterpartName: String, val subject: String)
  * @param onBack Leaves the composer. Reached only after the discard confirmation when there
  *   is something to lose.
  * @param replyTo Non-null makes this a reply. See [ReplyContext].
+ * @param lockedRecipient Non-null addresses the message to this person and hides the picker
+ *   (issue #373). Ignored in reply mode, where [replyTo] already fixes the recipient.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -139,12 +147,18 @@ fun NewMessageScreen(
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
     replyTo: ReplyContext? = null,
+    lockedRecipient: UserSearchResult? = null,
 ) {
     // UserSearchResult is not Saveable, so the picked recipient survives recomposition but
     // not process death — the same trade NewTopicScreen makes for its Group, and for the
     // same reason: the typing effort (subject and body) is what survives, and re-picking a
     // recipient from a list is a tap.
-    var recipient by remember { mutableStateOf<UserSearchResult?>(null) }
+    var pickedRecipient by remember { mutableStateOf<UserSearchResult?>(null) }
+    // Who [onSend] is handed. A locked recipient wins over the picker — it isn't a default
+    // the picker can be talked out of — but reply mode overrides BOTH with null, because
+    // `reply.json` derives the recipient from the parent message and handing a caller one
+    // anyway would invite it to route the reply through `create.json` and split the thread.
+    val recipient = if (replyTo != null) null else lockedRecipient ?: pickedRecipient
     var query by rememberSaveable { mutableStateOf("") }
     var subjectDraft by rememberSaveable { mutableStateOf("") }
     var body by rememberSaveable { mutableStateOf("") }
@@ -155,8 +169,11 @@ fun NewMessageScreen(
     val canSend = !sending && subject.isNotBlank() && body.isNotBlank() &&
         (replyTo != null || recipient != null)
     // A reply has a fixed recipient and subject, so only the body can be "work in progress".
+    // pickedRecipient, not recipient: a LOCKED recipient came from the navigation, not from
+    // the user's effort, so it is nothing to warn about losing — leaving a locked composer
+    // with empty fields should just leave, not ask.
     val hasDraft = body.isNotBlank() ||
-        (replyTo == null && (subjectDraft.isNotBlank() || query.isNotBlank() || recipient != null))
+        (replyTo == null && (subjectDraft.isNotBlank() || query.isNotBlank() || pickedRecipient != null))
     val attemptBack = { if (hasDraft) showDiscardConfirm = true else onBack() }
 
     // Disabled while sending, exactly as NewTopicScreen: leaving now unmounts this screen's
@@ -220,21 +237,30 @@ fun NewMessageScreen(
 
             if (replyTo != null) {
                 FixedRecipientRow(name = replyTo.counterpartName)
+            } else if (lockedRecipient != null) {
+                // The handle is shown alongside the display name whenever they differ, for
+                // the same reason the picker's result rows show it: the handle is what is
+                // actually addressed, and a display name can be anything.
+                FixedRecipientRow(
+                    name = lockedRecipient.displayName,
+                    handle = lockedRecipient.username
+                        .takeIf { !lockedRecipient.displayName.equals(it, ignoreCase = true) },
+                )
             } else {
                 RecipientPicker(
-                    recipient = recipient,
+                    recipient = pickedRecipient,
                     query = query,
                     searchState = searchState,
                     enabled = !sending,
                     onQueryChange = { query = it; onQueryChange(it) },
                     onSelect = {
-                        recipient = it
+                        pickedRecipient = it
                         // Stop the picker searching for someone already chosen, and clear
                         // the half-typed name so backing out of the choice starts clean.
                         query = ""
                         onQueryChange("")
                     },
-                    onClear = { recipient = null },
+                    onClear = { pickedRecipient = null },
                 )
             }
 
@@ -276,9 +302,16 @@ fun NewMessageScreen(
     }
 }
 
-/** The reply's fixed recipient: who it goes to, with no way to change it. */
+/**
+ * A fixed recipient: who the message goes to, with no way to change it. Used by both
+ * modes that decide the recipient before the composer opens — a reply, and a message
+ * started from a profile (issue #373).
+ *
+ * @param name What to call them; a display name where one is known.
+ * @param handle The username actually addressed, shown only when it differs from [name].
+ */
 @Composable
-private fun FixedRecipientRow(name: String) {
+private fun FixedRecipientRow(name: String, handle: String? = null) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp).testTag("FixedRecipient"),
         verticalAlignment = Alignment.CenterVertically,
@@ -296,6 +329,16 @@ private fun FixedRecipientRow(name: String) {
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
+        if (handle != null) {
+            Spacer(Modifier.width(6.dp))
+            Text(
+                text = "@$handle",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
     }
 }
 
