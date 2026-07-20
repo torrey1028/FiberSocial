@@ -3034,6 +3034,18 @@ class RavelryApiClientTest {
     }
 
     @Test
+    fun `searchUsers drops a hit whose record has a blank permalink even with a usable title`() = runTest {
+        // A PRESENT record with no permalink must be dropped, not fall back to the title —
+        // the title is free text, not necessarily a valid handle. Distinct from the
+        // record-less case below: there, there was never a record's own answer to check.
+        val client = routingApiClient {
+            """{"results":[{"title":"Some Display Name","record":{"type":"user","id":9,"permalink":""}}]}"""
+        }
+
+        assertTrue(client.searchUsers("displayname").isEmpty())
+    }
+
+    @Test
     fun `searchUsers shows the username when a hit has an addressable record but a blank title`() = runTest {
         // title is a display string and record.permalink is the identifier; they fail
         // independently. A blank title must not render a blank picker row when we do know

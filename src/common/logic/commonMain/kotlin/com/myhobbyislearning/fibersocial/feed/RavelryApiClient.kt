@@ -1609,12 +1609,19 @@ class RavelryApiClient(
                 NON_USER_SEARCH_TYPES.any { it.equals(type, ignoreCase = true) }
             }
             .mapNotNull { result ->
-                // record.permalink is the username (it addresses /people/{username}).
-                // Fall back to the display title only if the record is missing entirely,
-                // so a result we can still plausibly address isn't thrown away.
-                val username = result.record?.permalink?.takeIf { it.isNotBlank() }
-                    ?: result.title.takeIf { it.isNotBlank() }
-                    ?: return@mapNotNull null
+                // record.permalink is the username (it addresses /people/{username}). A
+                // PRESENT record with a blank/absent permalink is dropped, not fallen back
+                // to the display title — a title is free text, not necessarily a valid
+                // handle, and this function's own contract (below) is that an
+                // unaddressable row is worse than a missing one. The title fallback is
+                // only for when the record is missing ENTIRELY, where the record's own
+                // (permalink-shaped) identity was never available to check in the first
+                // place — a genuinely different case from "the record said no".
+                val username = if (result.record != null) {
+                    result.record.permalink?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                } else {
+                    result.title.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                }
                 UserSearchResult(
                     id = result.record?.id,
                     username = username,
