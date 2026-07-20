@@ -967,6 +967,15 @@ fun FeedScreen(
             onTopicRepliesEnabledChange = { enabled ->
                 updateSettings { it.copy(topicRepliesEnabled = enabled) }
             },
+            newMessagesEnabled = notificationSettings?.newMessagesEnabled ?: true,
+            onNewMessagesEnabledChange = { enabled ->
+                // No onRunEventSync() here, unlike the reminders toggle above: messages
+                // schedule no OS alarms, so there's nothing already queued that a forced
+                // sync would have to cancel. Turning the kind off just means the next sync
+                // skips the inbox fetch and clears the mark (EventSyncRunner.sync), which
+                // is exactly what the other two alarm-less kinds do.
+                updateSettings { it.copy(newMessagesEnabled = enabled) }
+            },
             // Debug panel now lives in Settings (debug builds only) instead of the top bar (#207).
             onOpenDebugPanel = if (debugPanelEnabled) {
                 { showSettings = false; showDebugPanel = true }
