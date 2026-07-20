@@ -2,6 +2,7 @@ package com.myhobbyislearning.fibersocial.notifications
 
 import com.myhobbyislearning.fibersocial.events.GroupEvent
 import com.myhobbyislearning.fibersocial.feed.RavelryApiClient
+import com.myhobbyislearning.fibersocial.messages.MessageFolder
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -33,10 +34,10 @@ class EventSyncRunner(
     /**
      * Runs one sync cycle.
      *
-     * Each notification kind the user turned off (issue #335) is gated here rather than
-     * suppressed downstream: a disabled kind skips its scrape entirely (no `getMyTopics`
-     * for replies, no group-event scrape for new events, no saved-event fetch for
-     * reminders) and contributes nothing to the plan. Its detection state is cleared so
+     * Each notification kind the user turned off (issues #335, #375) is gated here rather
+     * than suppressed downstream: a disabled kind skips its scrape entirely (no
+     * `getMyTopics` for replies, no group-event scrape for new events, no saved-event
+     * fetch for reminders, no inbox list for messages) and contributes nothing to the plan. Its detection state is cleared so
      * a later re-enable *seeds silently* through the planners' empty-map rule instead of
      * announcing everything that piled up while it was off — carrying the stale pre-off
      * counts forward would do the opposite and unleash exactly that backlog storm. (A
@@ -65,11 +66,33 @@ class EventSyncRunner(
             }
         }
 
+        // The messages leg: one page of the unread inbox. Skipped entirely when new-message
+        // notifications are off — no `/messages/list.json` call at all, same as the other
+        // gated kinds.
+        val inboxDeferred = async {
+            if (settings.newMessagesEnabled) {
+                scrapeConcurrency.withPermit {
+                    apiClient.getMessages(folder = MessageFolder.INBOX, unreadOnly = true).messages
+                }
+            } else {
+                emptyList()
+            }
+        }
+
+        // The signed-in user is needed by two independent things: group membership (for
+        // the event scrape and reply attribution) and message direction detection. Fetched
+        // once when any of them is on, rather than once per leg.
+        val currentUser = if (
+            settings.newGroupEventsEnabled || settings.topicRepliesEnabled || settings.newMessagesEnabled
+        ) {
+            apiClient.getCurrentUser()
+        } else {
+            null
+        }
         // Groups feed both the new-event scrape and reply attribution; fetch them only
         // when at least one of those kinds is on.
-        val groups = if (settings.newGroupEventsEnabled || settings.topicRepliesEnabled) {
-            val user = apiClient.getCurrentUser()
-            apiClient.getUserGroups(user.username)
+        val groups = if (currentUser != null && (settings.newGroupEventsEnabled || settings.topicRepliesEnabled)) {
+            apiClient.getUserGroups(currentUser.username)
         } else {
             emptyList()
         }
@@ -119,12 +142,29 @@ class EventSyncRunner(
             // Mutes are left untouched here so a replies-off/on cycle doesn't drop them.
             MyPostsPlan(notifications = emptyList(), newKnownTopics = emptyMap())
         }
+        val messagesPlan = if (settings.newMessagesEnabled) {
+            MessageNotificationPlanner.plan(
+                knownMessages = state?.knownMessages,
+                inboxMessages = inboxDeferred.await(),
+                currentUsername = currentUser?.username.orEmpty(),
+                nowMs = now.toEpochMilliseconds(),
+                // Per-thread mutes are issue #377, which owns the store. The planner
+                // already honours them, so wiring that store is a one-line change here.
+                mutedThreads = emptySet(),
+            )
+        } else {
+            // Null, not a frozen mark: re-enabling re-seeds silently rather than
+            // announcing every message that arrived while the kind was off.
+            MessagesPlan(notifications = emptyList(), newKnownMessages = null)
+        }
         val plan = eventPlan.copy(
             newReplyNotifications = myPostsPlan.notifications,
+            newMessageNotifications = messagesPlan.notifications,
             newState = eventPlan.newState.copy(
                 // Same clear-so-re-enable-seeds-silently rule for the new-event kind.
                 knownEvents = if (settings.newGroupEventsEnabled) eventPlan.newState.knownEvents else emptyMap(),
                 knownTopics = myPostsPlan.newKnownTopics,
+                knownMessages = messagesPlan.newKnownMessages,
             ),
         )
         stateStore.save(plan.newState)
@@ -132,7 +172,8 @@ class EventSyncRunner(
             "FiberSocial: EventSyncRunner -> ${plan.newEventNotifications.size} new events, " +
                 "${plan.remindersToSchedule.size} reminders to schedule, " +
                 "${plan.remindersToCancel.size} to cancel, " +
-                "${plan.newReplyNotifications.size} topics with new replies",
+                "${plan.newReplyNotifications.size} topics with new replies, " +
+                "${plan.newMessageNotifications.size} new messages",
         )
         plan
     }

@@ -56,6 +56,7 @@ class NotificationSettingsTest {
         assertEquals(true, settings.eventRemindersEnabled)
         assertEquals(true, settings.newGroupEventsEnabled)
         assertEquals(true, settings.topicRepliesEnabled)
+        assertEquals(true, settings.newMessagesEnabled)
     }
 
     @Test
@@ -67,6 +68,22 @@ class NotificationSettingsTest {
         assertEquals(true, legacy.eventRemindersEnabled)
         assertEquals(true, legacy.newGroupEventsEnabled)
         assertEquals(true, legacy.topicRepliesEnabled)
+        assertEquals(true, legacy.newMessagesEnabled)
+    }
+
+    @Test
+    fun `JSON saved before the new-messages toggle deserializes with it on`() {
+        // The exact shape a pre-#375 install has on disk: every #335 key present, no
+        // newMessagesEnabled key. It must default on rather than silently shipping the
+        // messages leg disabled for every upgrading user.
+        val json = Json { ignoreUnknownKeys = true }
+        val legacy = json.decodeFromString<NotificationSettings>(
+            """{"pollCadence":"HOURLY","eventRemindersEnabled":true,""" +
+                """"newGroupEventsEnabled":false,"topicRepliesEnabled":true}""",
+        )
+        assertEquals(true, legacy.newMessagesEnabled)
+        // ...without disturbing the toggles that WERE stored.
+        assertEquals(false, legacy.newGroupEventsEnabled)
     }
 
     @Test
@@ -77,8 +94,15 @@ class NotificationSettingsTest {
             eventRemindersEnabled = false,
             newGroupEventsEnabled = true,
             topicRepliesEnabled = false,
+            newMessagesEnabled = false,
         )
         assertEquals(settings, json.decodeFromString(json.encodeToString(settings)))
+    }
+
+    @Test
+    fun `the new-messages toggle holds exactly what was constructed with`() {
+        assertEquals(false, NotificationSettings(newMessagesEnabled = false).newMessagesEnabled)
+        assertEquals(true, NotificationSettings().newMessagesEnabled)
     }
 }
 

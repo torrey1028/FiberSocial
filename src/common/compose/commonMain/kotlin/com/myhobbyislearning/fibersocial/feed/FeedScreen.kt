@@ -559,8 +559,10 @@ fun FeedScreen(
      *
      * A tap must win over whatever screen is open — the early returns below (topic,
      * settings, events list, composers) would otherwise swallow it and the notification
-     * would visibly do nothing. Factored out of the three deep-link branches so a nav
-     * flag added later can't be cleared in one of them and forgotten in the others.
+     * would visibly do nothing. Factored out of the deep-link branches so a nav flag added
+     * later can't be cleared in one of them and forgotten in the others — `showingMessages`
+     * is in here for exactly that reason, and the Message/Messages branches then set it
+     * back to true after this has cleared everything else (issue #375).
      */
     fun clearNavigationForDeepLink() {
         selectedTopic = null
@@ -652,8 +654,8 @@ fun FeedScreen(
     // This is the lookup table a Topic deep link resolves its id against.
     val myPostsItems = if (loaded?.myPosts == true) loaded.items else emptyList()
 
-    // A tapped notification lands here and is routed to one of three destinations. Both
-    // feed-backed destinations must wait for the feed to load — selectMyPosts() no-ops
+    // A tapped notification lands here and is routed to one of five destinations. The two
+    // feed-backed ones must wait for the feed to load — selectMyPosts() no-ops
     // before FeedState.Loaded, and a cold start from a notification arrives mid-load — so
     // the effect keys on the loaded flag too and consumes the link only once it has acted.
     LaunchedEffect(deepLink, feedIsLoaded) {
@@ -697,6 +699,32 @@ fun FeedScreen(
                 if (!feedIsLoaded) return@LaunchedEffect
                 clearNavigationForDeepLink()
                 showMyPostsFeed(alreadyShowing = loaded?.myPosts == true)
+                onDeepLinkConsumed()
+            }
+
+            // Acts immediately rather than waiting for feedIsLoaded (like Event, unlike the
+            // two feed-backed destinations): the Messages destination replaces the feed body
+            // entirely and reads none of its state, so gating on the feed would strand the
+            // tap whenever the feed happened to fail to load.
+            is DeepLink.Message -> {
+                clearNavigationForDeepLink()
+                showingMessages = true
+                // PARKED FOR #371. Selecting Messages is as far as this can route today —
+                // the conversation detail screen doesn't exist yet, so there is nothing to
+                // open the thread *in*. When #371 lands, this is where its id gets parked
+                // for a resolver effect, following the pattern pendingDeepLinkTopicId uses
+                // above; resolve on link.messageId ("the thread containing this message")
+                // rather than link.threadRootId, which is best-effort — see DeepLink.Message.
+                println(
+                    "FiberSocial: message deep link -> thread ${link.threadRootId} " +
+                        "message ${link.messageId}; showing Messages (conversation detail is #371)",
+                )
+                onDeepLinkConsumed()
+            }
+
+            DeepLink.Messages -> {
+                clearNavigationForDeepLink()
+                showingMessages = true
                 onDeepLinkConsumed()
             }
         }

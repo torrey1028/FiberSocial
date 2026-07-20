@@ -18,12 +18,17 @@ import kotlinx.serialization.Serializable
  * @property knownTopics Per-topic activity for topics the user has posted in, keyed by
  *   topic id ([MyPostsNotificationPlanner]). Defaulted so state persisted before this
  *   field existed still deserializes.
+ * @property knownMessages High-water mark of the private messages already accounted for
+ *   ([MessageNotificationPlanner], issue #375). Null before the first messages sync — and
+ *   set back to null when the kind is disabled — so a re-enable seeds silently. Defaulted
+ *   so state persisted before this field existed still deserializes.
  */
 @Serializable
 data class NotificationState(
     val knownEvents: Map<String, Long> = emptyMap(),
     val scheduledReminders: List<ScheduledReminder> = emptyList(),
     val knownTopics: Map<Long, KnownTopicActivity> = emptyMap(),
+    val knownMessages: KnownMessages? = null,
 )
 
 /**
@@ -93,12 +98,15 @@ fun pollCadenceLabel(cadence: PollCadence): String = when (cadence) {
  *   notifications post.
  * @property topicRepliesEnabled Whether "new replies in a topic you posted in"
  *   notifications post (the My Posts activity leg).
+ * @property newMessagesEnabled Whether "a new private message arrived" notifications post
+ *   (the messages leg, issue #375). The Settings *row* for this toggle is issue #376; the
+ *   field and its gating land here so the row is a pure-UI change.
  *
- * The three per-kind switches all default on and are defaulted fields, so JSON stored
- * before they existed (issue #335) deserializes with every kind enabled — the pre-#335
- * behavior. They gate *what* to notify about; [pollCadence] stays orthogonal (*how
- * often* to check). See [EventSyncRunner] for how a disabled kind skips its scrape and
- * re-seeds silently on re-enable.
+ * The four per-kind switches all default on and are defaulted fields, so JSON stored
+ * before they existed (issues #335, #375) deserializes with every kind enabled — the
+ * pre-#335 behavior. They gate *what* to notify about; [pollCadence] stays orthogonal
+ * (*how often* to check). See [EventSyncRunner] for how a disabled kind skips its scrape
+ * and re-seeds silently on re-enable.
  */
 @Serializable
 data class NotificationSettings(
@@ -106,6 +114,7 @@ data class NotificationSettings(
     val eventRemindersEnabled: Boolean = true,
     val newGroupEventsEnabled: Boolean = true,
     val topicRepliesEnabled: Boolean = true,
+    val newMessagesEnabled: Boolean = true,
     // Legacy precise-hours setting, superseded by [pollCadence] (issue #113). Retained,
     // internal to this module, purely so a store holding pre-migration JSON migrates to
     // a qualitative bucket via [effectivePollCadence] instead of silently resetting to
