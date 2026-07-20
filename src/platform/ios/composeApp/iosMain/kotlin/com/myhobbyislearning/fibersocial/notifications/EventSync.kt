@@ -108,6 +108,9 @@ object EventSync {
         val notifier = IosEventNotifier()
         plan.newEventNotifications.forEach { notifier.showNewEvent(it) }
         plan.newReplyNotifications.forEach { notifier.showNewReplies(it) }
+        // Whole batch, not forEach: the messages notifier collapses several messages in one
+        // conversation into a single banner (see IosEventNotifier.showNewMessages).
+        notifier.showNewMessages(plan.newMessageNotifications)
         plan.remindersToCancel.forEach { notifier.cancelReminder(it) }
         // Re-arm everything still in the future, not just the plan's diff — same
         // crash-safety reasoning as Android's EventSyncWorker: state persists before
