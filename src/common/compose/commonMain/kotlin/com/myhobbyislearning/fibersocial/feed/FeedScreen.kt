@@ -1121,9 +1121,7 @@ fun FeedScreen(
                     scope.launch { drawerState.close() }
                     showingMessages = true
                 },
-                // Wired but always false until the drawer unread-dot issue (#372) gives
-                // DrawerUnread a third leg for messages.
-                messagesHasUnread = false,
+                messagesHasUnread = drawerUnread.messagesHaveUnread,
                 unreadGroupForumIds = drawerUnread.unreadGroupForumIds,
                 myPostsHasUnread = drawerUnread.yourPostsHasUnread,
                 eventCounts = eventCounts,
@@ -1612,8 +1610,9 @@ internal fun GroupDrawer(
     // the user's own posts have unread replies. A dot appears on the matching rows.
     unreadGroupForumIds: Set<Long> = emptySet(),
     myPostsHasUnread: Boolean = false,
-    // Always false today: the caller has nothing to derive it from until DrawerUnread grows a
-    // messages leg (#372). The slot exists now so lighting it up is a one-line change there.
+    // Whether the message inbox holds anything unread (#372). Unlike the group dots this is
+    // a straight server answer — Ravelry has a real per-message read flag — so there is no
+    // local last-viewed state behind it.
     messagesHasUnread: Boolean = false,
     eventCounts: Map<Long, Int>,
     user: RavelryUser?,
