@@ -41,4 +41,27 @@ sealed interface DeepLink {
      * right one to open.
      */
     data object MyPosts : DeepLink
+
+    /**
+     * Opens a private conversation from a new-message notification (issue #375).
+     *
+     * Both ids travel because they answer different questions. [threadRootId] is the
+     * grouping key the notification was posted under — best-effort, reconstructed from an
+     * unread-only inbox page (see `NewMessageNotification`). [messageId] is the exact
+     * message that arrived, and is the id the conversation detail screen should resolve
+     * against once it exists (#371): "the thread containing this message" survives a
+     * regrouping that fetched more folders, whereas a best-effort root may not still be a
+     * root once the parent chain is complete.
+     *
+     * Until #371 lands, `FeedScreen` routes this as far as selecting the Messages
+     * destination.
+     */
+    data class Message(val threadRootId: Long, val messageId: Long) : DeepLink
+
+    /**
+     * Opens the Messages destination with no conversation selected. Used by Android's
+     * new-message group summary, which spans several conversations and so has no single
+     * right one to open — the messages counterpart of [MyPosts].
+     */
+    data object Messages : DeepLink
 }

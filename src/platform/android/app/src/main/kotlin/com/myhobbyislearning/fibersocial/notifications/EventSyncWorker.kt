@@ -81,6 +81,7 @@ class EventSyncWorker(
         val notifier = EventNotifier(applicationContext).apply { ensureChannels() }
         plan.newEventNotifications.forEach { notifier.showNewEvent(it) }
         notifier.showNewReplies(plan.newReplyNotifications)
+        notifier.showNewMessages(plan.newMessageNotifications)
         val scheduler = ReminderScheduler(applicationContext)
         plan.remindersToCancel.forEach { scheduler.cancel(it) }
         // Re-arm everything still in the future, not just the plan's diff: state is

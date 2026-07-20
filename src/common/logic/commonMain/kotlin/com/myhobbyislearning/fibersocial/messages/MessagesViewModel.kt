@@ -238,11 +238,17 @@ class MessagesViewModel(
     /**
      * Re-runs the initial load from the error state — the error screen's Retry button.
      *
-     * Separate from [refresh] on purpose: [refresh] wants to keep stale content visible,
-     * which from [MessagesState.Error] there is none of. This always goes back to
-     * [MessagesState.Loading] and so always visibly does something. It needs no username
-     * argument because [currentUsername] is retained (issue #330's failure was a retry
-     * that silently no-opped).
+     * Separate from [refresh] on purpose, though [startFirstPage]'s current logic happens
+     * to make the two behave identically when called from [MessagesState.Error] (there is
+     * no stale [MessagesState.Loaded] to preserve there either way, so both fall through
+     * to [MessagesState.Loading]). The split exists so that guarantee doesn't have to keep
+     * being true by coincidence: [retry] always, unconditionally, transitions to
+     * [MessagesState.Loading] — it is not coupled to [refresh]'s "keep stale content
+     * visible" contract, which could change independently later (e.g. if [MessagesState.Error]
+     * ever grows its own stale-content field) without retry's guarantee moving with it. It
+     * needs no username argument because [currentUsername] is retained (issue #330's
+     * failure was a retry that silently no-opped, from an unrelated cause on a different
+     * screen — not a bug this ViewModel's own [refresh] currently has).
      */
     fun retry() = startFirstPage(showRefreshing = false)
 
