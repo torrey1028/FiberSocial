@@ -10,6 +10,7 @@ import com.myhobbyislearning.fibersocial.events.EventDetailViewModel
 import com.myhobbyislearning.fibersocial.events.EventsViewModel
 import com.myhobbyislearning.fibersocial.events.NewEventViewModel
 import com.myhobbyislearning.fibersocial.feedback.FeedbackViewModel
+import com.myhobbyislearning.fibersocial.messages.MessagesViewModel
 import com.myhobbyislearning.fibersocial.net.ravelryApiClient
 import com.myhobbyislearning.fibersocial.net.ravelryAuthRepository
 import com.myhobbyislearning.fibersocial.net.ravelryHttpClient
@@ -63,6 +64,9 @@ class FeedAndroidViewModel(app: Application) : AndroidViewModel(app), FeedScreen
     override val userProfile = UserProfileViewModel(apiClient, viewModelScope)
     override val feedback = FeedbackViewModel(apiClient, viewModelScope)
     override val events = EventsViewModel(apiClient, viewModelScope)
+
+    // Private-message conversation list (issue #370, epic #365).
+    override val messages = MessagesViewModel(apiClient, viewModelScope)
     override val newEvent = NewEventViewModel(
         apiClient,
         viewModelScope,
@@ -93,6 +97,7 @@ class FeedAndroidViewModel(app: Application) : AndroidViewModel(app), FeedScreen
         events.sessionExpired,
         eventDetail.sessionExpired,
         newEvent.sessionExpired,
+        messages.sessionExpired,
     )
 
     init {
