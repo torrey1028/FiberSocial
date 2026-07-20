@@ -305,9 +305,9 @@ class FeedViewModel(
      * assume some other fetch will always notice first.
      *
      * The per-group leg needs the user's groups, which only exist once the feed is loaded;
-     * before that this still refreshes the (group-independent) "Posts" dot and leaves
-     * the group dots alone. It is deliberately NOT fired on drawer open — that stayed lazy
-     * per issue #349, and it now costs `1 + groups.size` requests.
+     * before that this still refreshes the (group-independent) "Posts" and "Messages" dots
+     * and leaves the group dots alone. It is deliberately NOT fired on drawer open — that
+     * stayed lazy per issue #349, and it now costs `2 + groups.size` requests.
      *
      * A new call cancels any still-in-flight previous one before starting, so responses
      * can never land out of order and let a slow, stale result overwrite a fresher one —
@@ -331,7 +331,8 @@ class FeedViewModel(
                 persistGroupLastViewed(result.groupLastViewed)
                 println(
                     "FiberSocial: drawer unread -> ${dots.size} " +
-                        "of ${groups.size} group(s), yourPosts=${result.unread.yourPostsHasUnread}",
+                        "of ${groups.size} group(s), yourPosts=${result.unread.yourPostsHasUnread}, " +
+                        "messages=${result.unread.messagesHaveUnread}",
                 )
             } catch (e: CancellationException) {
                 throw e
@@ -439,6 +440,58 @@ class FeedViewModel(
                 sessionExpirySignal.signal()
             } catch (e: Exception) {
                 println("FiberSocial: your-posts dot refresh failed: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * Re-checks the **"Messages"** dot after the user has read a message (issue #372).
+     *
+     * The message-side twin of [refreshDrawerUnreadAfterReading], and narrow for the same
+     * reason: it re-runs only the one-row inbox probe
+     * ([FeedRepository.getMessagesUnread]), not the whole `2 + groups.size`
+     * [FeedRepository.getDrawerUnread] pass. Reading is the natural moment this dot goes
+     * out — drawer-open deliberately doesn't refresh (issue #349's lazy design), so
+     * otherwise it would linger until the next foreground activation or drawer
+     * pull-to-refresh.
+     *
+     * **Call this only once Ravelry has actually recorded the read** — after
+     * [RavelryApiClient.markMessageRead]'s POST has returned, never concurrently with it.
+     * Exactly the trap [refreshDrawerUnreadAfterReading] documents: this is a GET racing
+     * that POST, and a GET that wins still sees the message as unread and re-lights the
+     * very dot it exists to clear.
+     *
+     * Gated so that backing out of an already-read conversation costs nothing: it fires
+     * only when the dot is currently lit. There is deliberately no second "is the messages
+     * screen showing?" gate of the kind the Posts version has — the inbox probe is
+     * cross-folder and cheap, and reading a message is by construction the only thing that
+     * can clear it, so the state check the Posts version needs has no analogue here.
+     *
+     * NOT YET CALLED. The conversation detail screen that reads a message is issue #371
+     * and does not exist yet, so there is no honest caller to wire this to — a fake one
+     * (e.g. firing on drawer open) would either re-light the dot on the mark-read race or
+     * quietly undo issue #349's lazy design. **#371: call this from the detail screen's
+     * mark-read completion callback**, the same way `FeedScreen` sequences
+     * [refreshDrawerUnreadAfterReading] after `TopicDetailViewModel.markRead`'s `onMarked`.
+     */
+    fun refreshMessagesUnreadAfterReading() {
+        if (!_drawerUnread.value.messagesHaveUnread) return
+        scope.launch {
+            try {
+                _drawerUnread.value = _drawerUnread.value.copy(
+                    messagesHaveUnread = repository.getMessagesUnread(),
+                )
+                println(
+                    "FiberSocial: messages dot after reading -> " +
+                        "${_drawerUnread.value.messagesHaveUnread}",
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: SessionExpiredException) {
+                println("FiberSocial: messages dot refresh session expired")
+                sessionExpirySignal.signal()
+            } catch (e: Exception) {
+                println("FiberSocial: messages dot refresh failed: ${e.message}")
             }
         }
     }
