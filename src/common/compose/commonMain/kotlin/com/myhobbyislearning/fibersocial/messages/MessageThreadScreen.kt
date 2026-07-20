@@ -23,11 +23,13 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -113,6 +115,13 @@ private const val BUBBLE_WIDTH_FRACTION = 0.88f
  *   system back gesture, and the read state is already applied by the time it fires: the
  *   mark-read POSTs are issued on open, not on exit (unlike `TopicDetailScreen`, whose
  *   read marker is a scroll high-water mark that can only be known when leaving).
+ * @param onReply Opens the reply composer (issue #374). `null` hides the affordance entirely,
+ *   which is what a caller with no composer wired up should pass. Note the button is shown
+ *   even for a conversation that turns out to have nothing repliable — Ravelry only allows a
+ *   reply to a message someone sent *you*, so a thread the user started and nobody answered
+ *   has no target. That is reported by [MessagesViewModel.sendReply] as composer copy
+ *   explaining why, rather than by a silently missing button: an absent control tells the
+ *   user nothing, and the case is rare enough not to be worth a third state on this screen.
  * @param onToggleMute Placeholder hook for per-thread muting. `null` — the current state —
  *   renders the menu item disabled rather than hiding it, so the affordance is visibly
  *   coming rather than silently absent. Issue #377 owns the behaviour and only needs to
@@ -127,6 +136,7 @@ fun MessageThreadScreen(
     currentUsername: String,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    onReply: (() -> Unit)? = null,
     onToggleMute: (() -> Unit)? = null,
     isMuted: Boolean = false,
 ) {
@@ -151,6 +161,16 @@ fun MessageThreadScreen(
                 },
                 actions = { ThreadOverflowMenu(isMuted = isMuted, onToggleMute = onToggleMute) },
             )
+        },
+        floatingActionButton = {
+            onReply?.let {
+                ExtendedFloatingActionButton(
+                    onClick = it,
+                    modifier = Modifier.testTag("ReplyFab"),
+                    icon = { Icon(Icons.Default.Edit, contentDescription = null) },
+                    text = { Text("Reply") },
+                )
+            }
         },
     ) { padding ->
         Column(modifier = Modifier.padding(padding).fillMaxSize()) {

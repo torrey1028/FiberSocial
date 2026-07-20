@@ -135,6 +135,9 @@ import com.myhobbyislearning.fibersocial.composeapp.resources.Res
 import com.myhobbyislearning.fibersocial.composeapp.resources.app_logo_content_description
 import com.myhobbyislearning.fibersocial.messages.MessageThreadScreen
 import com.myhobbyislearning.fibersocial.messages.MessagesScreen
+import com.myhobbyislearning.fibersocial.messages.NewMessageScreen
+import com.myhobbyislearning.fibersocial.messages.ReplyContext
+import com.myhobbyislearning.fibersocial.messages.replySubject
 import com.myhobbyislearning.fibersocial.profile.UserProfileScreen
 import com.myhobbyislearning.fibersocial.profile.UserProfileState
 import com.myhobbyislearning.fibersocial.notifications.DeepLink
@@ -522,6 +525,17 @@ fun FeedScreen(
     // of About returns to the still-open Settings screen (issue #289).
     var showAbout by remember { mutableStateOf(false) }
     var composingTopic by rememberSaveable { mutableStateOf(false) }
+    // The message composer (issue #374), following composingTopic's shape exactly: a
+    // rememberSaveable flag plus an early return, not a new navigation mechanism.
+    //
+    // TWO flags rather than one, because the composer serves two entries with different
+    // ways back: composingMessage is a new conversation reached from the Messages list's
+    // FAB, and replyingToRootId is a reply reached from an open thread. Collapsing them into
+    // one nullable would make "new message" and "reply to thread 0" the same value, and the
+    // reply's Back has to land on the still-open thread while the new message's lands on the
+    // list — which is exactly the distinction the early return below reads.
+    var composingMessage by rememberSaveable { mutableStateOf(false) }
+    var replyingToRootId by rememberSaveable { mutableStateOf<Long?>(null) }
     var sendingFeedback by rememberSaveable { mutableStateOf(false) }
 
     // Deep-link ids parked until the feed data needed to act on them arrives; see the
@@ -548,6 +562,8 @@ fun FeedScreen(
         eventsGroup = null
         showingMessages = false
         composingTopic = false
+        composingMessage = false
+        replyingToRootId = null
         composingEventGroup = null
         sendingFeedback = false
         // The parks count as navigation state too: without this, a Topic link parked
@@ -933,6 +949,54 @@ fun FeedScreen(
         return
     }
 
+    // The message composer (issue #374). ABOVE the open-thread return on purpose: a reply is
+    // composed from inside a thread, so it has to win over the screen it was launched from,
+    // exactly as the topic composer sits above the feed it posts to.
+    if (composingMessage || replyingToRootId != null) {
+        val sendState by viewModel.messages.sendState.collectAsState()
+        val recipientSearch by viewModel.messages.recipientSearch.collectAsState()
+        val replyRootId = replyingToRootId
+        val replyThread = openMessageThread?.thread?.takeIf { it.rootId == replyRootId }
+        // Leaves the composer without sending; the reply case lands back on its thread,
+        // which is still open behind this.
+        val leaveComposer = {
+            composingMessage = false
+            replyingToRootId = null
+            viewModel.messages.resetCompose()
+        }
+        NewMessageScreen(
+            sendState = sendState,
+            searchState = recipientSearch,
+            onQueryChange = { viewModel.messages.searchRecipients(it) },
+            onSend = { recipient, subject, bodyText ->
+                if (replyRootId != null) {
+                    // reply.json, never create.json — see MessagesViewModel.sendReply.
+                    viewModel.messages.sendReply(replyRootId, bodyText)
+                } else {
+                    // Non-null by construction: Send is disabled until a recipient is
+                    // committed from the picker, and a typed name is never a recipient.
+                    recipient?.let { viewModel.messages.sendNewMessage(it.username, subject, bodyText) }
+                }
+            },
+            onSent = {
+                leaveComposer()
+                viewModel.messages.acknowledgeSent()
+                // No refetch: the sent message was appended to the accumulated list and the
+                // threads regrouped, so the conversation behind this — and its list row —
+                // already show it.
+            },
+            onBack = leaveComposer,
+            replyTo = replyThread?.let {
+                ReplyContext(
+                    counterpartName = it.counterpart?.username?.takeIf { name -> name.isNotBlank() }
+                        ?: "this conversation",
+                    subject = replySubject(it.subject),
+                )
+            },
+        )
+        return
+    }
+
     // A conversation is open (issue #371). A pushed sub-screen with its own back arrow, so
     // it early-returns like the topic detail rather than rendering inside the Scaffold the
     // way the messages LIST does — the list is a drawer destination and has to keep the
@@ -949,6 +1013,10 @@ fun FeedScreen(
             // thread read when it opened it, and updated the list row from the same
             // regrouping, so the row behind is correct the instant it reappears.
             onBack = { viewModel.messages.closeThread() },
+            onReply = {
+                viewModel.messages.resetCompose()
+                replyingToRootId = threadState.thread.rootId
+            },
             // Left null on purpose — the mute affordance renders disabled until issue #377
             // supplies the behaviour. See MessageThreadScreen.
             onToggleMute = null,
@@ -1271,9 +1339,20 @@ fun FeedScreen(
                 )
             },
             floatingActionButton = {
-                // No feed FABs over Messages — "New topic" and the events shortcut both act
-                // on the topic feed that Messages has replaced.
-                if (loaded != null && groups.isNotEmpty() && !showingMessages) {
+                // Messages gets the FAB slot the feed's own FABs vacate here (issue #374):
+                // "New topic" and the events shortcut both act on the topic feed that
+                // Messages has replaced, so the slot is free for "New message".
+                if (showingMessages) {
+                    FloatingActionButton(
+                        onClick = {
+                            viewModel.messages.resetCompose()
+                            composingMessage = true
+                        },
+                        modifier = Modifier.testTag("NewMessageFab"),
+                    ) {
+                        Icon(Icons.Default.Edit, contentDescription = "New message")
+                    }
+                } else if (loaded != null && groups.isNotEmpty()) {
                     FeedFabs(
                         selectedGroup = loaded.selectedGroup,
                         onGroupEventsClick = { group -> eventsGroup = group },
