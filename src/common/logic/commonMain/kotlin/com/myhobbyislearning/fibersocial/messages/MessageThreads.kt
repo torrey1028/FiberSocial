@@ -156,14 +156,21 @@ private fun rootOf(message: Message, byId: Map<Long, Message>): Message {
     var current = message
     val visited = mutableSetOf(current.id)
     var depth = 0
-    while (depth < MAX_PARENT_WALK_DEPTH) {
+    while (true) {
         val parentId = current.parentMessageId ?: return current
+        // Checked here, gating the NEXT hop, rather than as the loop condition: the loop
+        // condition form stops one hop short of the cap, because it never lets the walk
+        // take its final permitted hop and then re-examine the message it lands on for a
+        // null parent — a chain needing EXACTLY MAX_PARENT_WALK_DEPTH hops would land on
+        // its true root but never get to check that root's own (null) parent, and would
+        // incorrectly self-root instead. Gating the hop itself means a chain of exactly
+        // the cap length still resolves fully; only a chain strictly longer bails.
+        if (depth >= MAX_PARENT_WALK_DEPTH) return message
         val parent = byId[parentId] ?: return current
         if (!visited.add(parentId)) return message
         current = parent
         depth++
     }
-    return message
 }
 
 /** Assembles one [MessageThread] from its root and the messages that resolved to it. */

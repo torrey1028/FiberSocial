@@ -5,6 +5,7 @@ import com.myhobbyislearning.fibersocial.feed.models.FeedItem
 import com.myhobbyislearning.fibersocial.feed.models.Group
 import com.myhobbyislearning.fibersocial.feed.models.RavelryUser
 import com.myhobbyislearning.fibersocial.feed.models.Topic
+import com.myhobbyislearning.fibersocial.messages.MessageFolder
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
@@ -27,7 +28,7 @@ data class FeedItemsPage(
  * A lightweight signal for the drawer's indicators (unread dots): whether there is
  * anything worth looking at, not how much.
  *
- * The two dots deliberately mean different things (issue #350 part 3):
+ * The three dots deliberately mean different things (issue #350 part 3, issue #372):
  *
  * @property unreadGroupForumIds Forum ids ([Group.forumId]) of groups with **activity
  *   since the user last opened them** — see [resolveGroupDots]. Not a strict unread
@@ -38,10 +39,18 @@ data class FeedItemsPage(
  * @property yourPostsHasUnread Whether any topic the user posted in has unread replies.
  *   This one IS read-marker based — the user has by definition opened those topics, so
  *   the marker exists — and is cross-group, so the last-viewed rule doesn't apply.
+ * @property messagesHaveUnread Whether the message inbox holds anything unread (issue
+ *   #372). The *easy* case, and deliberately modelled on [yourPostsHasUnread] rather than
+ *   on the groups rule: Ravelry's message API carries a real per-message read flag
+ *   ([com.myhobbyislearning.fibersocial.messages.Message.readMessage]) plus an
+ *   `unread_only` filter, so the server already knows the answer and there is no local
+ *   last-viewed state to invent. Reading a message is what clears it — see
+ *   [FeedRepository.getMessagesUnread] for the narrow re-probe that notices.
  */
 data class DrawerUnread(
     val unreadGroupForumIds: Set<Long> = emptySet(),
     val yourPostsHasUnread: Boolean = false,
+    val messagesHaveUnread: Boolean = false,
 )
 
 /**
@@ -61,6 +70,13 @@ private const val UNREAD_SCAN_PAGE_SIZE = 100
 // is one request PER GROUP, and only the newest timestamp is wanted. It is deliberately
 // not 1 — see getGroupActivity for why taking the max over a short page matters.
 private const val GROUP_ACTIVITY_PAGE_SIZE = 10
+
+// Messages requested by the inbox unread probe. ONE, deliberately — unlike the per-group
+// leg above (where slot 1 can hold a stale pinned topic, so a page of 1 would lie), this
+// asks a pure existence question of a server-side `unread_only` filter: any row at all
+// means "unread mail exists". The inbox can be enormous and getDrawerUnread already costs
+// 1 + groups.size requests, so it fetches the smallest page that can answer it.
+private const val MESSAGES_UNREAD_PROBE_PAGE_SIZE = 1
 
 /**
  * Translates raw Ravelry API data into [FeedItem]s ready for display.
@@ -95,13 +111,14 @@ class FeedRepository(private val apiClient: RavelryApiClient) {
      * Fetches the drawer's indicators (the unread dots) — see [DrawerUnread] for what the
      * two dots mean.
      *
-     * Two kinds of leg, all run concurrently:
+     * Three kinds of leg, all run concurrently:
      *
      * - one page of the topics the user has *posted in*, for the "Posts" dot;
+     * - a one-row `unread_only` inbox probe, for the "Messages" dot (issue #372);
      * - one small page of topics per group in [groups], for the per-group activity dots,
      *   compared against [groupLastViewed] as of [now].
      *
-     * That makes this `1 + groups.size` requests, up from the 2 it used to be — the price
+     * That makes this `2 + groups.size` requests, up from the 2 it used to be — the price
      * of dots that are both complete (a brand-new topic nobody has opened still counts)
      * and dismissible. The per-group fan-out shares the same concurrency cap as the feed's
      * detail fetches, and callers fire this on foreground activation and after a feed
@@ -117,6 +134,7 @@ class FeedRepository(private val apiClient: RavelryApiClient) {
         now: Long,
     ): DrawerUnreadResult = coroutineScope {
         val posting = async { getYourPostsUnread() }
+        val messages = async { getMessagesUnreadOrNone() }
         val activity = async { getGroupActivity(groups) }
         val dots = resolveGroupDots(
             groups = groups,
@@ -128,6 +146,7 @@ class FeedRepository(private val apiClient: RavelryApiClient) {
             unread = DrawerUnread(
                 unreadGroupForumIds = dots.unreadGroupForumIds,
                 yourPostsHasUnread = posting.await(),
+                messagesHaveUnread = messages.await(),
             ),
             groupLastViewed = dots.lastViewed,
         )
@@ -141,6 +160,49 @@ class FeedRepository(private val apiClient: RavelryApiClient) {
      */
     suspend fun getYourPostsUnread(): Boolean =
         apiClient.getMyTopics(pageSize = UNREAD_SCAN_PAGE_SIZE).topics.any { it.hasUnread }
+
+    /**
+     * Whether the message inbox holds anything unread — the "Messages" dot on its own,
+     * without the rest of [getDrawerUnread] (issue #372).
+     *
+     * A pure existence probe: `unread_only` makes the server do the filtering, so any row
+     * at all in the response means unread mail exists and
+     * [MESSAGES_UNREAD_PROBE_PAGE_SIZE] rows are enough to find out. Exposed separately so
+     * re-checking the dot after the user reads a message costs one request instead of a
+     * full `2 + groups.size` pass — the message-side twin of [getYourPostsUnread].
+     *
+     * Throws on failure. [getDrawerUnread] softens that itself (see
+     * [getMessagesUnreadOrNone]); the ViewModel's narrow re-probe catches it there.
+     */
+    suspend fun getMessagesUnread(): Boolean =
+        apiClient
+            .getMessages(
+                folder = MessageFolder.INBOX,
+                pageSize = MESSAGES_UNREAD_PROBE_PAGE_SIZE,
+                unreadOnly = true,
+            )
+            .messages
+            .isNotEmpty()
+
+    /**
+     * [getMessagesUnread] with the same soft-failure contract the per-group leg has: a
+     * broken messages probe degrades to "no dot" rather than taking the Posts and group
+     * dots down with it. The rethrow pair matches [getGroupActivity]'s, and for the same
+     * reasons — a swallowed [SessionExpiredException] renders as "no mail" and hides an
+     * expired session behind an innocent-looking drawer, and a swallowed
+     * [CancellationException] breaks structured concurrency for the enclosing scope.
+     */
+    private suspend fun getMessagesUnreadOrNone(): Boolean =
+        try {
+            getMessagesUnread()
+        } catch (e: SessionExpiredException) {
+            throw e
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            println("FiberSocial: getDrawerUnread: skipping the messages leg (${e.message})")
+            false
+        }
 
     /**
      * Latest activity per group: group id → the newest reply timestamp (epoch millis)
