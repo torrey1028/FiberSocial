@@ -4,6 +4,8 @@ import com.myhobbyislearning.fibersocial.notifications.DeepLink
 import com.myhobbyislearning.fibersocial.notifications.EventSync
 import com.myhobbyislearning.fibersocial.notifications.NOTIFICATION_EVENT_GROUP_ID_KEY
 import com.myhobbyislearning.fibersocial.notifications.NOTIFICATION_EVENT_PERMALINK_KEY
+import com.myhobbyislearning.fibersocial.notifications.NOTIFICATION_MESSAGE_ID_KEY
+import com.myhobbyislearning.fibersocial.notifications.NOTIFICATION_MESSAGE_THREAD_ID_KEY
 import com.myhobbyislearning.fibersocial.notifications.NOTIFICATION_OPEN_MY_POSTS_KEY
 import com.myhobbyislearning.fibersocial.notifications.NOTIFICATION_TOPIC_ID_KEY
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -93,6 +95,15 @@ private class NotificationDelegate : NSObject(), UNUserNotificationCenterDelegat
             )
         }
         (this[NOTIFICATION_TOPIC_ID_KEY] as? String)?.toLongOrNull()?.let { return DeepLink.Topic(it) }
+        // Ids travel as decimal STRINGS through userInfo (see NOTIFICATION_EVENT_GROUP_ID_KEY),
+        // so these are parsed, not cast. iOS posts no group summary, so there is no bare
+        // "open Messages" key to fall through to the way Android's summary needs one.
+        (this[NOTIFICATION_MESSAGE_THREAD_ID_KEY] as? String)?.toLongOrNull()?.let { threadRootId ->
+            return DeepLink.Message(
+                threadRootId = threadRootId,
+                messageId = (this[NOTIFICATION_MESSAGE_ID_KEY] as? String)?.toLongOrNull() ?: 0L,
+            )
+        }
         if (this[NOTIFICATION_OPEN_MY_POSTS_KEY] != null) return DeepLink.MyPosts
         return null
     }
