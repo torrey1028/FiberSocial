@@ -142,6 +142,12 @@ private fun IosApp(authModel: IosAuthModel, feedModel: IosFeedModel) {
                     showWebView = false
                     authModel.handleAuthCode(code, state, cookie)
                 },
+                // Leave the web view and report it, rather than sitting on a dead
+                // authorize page (issue #394) — same routing as MainActivity.
+                onAuthError = { message ->
+                    showWebView = false
+                    authModel.auth.failLogin(message)
+                },
                 onBack = { showWebView = false },
             )
         } else {
