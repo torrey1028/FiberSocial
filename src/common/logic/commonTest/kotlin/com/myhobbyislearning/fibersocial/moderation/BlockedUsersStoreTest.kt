@@ -62,6 +62,31 @@ class KeyValueBlockedUsersStoreTest {
     }
 
     @Test
+    fun `unblock removes a stored entry even when the casing differs from how it was blocked`() = runTest {
+        // Ravelry usernames are case-preserving but not case-distinct (see isBlocked's
+        // doc) — a post's author casing and a later profile fetch's casing can differ
+        // for the same account. unblock() must find the stored entry by case-insensitive
+        // match rather than delegate to Set's case-sensitive equals/hashCode, or a
+        // differently-cased unblock call silently leaves the entry stuck forever.
+        val store = KeyValueBlockedUsersStore(FakeKeyValueStore())
+        store.block("SomeUser")
+
+        store.unblock("someuser")
+
+        assertEquals(emptySet(), store.blockedUsernames.value)
+    }
+
+    @Test
+    fun `blocking an already-blocked username under different casing does not add a duplicate entry`() = runTest {
+        val store = KeyValueBlockedUsersStore(FakeKeyValueStore())
+        store.block("SomeUser")
+
+        store.block("someuser")
+
+        assertEquals(setOf("SomeUser"), store.blockedUsernames.value)
+    }
+
+    @Test
     fun `corrupt data degrades to empty on load`() = runTest {
         val fake = FakeKeyValueStore()
         fake.putString("blocked_usernames", "not json")

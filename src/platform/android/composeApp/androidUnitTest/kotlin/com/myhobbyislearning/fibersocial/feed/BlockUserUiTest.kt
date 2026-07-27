@@ -139,6 +139,22 @@ class BlockUserUiTest {
     }
 
     @Test
+    fun `block user menu item is absent on the viewer's own post`() {
+        compose.setContent {
+            TopicDetailScreen(
+                topic = topic,
+                postsState = TopicDetailState.Loaded(listOf(post)),
+                onBack = {},
+                onVote = { _, _ -> },
+                currentUsername = "someone",
+            )
+        }
+        compose.onNodeWithContentDescription("More post options").performClick()
+        compose.onNodeWithText("Report post").assertIsDisplayed()
+        compose.onNodeWithText("Block user").assertDoesNotExist()
+    }
+
+    @Test
     fun `a post from a blocked author is fully hidden from the reply list`() {
         val fromBlocked = Post(id = 1L, bodyHtml = "<p>hi</p>", user = RavelryUser(username = "blocked-user"))
         val fromOther = Post(id = 2L, bodyHtml = "<p>hey</p>", user = RavelryUser(username = "someone-else"))

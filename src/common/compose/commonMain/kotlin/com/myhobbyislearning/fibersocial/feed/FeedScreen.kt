@@ -848,6 +848,7 @@ fun FeedScreen(
             onPostErrorShown = { viewModel.projectPage.acknowledgePostError() },
             onDeleteComment = { viewModel.projectPage.deleteComment(it) },
             onPostAcknowledged = { viewModel.projectPage.acknowledgePosted() },
+            blockedUsernames = blockedUsernames,
         )
         return
     }
@@ -1047,7 +1048,7 @@ fun FeedScreen(
                 null
             },
             onOpenAbout = { showAbout = true },
-            onOpenBlockedUsers = { showSettings = false; showBlockedUsers = true },
+            onOpenBlockedUsers = { showBlockedUsers = true },
         )
         return
     }

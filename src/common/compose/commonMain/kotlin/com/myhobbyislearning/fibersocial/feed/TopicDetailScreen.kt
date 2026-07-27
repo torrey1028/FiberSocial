@@ -630,10 +630,12 @@ fun TopicDetailScreen(
                                 editingPostId = post.id
                             },
                             onReport = { onReportPost(post) },
-                            // Only offered when the post actually has an author to block —
-                            // an unattributed post has no username BlockedUsersStore could
-                            // ever act on.
-                            onBlock = post.user?.username?.let { { pendingBlockPost = post } },
+                            // Only offered when the post actually has an author to block (an
+                            // unattributed post has no username BlockedUsersStore could ever
+                            // act on) and isn't the viewer's own post — blocking yourself
+                            // would hide every topic/reply you've ever posted from your own
+                            // feed, the same self-block gate UserProfileScreen applies.
+                            onBlock = if (!mine) post.user?.username?.let { { pendingBlockPost = post } } else null,
                         )
                         HorizontalDivider()
                     }

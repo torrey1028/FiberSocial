@@ -70,9 +70,19 @@ class KeyValueBlockedUsersStore(store: KeyValueStore) : BlockedUsersStore {
         }
     }
 
-    override suspend fun block(username: String) = mutate { it + username }
+    // Ravelry usernames are case-preserving but not case-distinct (see isBlocked's doc):
+    // the casing a post's author renders with can differ from the casing a later profile
+    // fetch echoes back for the same account. Set's default equals()/hashCode() is
+    // case-sensitive, so block/unblock must compare case-insensitively themselves rather
+    // than delegate to plain Set +/-, or unblock() from a differently-cased call site
+    // would silently no-op instead of removing the stored entry.
+    override suspend fun block(username: String) = mutate { current ->
+        if (current.any { it.equals(username, ignoreCase = true) }) current else current + username
+    }
 
-    override suspend fun unblock(username: String) = mutate { it - username }
+    override suspend fun unblock(username: String) = mutate { current ->
+        current.filterNot { it.equals(username, ignoreCase = true) }.toSet()
+    }
 
     // Process-wide (not per-instance), mirroring KeyValueMutedTopicsStore.mutate's
     // reasoning: guards the load-modify-save sequence against two rapid block/unblock taps
