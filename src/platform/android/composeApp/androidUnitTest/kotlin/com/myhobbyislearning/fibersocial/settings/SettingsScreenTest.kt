@@ -162,6 +162,17 @@ class SettingsScreenTest {
     }
 
     @Test
+    fun `blocked users row is always shown and invokes its handler`() {
+        var opened = 0
+        compose.setContent {
+            SettingsScreen(user = user, onBack = {}, onSignOut = {}, onOpenBlockedUsers = { opened++ })
+        }
+        compose.onNodeWithText("Blocked users").assertIsDisplayed()
+        compose.onNodeWithText("Blocked users").performClick()
+        compose.runOnIdle { assertEquals(1, opened) }
+    }
+
+    @Test
     fun `about row is always shown and invokes its handler`() {
         var opened = 0
         compose.setContent {

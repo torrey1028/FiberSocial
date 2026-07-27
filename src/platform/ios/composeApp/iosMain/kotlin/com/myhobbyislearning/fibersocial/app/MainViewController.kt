@@ -27,11 +27,13 @@ import com.myhobbyislearning.fibersocial.login.LoginScreen
 import com.myhobbyislearning.fibersocial.notifications.EventSync
 import com.myhobbyislearning.fibersocial.notifications.IosEventNotifier
 import com.myhobbyislearning.fibersocial.login.WebViewLoginScreen
+import com.myhobbyislearning.fibersocial.moderation.KeyValueBlockedUsersStore
 import com.myhobbyislearning.fibersocial.notifications.KeyValueMutedTopicsStore
 import com.myhobbyislearning.fibersocial.notifications.KeyValueNotificationSettingsStore
 import com.myhobbyislearning.fibersocial.settings.KeyValueThemeSettingsStore
 import com.myhobbyislearning.fibersocial.settings.ThemeMode
 import com.myhobbyislearning.fibersocial.settings.ThemeSettings
+import com.myhobbyislearning.fibersocial.storage.BLOCKED_USERS_STORE_NAME
 import com.myhobbyislearning.fibersocial.storage.NOTIFICATION_SETTINGS_STORE_NAME
 import com.myhobbyislearning.fibersocial.storage.NOTIFICATION_STATE_STORE_NAME
 import com.myhobbyislearning.fibersocial.storage.THEME_SETTINGS_STORE_NAME
@@ -162,12 +164,20 @@ private fun IosApp(authModel: IosAuthModel, feedModel: IosFeedModel) {
                             NsUserDefaultsKeyValueStore(NOTIFICATION_STATE_STORE_NAME),
                         )
                     }
+                    // Local blocked-users list (issue #410); see MainActivity's twin for
+                    // why this is `remember`, not `rememberSaveable`.
+                    val blockedUsersStore = remember {
+                        KeyValueBlockedUsersStore(
+                            NsUserDefaultsKeyValueStore(BLOCKED_USERS_STORE_NAME),
+                        )
+                    }
                     LaunchedEffect(Unit) {
                         feedModel.load()
                         // Same point in the flow where Android prompts (MainActivity
                         // requests POST_NOTIFICATIONS at launch).
                         IosEventNotifier().requestAuthorization()
                     }
+                    LaunchedEffect(blockedUsersStore) { blockedUsersStore.load() }
                     // On session expiry: show WebView login before clearing auth so
                     // there's no LoginScreen flash (same as MainActivity).
                     LaunchedEffect(feedModel) {
@@ -205,6 +215,7 @@ private fun IosApp(authModel: IosAuthModel, feedModel: IosFeedModel) {
                             },
                             notificationSettingsStore = notificationSettingsStore,
                             mutedTopicsStore = mutedTopicsStore,
+                            blockedUsersStore = blockedUsersStore,
                             // A cadence change re-baselines the next background-refresh
                             // request (iOS treats it as a floor, not a schedule).
                             onPollCadenceChanged = { EventSync.scheduleBackgroundRefresh(it) },
