@@ -22,6 +22,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalUriHandler
 import com.myhobbyislearning.fibersocial.app.ForegroundActivations
 import com.myhobbyislearning.fibersocial.auth.AuthState
 import com.myhobbyislearning.fibersocial.feed.FeedAndroidViewModel
@@ -39,13 +40,18 @@ import com.myhobbyislearning.fibersocial.notifications.toDeepLink
 import com.myhobbyislearning.fibersocial.notifications.EventSyncWorker
 import com.myhobbyislearning.fibersocial.notifications.KeyValueMutedTopicsStore
 import com.myhobbyislearning.fibersocial.notifications.KeyValueNotificationSettingsStore
+import com.myhobbyislearning.fibersocial.settings.CURRENT_TERMS_VERSION
+import com.myhobbyislearning.fibersocial.settings.KeyValueTermsAcceptanceStore
 import com.myhobbyislearning.fibersocial.settings.KeyValueThemeSettingsStore
+import com.myhobbyislearning.fibersocial.settings.TermsAcceptance
 import com.myhobbyislearning.fibersocial.settings.ThemeMode
 import com.myhobbyislearning.fibersocial.settings.ThemeSettings
 import com.myhobbyislearning.fibersocial.storage.NOTIFICATION_SETTINGS_PREFS_NAME
 import com.myhobbyislearning.fibersocial.storage.NOTIFICATION_STATE_PREFS_NAME
+import com.myhobbyislearning.fibersocial.storage.TERMS_ACCEPTANCE_PREFS_NAME
 import com.myhobbyislearning.fibersocial.storage.THEME_SETTINGS_PREFS_NAME
 import com.myhobbyislearning.fibersocial.storage.plainKeyValueStore
+import com.myhobbyislearning.fibersocial.terms.TermsGateScreen
 import com.myhobbyislearning.fibersocial.ui.FiberSocialTheme
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
@@ -101,6 +107,17 @@ class MainActivity : ComponentActivity() {
                 val authState by authVm.auth.state.collectAsState()
                 var showWebView by remember { mutableStateOf(false) }
 
+                // Terms-of-use gate (issue #408, Apple Guideline 1.2): must appear before
+                // "Log in with Ravelry" can be used. null while loading — during that gap
+                // the auth-state check below (not this store) decides what renders, so an
+                // already-authenticated user is never blocked on it.
+                val termsStore = remember {
+                    KeyValueTermsAcceptanceStore(plainKeyValueStore(this, TERMS_ACCEPTANCE_PREFS_NAME))
+                }
+                var termsAcceptance by remember { mutableStateOf<TermsAcceptance?>(null) }
+                LaunchedEffect(Unit) { if (termsAcceptance == null) termsAcceptance = termsStore.load() }
+                val termsScope = rememberCoroutineScope()
+
                 // Checked ahead of the AuthState when-branch below so a retry from
                 // AuthState.Error (e.g. a rejected OAuth state, issue #149) re-opens the
                 // WebView instead of being silently swallowed by the Error branch, which
@@ -114,6 +131,20 @@ class MainActivity : ComponentActivity() {
                             authVm.handleAuthCode(code, state, cookie)
                         },
                         onBack = { showWebView = false },
+                    )
+                } else if ((authState is AuthState.Unauthenticated || authState is AuthState.Error) &&
+                    termsAcceptance?.isCurrent == false
+                ) {
+                    val uriHandler = LocalUriHandler.current
+                    TermsGateScreen(
+                        onOpenFullTerms = {
+                            uriHandler.openUri("https://torrey1028.github.io/FiberSocial/terms-of-use.html")
+                        },
+                        onAgree = {
+                            val updated = TermsAcceptance(version = CURRENT_TERMS_VERSION)
+                            termsAcceptance = updated
+                            termsScope.launch { termsStore.save(updated) }
+                        },
                     )
                 } else {
                     when (authState) {
