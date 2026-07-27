@@ -187,6 +187,12 @@ class RavelryApiClient(
         val response = block()
         if (response.status == HttpStatusCode.Forbidden) {
             val bodyText = response.bodyAsText()
+            // Logged unconditionally (both branches below) so a future 403 that doesn't
+            // match isInvalidOAuthTokenBody's known phrasing is diagnosable straight from
+            // device logcat instead of needing a fresh live API probe like the one that
+            // root-caused this (see isInvalidOAuthTokenBody's doc). Bodies here are Ravelry
+            // server error text, never request/response auth headers, so this is safe to log.
+            println("FiberSocial: 403 for ${response.request.url.encodedPath}: ${bodyText.take(200)}")
             // Most 403s mean the token is valid but lacks permission (e.g. missing OAuth
             // scope, moderator-only action) — refreshing or re-logging-in cannot fix that,
             // so it must not be classified as session expiry (issue #82). But Ravelry's
@@ -221,6 +227,7 @@ class RavelryApiClient(
         }
         if (retried.status == HttpStatusCode.Forbidden) {
             val retriedBody = retried.bodyAsText()
+            println("FiberSocial: 403 on retry for ${retried.request.url.encodedPath}: ${retriedBody.take(200)}")
             if (isInvalidOAuthTokenBody(retriedBody)) {
                 throw SessionExpiredException("Session expired")
             }
