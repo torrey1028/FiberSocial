@@ -7,14 +7,14 @@ name: iOS Debug Build
 # branch there.
 #
 # Builds a Debug-configuration archive, signs it Ad Hoc (same Apple
-# Distribution certificate release-ios.yml already uses — Ad Hoc profiles are
-# signed with a Distribution cert, just scoped to specific registered
-# devices, so no new certificate is needed), and publishes an
+# Distribution certificate release.yml's ios-release job already uses — Ad
+# Hoc profiles are signed with a Distribution cert, just scoped to specific
+# registered devices, so no new certificate is needed), and publishes an
 # over-the-air install page via GitHub Pages: open the page's link in Safari
 # on a registered iPhone and tap Install, no cable and no Mac required.
 #
-# One-time setup this needs that release-ios.yml doesn't already have — see
-# docs/ios-debug-builds.md:
+# One-time setup this needs that release.yml's ios-release job doesn't
+# already have — see docs/ios-debug-builds.md:
 #   - Your iPhone's UDID registered as a Device in the Apple Developer portal.
 #   - An Ad Hoc provisioning profile for com.myhobbyislearning.fibersocial
 #     covering that device, base64'd into the IOS_ADHOC_PROVISIONING_PROFILE_BASE64
@@ -22,14 +22,23 @@ name: iOS Debug Build
 on:
   workflow_dispatch:
 
-# Shares release-ios.yml's macOS toolchain setup pattern, but is otherwise
-# independent — no test suites, no App Store Connect upload, no promotion
-# gate. This is a developer convenience tool, not a release artifact.
+# Shares release.yml's ios-release job's macOS toolchain setup pattern, but
+# is otherwise independent — no test suites, no App Store Connect upload, no
+# promotion gate. This is a developer convenience tool, not a release artifact.
 jobs:
   build-and-publish:
     runs-on: macos-15
+    # A distinct group from pages.yml's own "pages" group, not the same one:
+    # this job costs a macOS runner (the most expensive tier) and can run for
+    # several minutes, while pages.yml's legal-docs deploy is a cheap ubuntu
+    # job. Sharing a group with cancel-in-progress would let an unrelated
+    # legal/*.html push cancel an in-flight (expensive) debug build. Each
+    # side's "carry the other's latest output forward" step already handles
+    # the case where both happen to deploy around the same time, so nothing
+    # here needs to serialize with pages.yml — only with itself, so a second
+    # dispatch doesn't run concurrently with a still-building first one.
     concurrency:
-      group: pages
+      group: ios-debug-build
       cancel-in-progress: true
     permissions:
       contents: read
@@ -54,9 +63,9 @@ jobs:
           java-version: "17"
           distribution: "temurin"
 
-      # See the twin comment in release-ios.yml: the build applies AGP even
-      # for the composeApp framework build, and macOS runners don't ship an
-      # Android SDK.
+      # See the twin comment in release.yml's ios-release job: the build
+      # applies AGP even for the composeApp framework build, and macOS
+      # runners don't ship an Android SDK.
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
         with:
@@ -94,7 +103,7 @@ jobs:
           } > src/platform/ios/Config.local.xcconfig
 
       # A temporary keychain scoped to this job — see the twin comment in
-      # release-ios.yml.
+      # release.yml's ios-release job.
       - name: Import distribution certificate
         env:
           IOS_DIST_CERTIFICATE_BASE64: ${{ secrets.IOS_DIST_CERTIFICATE_BASE64 }}
