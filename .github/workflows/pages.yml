@@ -10,6 +10,9 @@ permissions:
   contents: read
   pages: write
   id-token: write
+  # Needed for the "Carry forward the latest iOS debug build" step's
+  # `gh run list`/`gh run download` calls.
+  actions: read
 
 # Only one Pages deployment can run at a time; a newer push should win over an
 # in-flight older one rather than queue behind it.
@@ -40,6 +43,36 @@ jobs:
           cp legal/*.html _site/
           cp legal/privacy-policy.html _site/index.html
           cp legal/favicon.png _site/
+
+      # A Pages deployment replaces the whole site — it doesn't merge with
+      # what's already live. This run was only triggered by a legal/ change,
+      # so without this step it would silently wipe out whatever the last
+      # ios-debug-build.yml run published under /ios-debug/. Pull that run's
+      # output forward instead (same "download the latest successful run's
+      # artifact" pattern tests.yml uses for coverage baselines). If no
+      # ios-debug-build.yml run has ever succeeded, there's nothing to carry
+      # forward yet — skip gracefully.
+      - name: Carry forward the latest iOS debug build, if any
+        run: |
+          mkdir -p _site/ios-debug
+          LATEST=$(gh run list \
+            --repo "${{ github.repository }}" \
+            --workflow ios-debug-build.yml \
+            --status success \
+            --limit 1 \
+            --json databaseId \
+            --jq '.[0].databaseId // empty')
+          if [ -n "$LATEST" ]; then
+            gh run download "$LATEST" \
+              --repo "${{ github.repository }}" \
+              --name ios-debug-ota \
+              --dir _site/ios-debug \
+            || echo "Latest ios-debug-build.yml run has no ios-debug-ota artifact (expired or predates this workflow), skipping."
+          else
+            echo "No successful ios-debug-build.yml run yet, skipping."
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
 
       - uses: actions/upload-pages-artifact@v3
         with:
