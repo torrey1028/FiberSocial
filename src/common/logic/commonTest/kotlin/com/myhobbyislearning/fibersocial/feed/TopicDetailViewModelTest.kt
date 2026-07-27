@@ -1694,11 +1694,50 @@ class TopicDetailViewModelTest {
 
     private val reportedPost = Post(id = 1L, user = RavelryUser(username = "someone"))
 
+    /**
+     * [reportRoutingClient] with the flag-form GET parked on [releaseForm] and/or the flag
+     * POST parked on [releaseSubmit] until the test completes them. MockEngine responds on
+     * its own thread, so any assertion about a mid-flight state (LoadingForm, submitting)
+     * made between launching the call and [awaitChildren] races the response landing —
+     * a CI-only flake on a fast machine unless the response is held until after the assert.
+     */
+    private fun gatedReportClient(
+        releaseForm: CompletableDeferred<Unit>? = null,
+        releaseSubmit: CompletableDeferred<Unit>? = null,
+        onFlagPost: () -> Unit = {},
+    ): RavelryApiClient {
+        val engine = MockEngine { request ->
+            val path = request.url.encodedPath
+            when {
+                path.contains("/flag") && request.method == HttpMethod.Post -> {
+                    onFlagPost()
+                    releaseSubmit?.await()
+                    respond("", HttpStatusCode.Found,
+                        headersOf(HttpHeaders.Location, "/discuss/some-group/1"))
+                }
+                path.contains("/flag") -> {
+                    releaseForm?.await()
+                    respond(flagFormHtml, HttpStatusCode.OK, headersOf("Content-Type", "text/html"))
+                }
+                path.contains("/posts.json") ->
+                    respond(postsJson(1L, 2L), HttpStatusCode.OK,
+                        headersOf("Content-Type", ContentType.Application.Json.toString()))
+                else -> respond(TOKEN_PAGE_HTML, HttpStatusCode.OK, headersOf("Content-Type", "text/html"))
+            }
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        return RavelryApiClient(httpClient, FakeFeedTokenStorage())
+    }
+
     @Test
     fun `openReportDialog fetches the flag form and transitions to Ready`() = runTest(UnconfinedTestDispatcher()) {
-        val vm = TopicDetailViewModel(reportRoutingClient(), this)
+        val releaseForm = CompletableDeferred<Unit>()
+        val vm = TopicDetailViewModel(gatedReportClient(releaseForm = releaseForm), this)
         vm.openReportDialog(reportedPost)
         assertIs<ReportState.LoadingForm>(vm.reportState.value)
+        releaseForm.complete(Unit)
         awaitChildren(coroutineContext[Job]!!)
         val ready = assertIs<ReportState.Ready>(vm.reportState.value)
         assertEquals(reportedPost, ready.post)
@@ -1734,11 +1773,13 @@ class TopicDetailViewModelTest {
 
     @Test
     fun `submitReport success transitions to Sent`() = runTest(UnconfinedTestDispatcher()) {
-        val vm = TopicDetailViewModel(reportRoutingClient(), this)
+        val releaseSubmit = CompletableDeferred<Unit>()
+        val vm = TopicDetailViewModel(gatedReportClient(releaseSubmit = releaseSubmit), this)
         vm.openReportDialog(reportedPost)
         awaitChildren(coroutineContext[Job]!!)
         vm.submitReport("spam", escalate = false)
         assertTrue((vm.reportState.value as ReportState.Ready).submitting)
+        releaseSubmit.complete(Unit)
         awaitChildren(coroutineContext[Job]!!)
         assertIs<ReportState.Sent>(vm.reportState.value)
     }
@@ -1890,15 +1931,22 @@ class TopicDetailViewModelTest {
 
     @Test
     fun `submitReport ignores a second call while already submitting`() = runTest(UnconfinedTestDispatcher()) {
-        val vm = TopicDetailViewModel(reportRoutingClient(), this)
+        val releaseSubmit = CompletableDeferred<Unit>()
+        var flagPosts = 0
+        val vm = TopicDetailViewModel(
+            gatedReportClient(releaseSubmit = releaseSubmit, onFlagPost = { flagPosts++ }),
+            this,
+        )
         vm.openReportDialog(reportedPost)
         awaitChildren(coroutineContext[Job]!!)
         vm.submitReport("spam", escalate = false)
-        // Still submitting synchronously (UnconfinedTestDispatcher hasn't drained the
-        // launched coroutine's completion yet) — a second call here must be dropped.
+        // The first submission is parked on releaseSubmit, so it's still in flight here —
+        // a second call must be dropped, not queued or sent.
         vm.submitReport("off_topic", escalate = true)
+        releaseSubmit.complete(Unit)
         awaitChildren(coroutineContext[Job]!!)
         assertIs<ReportState.Sent>(vm.reportState.value)
+        assertEquals(1, flagPosts)
     }
 
     @Test
@@ -1912,11 +1960,15 @@ class TopicDetailViewModelTest {
 
     @Test
     fun `dismissReport is a no-op while a submission is in flight`() = runTest(UnconfinedTestDispatcher()) {
-        val vm = TopicDetailViewModel(reportRoutingClient(), this)
+        val releaseSubmit = CompletableDeferred<Unit>()
+        val vm = TopicDetailViewModel(gatedReportClient(releaseSubmit = releaseSubmit), this)
         vm.openReportDialog(reportedPost)
         awaitChildren(coroutineContext[Job]!!)
         vm.submitReport("spam", escalate = false)
+        // The submission is parked on releaseSubmit, so it's genuinely in flight here.
         vm.dismissReport()
+        assertTrue(assertIs<ReportState.Ready>(vm.reportState.value).submitting)
+        releaseSubmit.complete(Unit)
         awaitChildren(coroutineContext[Job]!!)
         // The submission still completed to Sent — dismissReport must not have
         // interrupted it or forced it back to Idle mid-flight.
