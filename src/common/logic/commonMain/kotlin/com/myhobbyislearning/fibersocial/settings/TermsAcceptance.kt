@@ -1,5 +1,6 @@
 package com.myhobbyislearning.fibersocial.settings
 
+import com.myhobbyislearning.fibersocial.auth.AuthState
 import com.myhobbyislearning.fibersocial.storage.JsonKeyValueEntry
 import com.myhobbyislearning.fibersocial.storage.KeyValueStore
 import kotlinx.serialization.Serializable
@@ -51,3 +52,21 @@ class KeyValueTermsAcceptanceStore(store: KeyValueStore) : TermsAcceptanceStore 
         const val KEY = "acceptance"
     }
 }
+
+/**
+ * Whether the pre-login terms gate should be shown ahead of the normal [AuthState]
+ * screens, given the current auth state and stored [acceptance].
+ *
+ * Only [AuthState.Unauthenticated] is gated, deliberately excluding
+ * [AuthState.Error]: reaching [AuthState.Error] always means the user already got past
+ * `LoginScreen`'s "Log in with Ravelry" button, which itself is only reachable once the
+ * gate has already been cleared for this acceptance state — *except* for the
+ * session-expiry retry path (`sessionExpired` collector), which jumps straight from
+ * [AuthState.Authenticated] to the login WebView without ever passing through this gate.
+ * A user who was authenticated before this feature shipped has a never-agreed (default)
+ * [TermsAcceptance], so gating on [AuthState.Error] too would replace their login-failure
+ * message with an unrelated "agree to terms" prompt on every failed re-login attempt,
+ * hiding the retry information `AuthState.Error` exists to surface.
+ */
+fun shouldShowTermsGate(authState: AuthState, acceptance: TermsAcceptance?): Boolean =
+    authState is AuthState.Unauthenticated && acceptance?.isCurrent == false

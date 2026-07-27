@@ -47,6 +47,7 @@ import com.myhobbyislearning.fibersocial.settings.KeyValueThemeSettingsStore
 import com.myhobbyislearning.fibersocial.settings.TermsAcceptance
 import com.myhobbyislearning.fibersocial.settings.ThemeMode
 import com.myhobbyislearning.fibersocial.settings.ThemeSettings
+import com.myhobbyislearning.fibersocial.settings.shouldShowTermsGate
 import com.myhobbyislearning.fibersocial.storage.NOTIFICATION_SETTINGS_PREFS_NAME
 import com.myhobbyislearning.fibersocial.storage.NOTIFICATION_STATE_PREFS_NAME
 import com.myhobbyislearning.fibersocial.storage.TERMS_ACCEPTANCE_PREFS_NAME
@@ -116,11 +117,18 @@ class MainActivity : ComponentActivity() {
                 // "Log in with Ravelry" can be used. null while loading — during that gap
                 // the auth-state check below (not this store) decides what renders, so an
                 // already-authenticated user is never blocked on it.
+                //
+                // rememberSaveable, not remember (same reasoning as themeMode above): on a
+                // config change the accepted version is restored from instance state rather
+                // than resetting to null and re-reading SharedPreferences. Stores just the
+                // Int version — TermsAcceptance's only field — since the default Bundle
+                // Saver doesn't handle a Kotlin data class.
                 val termsStore = remember {
                     KeyValueTermsAcceptanceStore(plainKeyValueStore(this, TERMS_ACCEPTANCE_PREFS_NAME))
                 }
-                var termsAcceptance by remember { mutableStateOf<TermsAcceptance?>(null) }
-                LaunchedEffect(Unit) { if (termsAcceptance == null) termsAcceptance = termsStore.load() }
+                var termsVersion by rememberSaveable { mutableStateOf<Int?>(null) }
+                val termsAcceptance = termsVersion?.let { TermsAcceptance(version = it) }
+                LaunchedEffect(Unit) { if (termsVersion == null) termsVersion = termsStore.load().version }
                 val termsScope = rememberCoroutineScope()
 
                 // Checked ahead of the AuthState when-branch below so a retry from
@@ -146,9 +154,7 @@ class MainActivity : ComponentActivity() {
                         },
                         onBack = { showWebView = false },
                     )
-                } else if ((authState is AuthState.Unauthenticated || authState is AuthState.Error) &&
-                    termsAcceptance?.isCurrent == false
-                ) {
+                } else if (shouldShowTermsGate(authState, termsAcceptance)) {
                     val uriHandler = LocalUriHandler.current
                     TermsGateScreen(
                         onOpenFullTerms = {
@@ -156,7 +162,7 @@ class MainActivity : ComponentActivity() {
                         },
                         onAgree = {
                             val updated = TermsAcceptance(version = CURRENT_TERMS_VERSION)
-                            termsAcceptance = updated
+                            termsVersion = updated.version
                             termsScope.launch { termsStore.save(updated) }
                         },
                     )

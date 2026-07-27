@@ -1,5 +1,7 @@
 package com.myhobbyislearning.fibersocial.settings
 
+import com.myhobbyislearning.fibersocial.auth.AuthState
+import com.myhobbyislearning.fibersocial.auth.AuthToken
 import com.myhobbyislearning.fibersocial.storage.FakeKeyValueStore
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -26,6 +28,45 @@ class TermsAcceptanceTest {
     @Test
     fun `acceptance of an older version than required is not current`() {
         assertFalse(TermsAcceptance(version = CURRENT_TERMS_VERSION - 1).isCurrent)
+    }
+}
+
+class ShouldShowTermsGateTest {
+    @Test
+    fun `gates a never-agreed unauthenticated user`() {
+        assertTrue(shouldShowTermsGate(AuthState.Unauthenticated, TermsAcceptance()))
+    }
+
+    @Test
+    fun `does not gate an unauthenticated user who already agreed`() {
+        assertFalse(
+            shouldShowTermsGate(AuthState.Unauthenticated, TermsAcceptance(version = CURRENT_TERMS_VERSION)),
+        )
+    }
+
+    @Test
+    fun `does not gate a never-agreed unauthenticated user while acceptance is still loading`() {
+        assertFalse(shouldShowTermsGate(AuthState.Unauthenticated, acceptance = null))
+    }
+
+    @Test
+    fun `does not gate an authenticated user regardless of acceptance`() {
+        val authenticated = AuthState.Authenticated(AuthToken("access", "refresh", Long.MAX_VALUE))
+        assertFalse(shouldShowTermsGate(authenticated, TermsAcceptance()))
+    }
+
+    @Test
+    fun `does not gate a never-agreed user whose login attempt errored`() {
+        // A user authenticated before this feature shipped has a never-agreed
+        // TermsAcceptance. If a later re-login attempt (e.g. after session expiry)
+        // fails, AuthState.Error must still surface the failure message instead of
+        // being replaced by an unrelated terms re-prompt.
+        assertFalse(shouldShowTermsGate(AuthState.Error("session expired"), TermsAcceptance()))
+    }
+
+    @Test
+    fun `does not gate a loading auth state`() {
+        assertFalse(shouldShowTermsGate(AuthState.Loading, TermsAcceptance()))
     }
 }
 

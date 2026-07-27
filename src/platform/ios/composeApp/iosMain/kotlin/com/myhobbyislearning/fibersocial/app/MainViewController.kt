@@ -37,6 +37,7 @@ import com.myhobbyislearning.fibersocial.settings.KeyValueThemeSettingsStore
 import com.myhobbyislearning.fibersocial.settings.TermsAcceptance
 import com.myhobbyislearning.fibersocial.settings.ThemeMode
 import com.myhobbyislearning.fibersocial.settings.ThemeSettings
+import com.myhobbyislearning.fibersocial.settings.shouldShowTermsGate
 import com.myhobbyislearning.fibersocial.storage.NOTIFICATION_SETTINGS_STORE_NAME
 import com.myhobbyislearning.fibersocial.storage.NOTIFICATION_STATE_STORE_NAME
 import com.myhobbyislearning.fibersocial.storage.TERMS_ACCEPTANCE_STORE_NAME
@@ -166,9 +167,7 @@ private fun IosApp(authModel: IosAuthModel, feedModel: IosFeedModel) {
                 },
                 onBack = { showWebView = false },
             )
-        } else if ((authState is AuthState.Unauthenticated || authState is AuthState.Error) &&
-            termsAcceptance?.isCurrent == false
-        ) {
+        } else if (shouldShowTermsGate(authState, termsAcceptance)) {
             val uriHandler = LocalUriHandler.current
             TermsGateScreen(
                 onOpenFullTerms = {
