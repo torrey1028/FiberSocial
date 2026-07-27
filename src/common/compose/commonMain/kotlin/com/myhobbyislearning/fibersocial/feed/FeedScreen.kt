@@ -121,6 +121,7 @@ import com.myhobbyislearning.fibersocial.events.EventDetailScreen
 import com.myhobbyislearning.fibersocial.events.EventsScreen
 import com.myhobbyislearning.fibersocial.events.EventsState
 import com.myhobbyislearning.fibersocial.events.NewEventScreen
+import com.myhobbyislearning.fibersocial.featureflags.FeatureFlags
 import com.myhobbyislearning.fibersocial.feed.models.FeedItem
 import com.myhobbyislearning.fibersocial.feed.models.Group
 import com.myhobbyislearning.fibersocial.feed.models.Post
@@ -707,6 +708,14 @@ fun FeedScreen(
             // entirely and reads none of its state, so gating on the feed would strand the
             // tap whenever the feed happened to fail to load.
             is DeepLink.Message -> {
+                // Messages is compile-time gated out of release builds — see FeatureFlags.
+                // A stale notification or shared link tapped on a release build must not
+                // route here at all, since there's no drawer entry or FAB to land the user
+                // on afterward.
+                if (!FeatureFlags.messagesEnabled) {
+                    onDeepLinkConsumed()
+                    return@LaunchedEffect
+                }
                 clearNavigationForDeepLink()
                 showingMessages = true
                 // PARKED FOR #371. Selecting Messages is as far as this can route today —
@@ -723,6 +732,10 @@ fun FeedScreen(
             }
 
             DeepLink.Messages -> {
+                if (!FeatureFlags.messagesEnabled) {
+                    onDeepLinkConsumed()
+                    return@LaunchedEffect
+                }
                 clearNavigationForDeepLink()
                 showingMessages = true
                 onDeepLinkConsumed()
@@ -2004,22 +2017,28 @@ internal fun GroupDrawer(
                 },
                 modifier = Modifier.padding(horizontal = 12.dp),
             )
-            Spacer(Modifier.height(8.dp))
-            HorizontalDivider(Modifier.testTag("DrawerNavDividerAboveMessages"))
-            Spacer(Modifier.height(8.dp))
-            // Direct messages (#369). A peer of "Posts" rather than a group-list entry, so it
-            // gets the same row treatment, including the unread-dot slot.
-            NavigationDrawerItem(
-                label = { Text("Messages") },
-                selected = messagesSelected,
-                onClick = { if (!reorderMode) onMessagesSelected() },
-                icon = {
-                    IconWithUnreadDot(hasUnread = messagesHasUnread) {
-                        Icon(Icons.Default.Email, contentDescription = null)
-                    }
-                },
-                modifier = Modifier.padding(horizontal = 12.dp),
-            )
+            // Messages is compile-time gated out of release builds (drawer entry, deep links,
+            // and new-message notifications all key off the same FeatureFlags.messagesEnabled)
+            // — hidden here rather than merely disabled so a release build never shows an
+            // entry point to a destination it can't reach.
+            if (FeatureFlags.messagesEnabled) {
+                Spacer(Modifier.height(8.dp))
+                HorizontalDivider(Modifier.testTag("DrawerNavDividerAboveMessages"))
+                Spacer(Modifier.height(8.dp))
+                // Direct messages (#369). A peer of "Posts" rather than a group-list entry, so
+                // it gets the same row treatment, including the unread-dot slot.
+                NavigationDrawerItem(
+                    label = { Text("Messages") },
+                    selected = messagesSelected,
+                    onClick = { if (!reorderMode) onMessagesSelected() },
+                    icon = {
+                        IconWithUnreadDot(hasUnread = messagesHasUnread) {
+                            Icon(Icons.Default.Email, contentDescription = null)
+                        }
+                    },
+                    modifier = Modifier.padding(horizontal = 12.dp),
+                )
+            }
             Spacer(Modifier.height(8.dp))
             HorizontalDivider(Modifier.testTag("DrawerNavDividerAboveGroups"))
             Spacer(Modifier.height(8.dp))
