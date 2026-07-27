@@ -82,7 +82,7 @@ internal fun ReportPostDialog(
                                 verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clickable { selectedReasonId = reason.id },
+                                    .clickable(enabled = !state.submitting) { selectedReasonId = reason.id },
                             ) {
                                 RadioButton(
                                     selected = selectedReasonId == reason.id,
@@ -97,7 +97,7 @@ internal fun ReportPostDialog(
                                 verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clickable { escalate = !escalate },
+                                    .clickable(enabled = !state.submitting) { escalate = !escalate },
                             ) {
                                 Checkbox(
                                     checked = escalate,

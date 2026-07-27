@@ -425,6 +425,15 @@ class TopicDetailViewModel(
     /** Monotonic token: a send from a previous topic may not touch the current one's state. */
     private var topicGeneration = 0
 
+    /**
+     * Monotonic token guarding [openReportDialog]'s in-flight form fetch, separately from
+     * [topicGeneration]: dismissing the dialog (or opening it again for a different post)
+     * doesn't advance the topic, so [topicGeneration] alone can't stop a fetch that's still
+     * in flight when the dialog closes from later resurrecting it — or, if a second post's
+     * dialog was opened in the meantime, from clobbering that post's state instead.
+     */
+    private var reportRequestGeneration = 0
+
     /** The topic [load] most recently targeted; distinguishes a new topic from a refresh. */
     private var loadedTopicId: Long? = null
 
@@ -520,6 +529,7 @@ class TopicDetailViewModel(
     fun openReportDialog(post: Post) {
         _reportState.value = ReportState.LoadingForm(post)
         val generation = topicGeneration
+        val requestGeneration = ++reportRequestGeneration
         scope.launch {
             val result = try {
                 ReportState.Ready(post, apiClient.getFlagPostForm(post.id))
@@ -534,8 +544,12 @@ class TopicDetailViewModel(
                 ReportState.LoadError(post, e.message ?: "Couldn't load the report form")
             }
             // A topic switch mid-fetch must not resurrect a dialog for a post that's no
-            // longer on screen (same generation guard as runPostOp).
-            if (generation == topicGeneration) _reportState.value = result
+            // longer on screen (same generation guard as runPostOp) — and separately, a
+            // dismiss (or opening the dialog again for a different post) mid-fetch must
+            // not resurrect/clobber it either, even though the topic hasn't changed.
+            if (generation == topicGeneration && requestGeneration == reportRequestGeneration) {
+                _reportState.value = result
+            }
         }
     }
 
@@ -549,6 +563,7 @@ class TopicDetailViewModel(
         if (ready.submitting) return
         _reportState.value = ready.copy(submitting = true, error = null)
         val generation = topicGeneration
+        val requestGeneration = reportRequestGeneration
         scope.launch {
             val result = try {
                 when (val flagResult = apiClient.flagPost(ready.form, reasonId, escalate)) {
@@ -561,12 +576,17 @@ class TopicDetailViewModel(
             } catch (e: SessionExpiredException) {
                 println("FiberSocial: TopicDetailViewModel.submitReport session expired")
                 sessionExpirySignal.signal()
-                ready.copy(submitting = false)
+                // error = null: session expiry isn't a validation failure, so `ready`'s
+                // already-cleared error (captured above) must not reappear here — every
+                // other branch sets its own fresh error instead of falling back to it.
+                ready.copy(submitting = false, error = null)
             } catch (e: Exception) {
                 println("FiberSocial: TopicDetailViewModel.submitReport failed: ${e.message}")
                 ready.copy(submitting = false, error = e.message ?: "Failed to report post")
             }
-            if (generation == topicGeneration) _reportState.value = result
+            if (generation == topicGeneration && requestGeneration == reportRequestGeneration) {
+                _reportState.value = result
+            }
         }
     }
 
@@ -574,6 +594,9 @@ class TopicDetailViewModel(
     fun dismissReport() {
         val current = _reportState.value
         if (current is ReportState.Ready && current.submitting) return
+        // Invalidates a still-in-flight openReportDialog fetch so its late response can't
+        // resurrect the just-dismissed dialog.
+        reportRequestGeneration++
         _reportState.value = ReportState.Idle
     }
 
