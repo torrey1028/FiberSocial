@@ -270,6 +270,11 @@ jobs:
           IOS_ASC_API_KEY_BASE64: ${{ secrets.IOS_ASC_API_KEY_BASE64 }}
           IOS_ASC_KEY_ID: ${{ secrets.IOS_ASC_KEY_ID }}
           IOS_ASC_ISSUER_ID: ${{ secrets.IOS_ASC_ISSUER_ID }}
+          # Same reasoning as "Write Config.local.xcconfig": route through env +
+          # a shell variable rather than ${{ }} inside the script, so a value
+          # containing shell metacharacters can't inject commands here.
+          IOS_TESTFLIGHT_QA_GROUP_NAME: ${{ vars.IOS_TESTFLIGHT_QA_GROUP_NAME }}
+          BUILD_NUMBER: ${{ steps.version.outputs.build_number }}
         run: |
           python3 -c '
           import base64, json, os
@@ -286,19 +291,26 @@ jobs:
             app_identifier:"com.myhobbyislearning.fibersocial" \
             distribute_only:true \
             distribute_external:true \
-            groups:"${{ vars.IOS_TESTFLIGHT_QA_GROUP_NAME }}" \
-            build_number:"${{ steps.version.outputs.build_number }}"
+            groups:"$IOS_TESTFLIGHT_QA_GROUP_NAME" \
+            build_number:"$BUILD_NUMBER"
 
       # The `ios-release` environment (configured with required reviewers in
       # Settings > Environments) is what actually pauses the `promote` job
       # below — this summary just tells the approving reviewer what to check
       # before they click Approve.
       - name: Write QA summary
+        env:
+          # Same reasoning as "Add build to QA TestFlight group": route through
+          # env rather than ${{ }} inside the script, so a value containing
+          # shell metacharacters can't inject commands into this step.
+          BUILD_NUMBER: ${{ steps.version.outputs.build_number }}
+          MARKETING_VERSION: ${{ steps.version.outputs.marketing_version }}
+          IOS_TESTFLIGHT_QA_GROUP_NAME: ${{ vars.IOS_TESTFLIGHT_QA_GROUP_NAME }}
         run: |
           {
-            echo "## Release candidate build ${{ steps.version.outputs.build_number }} (${{ steps.version.outputs.marketing_version }}) is ready for QA"
+            echo "## Release candidate build $BUILD_NUMBER ($MARKETING_VERSION) is ready for QA"
             echo ""
-            echo "- Install via TestFlight — QA testers were just added to the **${{ vars.IOS_TESTFLIGHT_QA_GROUP_NAME }}** external group."
+            echo "- Install via TestFlight — QA testers were just added to the **$IOS_TESTFLIGHT_QA_GROUP_NAME** external group."
             echo "- Run through [docs/ios-device-checklist.md]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/blob/main/docs/ios-device-checklist.md)."
             echo "- Once QA passes, approve the \`ios-release\` environment on the \`promote\` job of this run. Note: that job cannot submit to the App Store for you (Apple review can't be API-triggered) — it's a reminder gate, not an automatic publish."
           } >> "$GITHUB_STEP_SUMMARY"
@@ -306,9 +318,12 @@ jobs:
   promote:
     needs: build-rc
     runs-on: ubuntu-latest
-    concurrency:
-      group: release-ios
-      cancel-in-progress: false
+    # No concurrency group here (unlike build-rc): this job can sit paused for
+    # however long manual QA/approval takes, and needs.build-rc.outputs already
+    # scopes it to this run's own RC — sharing build-rc's `release-ios` group
+    # would make a still-pending approval block every later run's build-rc
+    # (a real release fix-forward, or an unrelated workflow_dispatch dry run)
+    # from even starting.
     # Required reviewers on this environment (Settings > Environments >
     # ios-release) are the actual manual-QA gate: this job sits paused in the
     # Actions UI until someone who has run the QA checklist against the
