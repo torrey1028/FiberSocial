@@ -5,7 +5,12 @@ description: Cut a signed public FiberSocial release by tagging main, and unders
 
 # Cut a release
 
-Releases are **manual per-version tags**, not per-commit. Pick a `MAJOR.MINOR.PATCH`, tag `main`, push the tag — CI builds a signed **release candidate**, runs the automated test suites against it, and pushes it to a QA testing channel. It does **not** go live yet (issue #265) — a human still has to run manual QA and approve a GitHub Environment gate before it's actually released. See root `CLAUDE.md`'s "Versioning & cutting a release" for the full RC → QA → promote flow.
+Releases are **manual per-version tags**, not per-commit. Pick a `MAJOR.MINOR.PATCH`, tag `main`, push the tag — CI takes over from there, but Android and iOS now behave differently:
+
+- **Android** (`release.yml`) still builds the signed APK/AAB and publishes them **immediately** as the latest GitHub Release — the pre-#265 flow, unchanged for now. A follow-up PR is expected to bring Android onto the same RC/QA-gated flow iOS has below, once the Play Console service-account/track setup it needs is ready.
+- **iOS** (`release-ios.yml`) builds a signed **release candidate**, runs the automated test suites against it, and pushes it to a TestFlight QA group. It does **not** go live yet — a human still has to run manual QA and approve a GitHub Environment gate before it's ready for App Store submission (which itself stays a manual App Store Connect step regardless).
+
+See root `CLAUDE.md`'s "Versioning & cutting a release" for the full detail on both.
 
 ## Fast path
 
@@ -15,7 +20,7 @@ From the repo root (`/home/betorr/FiberSocial`), on a clean `main` up to date wi
 scripts/release.sh 1.4.0      # the leading "v" is optional; "v1.4.0" also works
 ```
 
-That tags the current commit `v1.4.0`, pushes the tag, and prints the run URLs. Pushing a `v*.*.*` tag triggers `.github/workflows/release-android.yml` and `.github/workflows/release-ios.yml` independently. Each runs its automated tests, builds the signed release candidate, and publishes it somewhere installable for QA (Android: a `--prerelease` GitHub Release + the Play Console `PLAY_TESTING_TRACK` track; iOS: App Store Connect/TestFlight, auto-added to the `IOS_TESTFLIGHT_QA_GROUP_NAME` external group). Going fully live needs a reviewer to run manual QA (`docs/android-release-qa-checklist.md` / `docs/ios-device-checklist.md`) and then approve the `android-release` / `ios-release` GitHub Environment on that run's `promote` job — only then does Android's AAB get pushed to the Play `production` track and the GitHub Release flip from prerelease to `--latest`. iOS's `promote` job still can't submit to the App Store automatically (Apple review isn't API-triggerable); that step stays manual in App Store Connect even after approval.
+That tags the current commit `v1.4.0`, pushes the tag, and prints both workflows' URLs. Pushing a `v*.*.*` tag triggers `.github/workflows/release.yml` and `.github/workflows/release-ios.yml` independently — one platform's runner speed doesn't block the other. Android's GitHub Release is live as soon as that job finishes; iOS's release candidate needs a reviewer to run manual QA (`docs/ios-device-checklist.md`) and approve the `ios-release` GitHub Environment on that run's `promote` job before App Store submission is appropriate — and even then, that submission is still a manual App Store Connect step (Apple review isn't API-triggerable).
 
 ### Preconditions `scripts/release.sh` enforces (it aborts otherwise)
 
@@ -61,7 +66,7 @@ sed -n 's/=.*/=<redacted>/p' src/platform/android/local.properties
 
 Never `cat`/`Read`/`echo` `local.properties` — it holds `ravelry.client_secret`. See the **build-and-run** skill for the full `local.properties`/keystore setup.
 
-CI supplies all of this from repo secrets (`RELEASE_KEYSTORE_BASE64` + password/alias/key-password), so you rarely build a signed release by hand — the tag push does it. `release-android.yml` **hard-fails** if any required secret is missing (unlike `android-build.yml`, which soft-skips release signing).
+CI supplies all of this from repo secrets (`RELEASE_KEYSTORE_BASE64` + password/alias/key-password), so you rarely build a signed release by hand — the tag push does it. `release.yml` **hard-fails** if any required secret is missing (unlike `android-build.yml`, which soft-skips release signing).
 
 ## Public download link
 
@@ -69,8 +74,8 @@ CI supplies all of this from repo secrets (`RELEASE_KEYSTORE_BASE64` + password/
 https://github.com/torrey1028/FiberSocial/releases/latest/download/app-release.apk
 ```
 
-GitHub resolves `releases/latest` to whichever release was most recently marked `--latest`. **This updates only when the Android `promote` job runs** — not on the initial tag push (which publishes a `--prerelease`, not `--latest`) and not on ordinary pushes to `main`. Whatever tag was most recently tagged, QA'd, and approved becomes the "latest" download.
+GitHub resolves `releases/latest` to whichever release was most recently marked `--latest`. **This updates only on a release-tag push** — not on ordinary pushes to `main`. Whatever you most recently tagged and pushed becomes the "latest" download.
 
 ## After tagging
 
-`scripts/release.sh` pushes the tag and then hands off to CI — it does **not** wait for the build, and the build does **not** go live on its own. Hand the printed run URLs to the user, along with a reminder that this only builds a release candidate: someone still needs to run manual QA against it and approve the `android-release`/`ios-release` environment gate on each run's `promote` job before it's actually released. Do not merge, approve those environment gates, or manually publish anything yourself.
+`scripts/release.sh` pushes the tag and then hands off to CI — it does **not** wait for either build. Hand the printed URLs to the user: Android's GitHub Release appears once `release.yml` finishes, with no further action needed. For iOS, add a reminder that `release-ios.yml` only builds a release candidate — someone still needs to run manual QA against the TestFlight build and approve the `ios-release` environment gate on that run's `promote` job before App Store submission is appropriate, and that submission itself stays a manual App Store Connect step. Do not merge, approve that environment gate, or manually publish anything yourself.

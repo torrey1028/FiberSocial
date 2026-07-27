@@ -33,8 +33,8 @@ jobs:
       # artifacts now, with the runtime warning explaining why.
       #
       # Kept here rather than pushed into the shared setup action: this soft
-      # main-only assertion and release-android.yml's hard fail-on-any-missing
-      # check are genuinely different policies, and collapsing them into one parameterized
+      # main-only assertion and release.yml's hard fail-on-any-missing check are
+      # genuinely different policies, and collapsing them into one parameterized
       # step would be more confusing than the duplication it removes.
       - name: Verify OAuth credentials are configured
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
