@@ -21,6 +21,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNotEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.first
@@ -1694,11 +1695,50 @@ class TopicDetailViewModelTest {
 
     private val reportedPost = Post(id = 1L, user = RavelryUser(username = "someone"))
 
+    /**
+     * [reportRoutingClient] with the flag-form GET parked on [releaseForm] and/or the flag
+     * POST parked on [releaseSubmit] until the test completes them. MockEngine responds on
+     * its own thread, so any assertion about a mid-flight state (LoadingForm, submitting)
+     * made between launching the call and [awaitChildren] races the response landing —
+     * a CI-only flake on a fast machine unless the response is held until after the assert.
+     */
+    private fun gatedReportClient(
+        releaseForm: CompletableDeferred<Unit>? = null,
+        releaseSubmit: CompletableDeferred<Unit>? = null,
+        onFlagPost: () -> Unit = {},
+    ): RavelryApiClient {
+        val engine = MockEngine { request ->
+            val path = request.url.encodedPath
+            when {
+                path.contains("/flag") && request.method == HttpMethod.Post -> {
+                    onFlagPost()
+                    releaseSubmit?.await()
+                    respond("", HttpStatusCode.Found,
+                        headersOf(HttpHeaders.Location, "/discuss/some-group/1"))
+                }
+                path.contains("/flag") -> {
+                    releaseForm?.await()
+                    respond(flagFormHtml, HttpStatusCode.OK, headersOf("Content-Type", "text/html"))
+                }
+                path.contains("/posts.json") ->
+                    respond(postsJson(1L, 2L), HttpStatusCode.OK,
+                        headersOf("Content-Type", ContentType.Application.Json.toString()))
+                else -> respond(TOKEN_PAGE_HTML, HttpStatusCode.OK, headersOf("Content-Type", "text/html"))
+            }
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        return RavelryApiClient(httpClient, FakeFeedTokenStorage())
+    }
+
     @Test
     fun `openReportDialog fetches the flag form and transitions to Ready`() = runTest(UnconfinedTestDispatcher()) {
-        val vm = TopicDetailViewModel(reportRoutingClient(), this)
+        val releaseForm = CompletableDeferred<Unit>()
+        val vm = TopicDetailViewModel(gatedReportClient(releaseForm = releaseForm), this)
         vm.openReportDialog(reportedPost)
         assertIs<ReportState.LoadingForm>(vm.reportState.value)
+        releaseForm.complete(Unit)
         awaitChildren(coroutineContext[Job]!!)
         val ready = assertIs<ReportState.Ready>(vm.reportState.value)
         assertEquals(reportedPost, ready.post)
@@ -1706,6 +1746,65 @@ class TopicDetailViewModelTest {
         assertTrue(ready.form.supportsEscalate)
         assertFalse(ready.submitting)
     }
+
+    @Test
+    fun `openReportDialog for a second post discards the first post's late form response`() =
+        runTest(UnconfinedTestDispatcher()) {
+            // Distinct from the topic-switch guard: same topic, but the dialog was
+            // reopened for a different post before the first post's fetch landed — the
+            // stale response must not clobber the second post's dialog with the first
+            // post's form/data.
+            val releaseFirstForm = CompletableDeferred<Unit>()
+            val releaseSecondForm = CompletableDeferred<Unit>()
+            val secondPost = Post(id = 2L, user = RavelryUser(username = "someone-else"))
+            var formFetches = 0
+            val engine = MockEngine { request ->
+                val path = request.url.encodedPath
+                when {
+                    path.contains("/flag") -> {
+                        formFetches++
+                        if (formFetches == 1) releaseFirstForm.await() else releaseSecondForm.await()
+                        respond(flagFormHtml, HttpStatusCode.OK, headersOf("Content-Type", "text/html"))
+                    }
+                    path.contains("/posts.json") ->
+                        respond(postsJson(1L), HttpStatusCode.OK,
+                            headersOf("Content-Type", ContentType.Application.Json.toString()))
+                    else -> respond(TOKEN_PAGE_HTML, HttpStatusCode.OK, headersOf("Content-Type", "text/html"))
+                }
+            }
+            val httpClient = HttpClient(engine) {
+                install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+            }
+            val vm = TopicDetailViewModel(RavelryApiClient(httpClient, FakeFeedTokenStorage()), this)
+            val ownerJob = coroutineContext[Job]!!
+
+            // MockEngine responds off the calling coroutine, so "release both, then await
+            // everything" races which response actually lands last (see gatedReportClient's
+            // own doc comment on this class of flake). Track each call's own child job and
+            // join it individually instead, so the ordering below is deterministic rather
+            // than incidentally correct.
+            val beforeFirst = ownerJob.children.toList()
+            vm.openReportDialog(reportedPost)
+            assertIs<ReportState.LoadingForm>(vm.reportState.value)
+            val firstJob = ownerJob.children.toList().first { it !in beforeFirst }
+
+            val beforeSecond = ownerJob.children.toList()
+            vm.openReportDialog(secondPost)
+            // The state flips synchronously to the new post — before its own fetch has
+            // even started, let alone completed.
+            assertEquals(secondPost, assertIs<ReportState.LoadingForm>(vm.reportState.value).post)
+            val secondJob = ownerJob.children.toList().first { it !in beforeSecond }
+
+            // Let the SECOND (current) request land first, confirming it's showing.
+            releaseSecondForm.complete(Unit)
+            secondJob.join()
+            assertEquals(secondPost, assertIs<ReportState.Ready>(vm.reportState.value).post)
+
+            // The stale first request landing afterwards must not clobber it.
+            releaseFirstForm.complete(Unit)
+            firstJob.join()
+            assertEquals(secondPost, assertIs<ReportState.Ready>(vm.reportState.value).post)
+        }
 
     @Test
     fun `openReportDialog failure reports LoadError without losing the post`() = runTest(UnconfinedTestDispatcher()) {
@@ -1734,11 +1833,13 @@ class TopicDetailViewModelTest {
 
     @Test
     fun `submitReport success transitions to Sent`() = runTest(UnconfinedTestDispatcher()) {
-        val vm = TopicDetailViewModel(reportRoutingClient(), this)
+        val releaseSubmit = CompletableDeferred<Unit>()
+        val vm = TopicDetailViewModel(gatedReportClient(releaseSubmit = releaseSubmit), this)
         vm.openReportDialog(reportedPost)
         awaitChildren(coroutineContext[Job]!!)
         vm.submitReport("spam", escalate = false)
         assertTrue((vm.reportState.value as ReportState.Ready).submitting)
+        releaseSubmit.complete(Unit)
         awaitChildren(coroutineContext[Job]!!)
         assertIs<ReportState.Sent>(vm.reportState.value)
     }
@@ -1780,6 +1881,51 @@ class TopicDetailViewModelTest {
         }
 
     @Test
+    fun `submitReport session expiry after a prior validation error does not resurface the stale error`() =
+        runTest(UnconfinedTestDispatcher()) {
+            // A retry after a validation failure that then hits session expiry must not
+            // show the FIRST attempt's stale error alongside the (unrelated) session
+            // expiry — the two are different failures.
+            var posts = 0
+            val engine = MockEngine { request ->
+                val path = request.url.encodedPath
+                if (path.contains("/flag") && request.method == HttpMethod.Post) {
+                    posts++
+                    if (posts == 1) {
+                        return@MockEngine respond(
+                            """<ul class="brief_error_messages"><li>Reason is required</li></ul>""",
+                            HttpStatusCode.UnprocessableEntity,
+                            headersOf("Content-Type", ContentType.Text.Html.toString()),
+                        )
+                    }
+                    throw SessionExpiredException("Session expired")
+                }
+                val body = when {
+                    path.contains("/posts.json") -> postsJson(1L)
+                    path.contains("/flag") -> flagFormHtml
+                    else -> TOKEN_PAGE_HTML
+                }
+                respond(body, HttpStatusCode.OK, headersOf("Content-Type", ContentType.Text.Html.toString()))
+            }
+            val httpClient = HttpClient(engine) {
+                install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+            }
+            val vm = TopicDetailViewModel(RavelryApiClient(httpClient, FakeFeedTokenStorage()), this)
+            vm.openReportDialog(reportedPost)
+            awaitChildren(coroutineContext[Job]!!)
+            vm.submitReport("spam", escalate = false)
+            awaitChildren(coroutineContext[Job]!!)
+            assertEquals("Reason is required", assertIs<ReportState.Ready>(vm.reportState.value).error)
+
+            vm.submitReport("spam", escalate = false)
+            awaitChildren(coroutineContext[Job]!!)
+            val ready = assertIs<ReportState.Ready>(vm.reportState.value)
+            assertFalse(ready.submitting)
+            assertNull(ready.error)
+            assertEquals(Unit, vm.sessionExpired.first())
+        }
+
+    @Test
     fun `submitReport session expiry signals sessionExpired and clears submitting`() =
         runTest(UnconfinedTestDispatcher()) {
             // Fetching the form succeeds normally; only the POST that submits it expires —
@@ -1805,6 +1951,9 @@ class TopicDetailViewModelTest {
             awaitChildren(coroutineContext[Job]!!)
             val ready = assertIs<ReportState.Ready>(vm.reportState.value)
             assertFalse(ready.submitting)
+            // Not a validation failure: the pre-submit error clear must stick, not fall
+            // back to whatever `ready.error` held before this submission started.
+            assertNull(ready.error)
             assertEquals(Unit, vm.sessionExpired.first())
         }
 
@@ -1890,15 +2039,22 @@ class TopicDetailViewModelTest {
 
     @Test
     fun `submitReport ignores a second call while already submitting`() = runTest(UnconfinedTestDispatcher()) {
-        val vm = TopicDetailViewModel(reportRoutingClient(), this)
+        val releaseSubmit = CompletableDeferred<Unit>()
+        var flagPosts = 0
+        val vm = TopicDetailViewModel(
+            gatedReportClient(releaseSubmit = releaseSubmit, onFlagPost = { flagPosts++ }),
+            this,
+        )
         vm.openReportDialog(reportedPost)
         awaitChildren(coroutineContext[Job]!!)
         vm.submitReport("spam", escalate = false)
-        // Still submitting synchronously (UnconfinedTestDispatcher hasn't drained the
-        // launched coroutine's completion yet) — a second call here must be dropped.
+        // The first submission is parked on releaseSubmit, so it's still in flight here —
+        // a second call must be dropped, not queued or sent.
         vm.submitReport("off_topic", escalate = true)
+        releaseSubmit.complete(Unit)
         awaitChildren(coroutineContext[Job]!!)
         assertIs<ReportState.Sent>(vm.reportState.value)
+        assertEquals(1, flagPosts)
     }
 
     @Test
@@ -1911,12 +2067,32 @@ class TopicDetailViewModelTest {
     }
 
     @Test
+    fun `dismissReport during the form fetch discards the late response instead of resurrecting the dialog`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val releaseForm = CompletableDeferred<Unit>()
+            val vm = TopicDetailViewModel(gatedReportClient(releaseForm = releaseForm), this)
+            vm.openReportDialog(reportedPost)
+            assertIs<ReportState.LoadingForm>(vm.reportState.value)
+            vm.dismissReport()
+            assertIs<ReportState.Idle>(vm.reportState.value)
+            releaseForm.complete(Unit)
+            awaitChildren(coroutineContext[Job]!!)
+            // The fetch that was in flight when the user dismissed the dialog must not
+            // reopen it once it finally completes.
+            assertIs<ReportState.Idle>(vm.reportState.value)
+        }
+
+    @Test
     fun `dismissReport is a no-op while a submission is in flight`() = runTest(UnconfinedTestDispatcher()) {
-        val vm = TopicDetailViewModel(reportRoutingClient(), this)
+        val releaseSubmit = CompletableDeferred<Unit>()
+        val vm = TopicDetailViewModel(gatedReportClient(releaseSubmit = releaseSubmit), this)
         vm.openReportDialog(reportedPost)
         awaitChildren(coroutineContext[Job]!!)
         vm.submitReport("spam", escalate = false)
+        // The submission is parked on releaseSubmit, so it's genuinely in flight here.
         vm.dismissReport()
+        assertTrue(assertIs<ReportState.Ready>(vm.reportState.value).submitting)
+        releaseSubmit.complete(Unit)
         awaitChildren(coroutineContext[Job]!!)
         // The submission still completed to Sent — dismissReport must not have
         // interrupted it or forced it back to Idle mid-flight.
