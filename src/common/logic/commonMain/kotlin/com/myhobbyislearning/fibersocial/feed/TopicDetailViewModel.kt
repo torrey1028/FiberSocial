@@ -105,6 +105,41 @@ sealed class EditState {
 }
 
 /**
+ * State of an in-flight post report (issue #409 — Apple Guideline 1.2's "flag
+ * objectionable content" mechanism), driven by [TopicDetailViewModel.openReportDialog].
+ *
+ * Every non-[Idle]/[Sent] variant carries the [Post] being reported (not just its ID) so
+ * the dialog — and its "report to app developer" fallback — can reference the post's
+ * author/content without a separate lookup, and so it survives even if the post scrolls
+ * out of [TopicDetailState.Loaded.posts] mid-flow.
+ */
+sealed class ReportState {
+    /** No report in flight. */
+    data object Idle : ReportState()
+
+    /** [FlagPostForm] is being fetched for [post]. */
+    data class LoadingForm(val post: Post) : ReportState()
+
+    /**
+     * Flag form loaded; the report dialog is showing its reason options.
+     * @property submitting Whether a submission is in flight.
+     * @property error A rejected submission's message. Cleared on retry.
+     */
+    data class Ready(
+        val post: Post,
+        val form: FlagPostForm,
+        val submitting: Boolean = false,
+        val error: String? = null,
+    ) : ReportState()
+
+    /** The report was submitted successfully; UI should show a confirmation. */
+    data object Sent : ReportState()
+
+    /** Couldn't load the flag form for [post] — the "report to developer" fallback still applies. */
+    data class LoadError(val post: Post, val message: String) : ReportState()
+}
+
+/**
  * A remembered scroll position within a topic's reply thread, in
  * `androidx.compose.foundation.lazy.LazyListState` terms (first visible item index + its
  * pixel scroll offset).
@@ -150,6 +185,7 @@ class TopicDetailViewModel(
     private val _replyState = MutableStateFlow<ReplyState>(ReplyState.Idle)
     private val _deleteState = MutableStateFlow<DeleteState>(DeleteState.Idle)
     private val _editState = MutableStateFlow<EditState>(EditState.Idle)
+    private val _reportState = MutableStateFlow<ReportState>(ReportState.Idle)
 
     /** Observable reply thread state. */
     val state: StateFlow<TopicDetailState> = _state.asStateFlow()
@@ -162,6 +198,9 @@ class TopicDetailViewModel(
 
     /** Observable state of the current own-post edit. */
     val editState: StateFlow<EditState> = _editState.asStateFlow()
+
+    /** Observable state of the current post report (issue #409). */
+    val reportState: StateFlow<ReportState> = _reportState.asStateFlow()
 
     /** @see SessionExpirySignal.flow */
     val sessionExpired: Flow<Unit> = sessionExpirySignal.flow
@@ -196,6 +235,7 @@ class TopicDetailViewModel(
             _replyState.value = ReplyState.Idle
             _editState.value = EditState.Idle
             _deleteState.value = DeleteState.Idle
+            _reportState.value = ReportState.Idle
         }
         val generation = topicGeneration
         scope.launch {
@@ -467,6 +507,79 @@ class TopicDetailViewModel(
     /** Clears an [EditState.Error] after the UI has shown it. */
     fun acknowledgeEditError() {
         if (_editState.value is EditState.Error) _editState.value = EditState.Idle
+    }
+
+    /**
+     * Opens the report dialog for [post] and fetches Ravelry's flag form (issue #409).
+     * Replaces any previously open report dialog — only one is shown at a time. On
+     * failure, [reportState] becomes [ReportState.LoadError] rather than dropping back
+     * to [ReportState.Idle], so the dialog stays open with the "report to app developer"
+     * fallback still reachable (the plan's fallback tiers: the in-app flag first, an
+     * email report always available alongside or instead of it).
+     */
+    fun openReportDialog(post: Post) {
+        _reportState.value = ReportState.LoadingForm(post)
+        val generation = topicGeneration
+        scope.launch {
+            val result = try {
+                ReportState.Ready(post, apiClient.getFlagPostForm(post.id))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: SessionExpiredException) {
+                println("FiberSocial: TopicDetailViewModel.openReportDialog session expired")
+                sessionExpirySignal.signal()
+                ReportState.Idle
+            } catch (e: Exception) {
+                println("FiberSocial: TopicDetailViewModel.openReportDialog failed: ${e.message}")
+                ReportState.LoadError(post, e.message ?: "Couldn't load the report form")
+            }
+            // A topic switch mid-fetch must not resurrect a dialog for a post that's no
+            // longer on screen (same generation guard as runPostOp).
+            if (generation == topicGeneration) _reportState.value = result
+        }
+    }
+
+    /**
+     * Submits the currently open report with [reasonId] (a [FlagPostForm.reasons] ID)
+     * and whether to [escalate] to Ravelry staff. No-op unless [reportState] is
+     * [ReportState.Ready] and idle.
+     */
+    fun submitReport(reasonId: String, escalate: Boolean) {
+        val ready = _reportState.value as? ReportState.Ready ?: return
+        if (ready.submitting) return
+        _reportState.value = ready.copy(submitting = true, error = null)
+        val generation = topicGeneration
+        scope.launch {
+            val result = try {
+                when (val flagResult = apiClient.flagPost(ready.form, reasonId, escalate)) {
+                    is FlagPostResult.Success -> ReportState.Sent
+                    is FlagPostResult.ValidationFailed ->
+                        ready.copy(submitting = false, error = flagResult.errors.joinToString("; "))
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: SessionExpiredException) {
+                println("FiberSocial: TopicDetailViewModel.submitReport session expired")
+                sessionExpirySignal.signal()
+                ready.copy(submitting = false)
+            } catch (e: Exception) {
+                println("FiberSocial: TopicDetailViewModel.submitReport failed: ${e.message}")
+                ready.copy(submitting = false, error = e.message ?: "Failed to report post")
+            }
+            if (generation == topicGeneration) _reportState.value = result
+        }
+    }
+
+    /** Closes the report dialog. No-op while a submission is in flight. */
+    fun dismissReport() {
+        val current = _reportState.value
+        if (current is ReportState.Ready && current.submitting) return
+        _reportState.value = ReportState.Idle
+    }
+
+    /** Resets [reportState] from [ReportState.Sent] back to [ReportState.Idle] after the UI has acknowledged it. */
+    fun acknowledgeReportSent() {
+        if (_reportState.value is ReportState.Sent) _reportState.value = ReportState.Idle
     }
 
     /**

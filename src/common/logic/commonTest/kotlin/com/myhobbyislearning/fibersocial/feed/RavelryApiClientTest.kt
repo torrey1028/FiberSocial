@@ -1686,6 +1686,201 @@ class RavelryApiClientTest {
         assertEquals("tok-xyz", sentToken)
     }
 
+    // --- getFlagPostForm / flagPost (issue #409 — report a post) ---
+
+    private val flagFormHtml = """
+        <form id="new_post_flag" action="/forum_posts/555/flag" method="post">
+        <input name="authenticity_token" type="hidden" value="tok-flag">
+        <select name="post_flag[reason]">
+        <option value="off_topic">Off topic</option>
+        <option value="spam">Spam</option>
+        </select>
+        <input type="checkbox" name="post_flag[escalate]" value="1">
+        </form>
+    """.trimIndent()
+
+    @Test
+    fun `getFlagPostForm scrapes the flag page and parses its reasons and token`() = runTest {
+        val client = routingApiClient { flagFormHtml }
+        val form = client.getFlagPostForm(555L)
+        assertEquals(555L, form.postId)
+        assertEquals("tok-flag", form.authenticityToken)
+        assertEquals(listOf("off_topic", "spam"), form.reasons.map { it.id })
+        assertTrue(form.supportsEscalate)
+    }
+
+    @Test
+    fun `getFlagPostForm fails loudly when the page lacks the flag form`() = runTest {
+        val client = routingApiClient { "<html><body>not the form</body></html>" }
+        assertFailsWith<IllegalStateException> { client.getFlagPostForm(555L) }
+    }
+
+    @Test
+    fun `getFlagPostForm throws ForbiddenException on 403`() = runTest {
+        val engine = MockEngine { respond("nope", HttpStatusCode.Forbidden) }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        assertFailsWith<ForbiddenException> {
+            RavelryApiClient(httpClient, FakeFeedTokenStorage()).getFlagPostForm(555L)
+        }
+    }
+
+    @Test
+    fun `getFlagPostForm throws SessionExpiredException when redirected off the forum_posts path`() = runTest {
+        // Same shape as getGroupEvents' equivalent test: an expired session cookie
+        // doesn't 401 on www.ravelry.com — it 302s to the login page, which Ktor follows
+        // to a 200. The client must not mistake that landing page for the flag form.
+        val engine = MockEngine { request ->
+            if (request.url.encodedPath.startsWith("/forum_posts/")) {
+                respond(
+                    "",
+                    HttpStatusCode.Found,
+                    headersOf(HttpHeaders.Location, "https://www.ravelry.com/account/login"),
+                )
+            } else {
+                respond("<html><body>please log in</body></html>", HttpStatusCode.OK,
+                    headersOf("Content-Type", ContentType.Text.Html.toString()))
+            }
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        assertFailsWith<SessionExpiredException> {
+            RavelryApiClient(httpClient, FakeFeedTokenStorage()).getFlagPostForm(555L)
+        }
+    }
+
+    @Test
+    fun `flagPost posts the authenticity token and chosen reason to the flag endpoint`() = runTest {
+        data class Captured(val method: String, val path: String, val form: io.ktor.http.Parameters?)
+        var captured: Captured? = null
+        val engine = MockEngine { request ->
+            val form = (request.body as? io.ktor.client.request.forms.FormDataContent)?.formData
+            captured = Captured(request.method.value, request.url.encodedPath, form)
+            respond("", HttpStatusCode.Found, headersOf(HttpHeaders.Location, "/discuss/some-group/1234"))
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val client = RavelryApiClient(httpClient, FakeFeedTokenStorage())
+        val form = FlagPostForm(555L, "tok-flag", listOf(FlagReason("spam", "Spam")), supportsEscalate = true)
+
+        val result = client.flagPost(form, reasonId = "spam", escalate = false)
+
+        assertEquals(FlagPostResult.Success, result)
+        assertEquals("POST", captured?.method)
+        assertEquals("/forum_posts/555/flag", captured?.path)
+        assertEquals("tok-flag", captured?.form?.get("authenticity_token"))
+        assertEquals("spam", captured?.form?.get("post_flag[reason]"))
+        assertNull(captured?.form?.get("post_flag[escalate]"))
+    }
+
+    @Test
+    fun `flagPost includes the escalate field only when escalating`() = runTest {
+        var capturedForm: io.ktor.http.Parameters? = null
+        val engine = MockEngine { request ->
+            capturedForm = (request.body as? io.ktor.client.request.forms.FormDataContent)?.formData
+            respond("", HttpStatusCode.Found, headersOf(HttpHeaders.Location, "/discuss/some-group/1234"))
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val client = RavelryApiClient(httpClient, FakeFeedTokenStorage())
+        val form = FlagPostForm(555L, "tok-flag", listOf(FlagReason("spam", "Spam")), supportsEscalate = true)
+
+        client.flagPost(form, reasonId = "spam", escalate = true)
+
+        assertEquals("1", capturedForm?.get("post_flag[escalate]"))
+    }
+
+    @Test
+    fun `flagPost succeeds on a 2xx response`() = runTest {
+        val engine = MockEngine { respond("ok", HttpStatusCode.OK, headersOf("Content-Type", "text/html")) }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val client = RavelryApiClient(httpClient, FakeFeedTokenStorage())
+        val form = FlagPostForm(555L, "tok-flag", listOf(FlagReason("spam", "Spam")), supportsEscalate = false)
+        assertEquals(FlagPostResult.Success, client.flagPost(form, "spam", false))
+    }
+
+    @Test
+    fun `flagPost throws SessionExpiredException when the post redirects to login`() = runTest {
+        val engine = MockEngine {
+            respond("", HttpStatusCode.Found, headersOf(HttpHeaders.Location, "https://www.ravelry.com/login"))
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val client = RavelryApiClient(httpClient, FakeFeedTokenStorage())
+        val form = FlagPostForm(555L, "tok-flag", listOf(FlagReason("spam", "Spam")), supportsEscalate = false)
+        assertFailsWith<SessionExpiredException> { client.flagPost(form, "spam", false) }
+    }
+
+    @Test
+    fun `flagPost throws SessionExpiredException when the redirect is account slash login`() = runTest {
+        // Mirrors deletePost's equivalent test: this and the plain "/login" case above
+        // are the two independent sides of flagPost's own
+        // startsWith("/login") || startsWith("/account") check.
+        val engine = MockEngine {
+            respond("", HttpStatusCode.Found, headersOf(HttpHeaders.Location, "https://www.ravelry.com/account/login"))
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val client = RavelryApiClient(httpClient, FakeFeedTokenStorage())
+        val form = FlagPostForm(555L, "tok-flag", listOf(FlagReason("spam", "Spam")), supportsEscalate = false)
+        assertFailsWith<SessionExpiredException> { client.flagPost(form, "spam", false) }
+    }
+
+    @Test
+    fun `flagPost throws ForbiddenException on 403`() = runTest {
+        val engine = MockEngine { respond("nope", HttpStatusCode.Forbidden) }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val client = RavelryApiClient(httpClient, FakeFeedTokenStorage())
+        val form = FlagPostForm(555L, "tok-flag", listOf(FlagReason("spam", "Spam")), supportsEscalate = false)
+        assertFailsWith<ForbiddenException> { client.flagPost(form, "spam", false) }
+    }
+
+    @Test
+    fun `flagPost returns ValidationFailed with Ravelry's own error messages on rejection`() = runTest {
+        val engine = MockEngine {
+            respond(
+                """<ul class="brief_error_messages"><li>Reason is required</li></ul>""",
+                HttpStatusCode.UnprocessableEntity,
+                headersOf("Content-Type", "text/html"),
+            )
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val client = RavelryApiClient(httpClient, FakeFeedTokenStorage())
+        val form = FlagPostForm(555L, "tok-flag", listOf(FlagReason("spam", "Spam")), supportsEscalate = false)
+
+        val result = client.flagPost(form, "spam", false)
+
+        assertTrue(result is FlagPostResult.ValidationFailed)
+        assertEquals(listOf("Reason is required"), (result as FlagPostResult.ValidationFailed).errors)
+    }
+
+    @Test
+    fun `flagPost falls back to a generic message when rejected without an error banner`() = runTest {
+        val engine = MockEngine { respond("", HttpStatusCode.InternalServerError) }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val client = RavelryApiClient(httpClient, FakeFeedTokenStorage())
+        val form = FlagPostForm(555L, "tok-flag", listOf(FlagReason("spam", "Spam")), supportsEscalate = false)
+
+        val result = client.flagPost(form, "spam", false)
+
+        assertTrue(result is FlagPostResult.ValidationFailed)
+        assertTrue((result as FlagPostResult.ValidationFailed).errors.single().contains("500"))
+    }
+
     @Test
     fun `editPost posts body to forum_posts endpoint and returns updated post`() = runTest {
         var capturedPath: String? = null

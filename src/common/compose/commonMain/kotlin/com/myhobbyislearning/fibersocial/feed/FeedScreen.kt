@@ -155,6 +155,7 @@ import com.myhobbyislearning.fibersocial.ui.GroupBadge
 import com.myhobbyislearning.fibersocial.ui.PullToRefreshBox
 import com.myhobbyislearning.fibersocial.ui.appLogoResource
 import com.myhobbyislearning.fibersocial.ui.UserAvatar
+import io.ktor.http.encodeURLParameter
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -1073,7 +1074,22 @@ fun FeedScreen(
         val replyState by viewModel.topicDetail.replyState.collectAsState()
         val deleteState by viewModel.topicDetail.deleteState.collectAsState()
         val editState by viewModel.topicDetail.editState.collectAsState()
+        val reportState by viewModel.topicDetail.reportState.collectAsState()
         val replyAttachment by viewModel.replyImage.state.collectAsState()
+        val uriHandler = LocalUriHandler.current
+        // Best-effort group permalink for the "report to app developer" email's post
+        // link (issue #409): neither FeedItem nor Post carries a Ravelry permalink of
+        // its own (see reportPostEmailUri), so this resolves it from whichever groups
+        // are already loaded in the feed. Null (e.g. state still Loading) just means the
+        // email body falls back to identifying details instead of a clickable link.
+        val groupPermalink = remember(topic.groupId, state) {
+            val groups = when (val s = state) {
+                is FeedState.Loaded -> s.groups
+                is FeedState.Refreshing -> s.stale.groups
+                else -> emptyList()
+            }
+            groups.firstOrNull { it.id == topic.groupId }?.permalink
+        }
         val currentUsername = when (val s = state) {
             is FeedState.Loaded -> s.user.username
             is FeedState.Refreshing -> s.stale.user.username
@@ -1142,6 +1158,17 @@ fun FeedScreen(
             editState = editState,
             onEditPost = { post, newBody -> viewModel.topicDetail.editPost(post, newBody) },
             onEditErrorShown = { viewModel.topicDetail.acknowledgeEditError() },
+            reportState = reportState,
+            onReportPost = { post -> viewModel.topicDetail.openReportDialog(post) },
+            onSubmitReport = { reasonId, escalate -> viewModel.topicDetail.submitReport(reasonId, escalate) },
+            onDismissReport = { viewModel.topicDetail.dismissReport() },
+            onReportSent = { viewModel.topicDetail.acknowledgeReportSent() },
+            // Secondary channel (issue #409): a private, pre-addressed email — same
+            // mechanism as AboutScreen's onReportChildSafetyConcern — that the user still
+            // has to send themself. Never auto-sent.
+            onReportToDeveloper = { post ->
+                uriHandler.openUri(reportPostEmailUri(topic, post, groupPermalink))
+            },
             attachment = replyAttachment,
             onImagePicked = { uri -> viewModel.attachReplyImage(uri) },
             onAttachmentInserted = { viewModel.replyImage.acknowledgeInserted() },
@@ -1592,6 +1619,12 @@ internal fun TopicDetailRoute(
     editState: EditState = EditState.Idle,
     onEditPost: (Post, String) -> Unit = { _, _ -> },
     onEditErrorShown: () -> Unit = {},
+    reportState: ReportState = ReportState.Idle,
+    onReportPost: (Post) -> Unit = {},
+    onSubmitReport: (reasonId: String, escalate: Boolean) -> Unit = { _, _ -> },
+    onDismissReport: () -> Unit = {},
+    onReportSent: () -> Unit = {},
+    onReportToDeveloper: (Post) -> Unit = {},
     attachment: ImageAttachmentState = ImageAttachmentState.Idle,
     onImagePicked: (String) -> Unit = {},
     onAttachmentInserted: () -> Unit = {},
@@ -1632,6 +1665,12 @@ internal fun TopicDetailRoute(
         editState = editState,
         onEditPost = onEditPost,
         onEditErrorShown = onEditErrorShown,
+        reportState = reportState,
+        onReportPost = onReportPost,
+        onSubmitReport = onSubmitReport,
+        onDismissReport = onDismissReport,
+        onReportSent = onReportSent,
+        onReportToDeveloper = onReportToDeveloper,
         attachment = attachment,
         onImagePicked = onImagePicked,
         onAttachmentInserted = onAttachmentInserted,
@@ -1669,6 +1708,34 @@ private fun ProjectPhotoPickerHost(viewModel: FeedScreenModel, target: ImageAtta
  */
 internal fun trackReplySent(repliedThisVisit: Boolean, replyState: ReplyState): Boolean =
     repliedThisVisit || replyState is ReplyState.Sent
+
+/**
+ * Builds the pre-addressed "report to app developer" mailto URI for [post] in [topic]
+ * (issue #409's secondary reporting channel — the same private-mailto mechanism as
+ * [com.myhobbyislearning.fibersocial.about.AboutScreen]'s onReportChildSafetyConcern,
+ * wired the same way in [FeedScreen] rather than triggering any network call itself).
+ *
+ * Neither [FeedItem] nor [Post] carries a Ravelry permalink of its own, so [groupPermalink]
+ * (resolved from whichever groups the feed already has loaded) is best-effort: when it's
+ * known, the body includes a real `www.ravelry.com/discuss/{group}/{topicId}` link
+ * (matching the URL shape `EventPageParser` scrapes back out of similar links elsewhere);
+ * when it's null, the body still identifies the post by group name, topic title, and post
+ * ID/author so the report is still actionable without one.
+ */
+internal fun reportPostEmailUri(topic: FeedItem, post: Post, groupPermalink: String?): String {
+    val subject = "FiberSocial post report: ${topic.title}".encodeURLParameter()
+    val link = groupPermalink?.let { "https://www.ravelry.com/discuss/$it/${topic.id}" }
+    val body = listOfNotNull(
+        "Please describe what's objectionable about this post.",
+        "",
+        "Group: ${topic.groupName}",
+        "Topic: ${topic.title}",
+        link?.let { "Topic link: $it" },
+        "Post author: ${post.user?.username ?: "unknown"}",
+        "Post ID: ${post.id}",
+    ).joinToString("\n").encodeURLParameter()
+    return "mailto:myhobbyislearning@gmail.com?subject=$subject&body=$body"
+}
 
 /**
  * Reorders [list] by moving the element at [from] to [to] (both must be valid indices).

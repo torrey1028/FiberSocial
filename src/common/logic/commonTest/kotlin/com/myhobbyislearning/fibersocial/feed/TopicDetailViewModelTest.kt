@@ -1670,4 +1670,290 @@ class TopicDetailViewModelTest {
         assertEquals(ScrollPosition(3, 10), vm.scrollPositionFor(1L))
         assertEquals(ScrollPosition(9, 40), vm.scrollPositionFor(2L))
     }
+
+    // --- Report a post (issue #409) ---
+
+    private val flagFormHtml = """
+        <form id="new_post_flag" action="/forum_posts/1/flag" method="post">
+        <input name="authenticity_token" type="hidden" value="tok-flag">
+        <select name="post_flag[reason]">
+        <option value="off_topic">Off topic</option>
+        <option value="spam">Spam</option>
+        </select>
+        <input type="checkbox" name="post_flag[escalate]" value="1">
+        </form>
+    """.trimIndent()
+
+    private fun reportRoutingClient(flagFormResponds: String = flagFormHtml) = routingApiClient { path ->
+        when {
+            path.contains("/posts.json") -> postsJson(1L, 2L)
+            path.contains("/flag") -> flagFormResponds
+            else -> TOKEN_PAGE_HTML
+        }
+    }
+
+    private val reportedPost = Post(id = 1L, user = RavelryUser(username = "someone"))
+
+    @Test
+    fun `openReportDialog fetches the flag form and transitions to Ready`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = TopicDetailViewModel(reportRoutingClient(), this)
+        vm.openReportDialog(reportedPost)
+        assertIs<ReportState.LoadingForm>(vm.reportState.value)
+        awaitChildren(coroutineContext[Job]!!)
+        val ready = assertIs<ReportState.Ready>(vm.reportState.value)
+        assertEquals(reportedPost, ready.post)
+        assertEquals(listOf("off_topic", "spam"), ready.form.reasons.map { it.id })
+        assertTrue(ready.form.supportsEscalate)
+        assertFalse(ready.submitting)
+    }
+
+    @Test
+    fun `openReportDialog failure reports LoadError without losing the post`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = TopicDetailViewModel(
+            routingApiClient { path ->
+                if (path.contains("/posts.json")) postsJson(1L) else error("Simulated flag-form failure")
+            },
+            this,
+        )
+        vm.openReportDialog(reportedPost)
+        awaitChildren(coroutineContext[Job]!!)
+        val loadError = assertIs<ReportState.LoadError>(vm.reportState.value)
+        assertEquals(reportedPost, loadError.post)
+        assertEquals("Simulated flag-form failure", loadError.message)
+    }
+
+    @Test
+    fun `openReportDialog session expiry signals sessionExpired and resets to Idle`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val vm = TopicDetailViewModel(sessionExpiredApiClient(), this)
+            vm.openReportDialog(reportedPost)
+            awaitChildren(coroutineContext[Job]!!)
+            assertIs<ReportState.Idle>(vm.reportState.value)
+            assertEquals(Unit, vm.sessionExpired.first())
+        }
+
+    @Test
+    fun `submitReport success transitions to Sent`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = TopicDetailViewModel(reportRoutingClient(), this)
+        vm.openReportDialog(reportedPost)
+        awaitChildren(coroutineContext[Job]!!)
+        vm.submitReport("spam", escalate = false)
+        assertTrue((vm.reportState.value as ReportState.Ready).submitting)
+        awaitChildren(coroutineContext[Job]!!)
+        assertIs<ReportState.Sent>(vm.reportState.value)
+    }
+
+    @Test
+    fun `submitReport validation failure keeps Ready with an error and clears submitting`() =
+        runTest(UnconfinedTestDispatcher()) {
+            // The GET (form fetch) and POST (submission) share a path, so — unlike
+            // reportRoutingClient's other uses above — this needs to distinguish them by
+            // method: the GET must still return a parseable form, only the POST rejects.
+            val engine = MockEngine { request ->
+                val path = request.url.encodedPath
+                val body = when {
+                    path.contains("/posts.json") -> postsJson(1L)
+                    path.contains("/flag") && request.method == HttpMethod.Post ->
+                        """<ul class="brief_error_messages"><li>Reason is required</li></ul>"""
+                    path.contains("/flag") -> flagFormHtml
+                    else -> TOKEN_PAGE_HTML
+                }
+                respond(
+                    body,
+                    HttpStatusCode.UnprocessableEntity.takeIf {
+                        path.contains("/flag") && request.method == HttpMethod.Post
+                    } ?: HttpStatusCode.OK,
+                    headersOf("Content-Type", ContentType.Text.Html.toString()),
+                )
+            }
+            val httpClient = HttpClient(engine) {
+                install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+            }
+            val vm = TopicDetailViewModel(RavelryApiClient(httpClient, FakeFeedTokenStorage()), this)
+            vm.openReportDialog(reportedPost)
+            awaitChildren(coroutineContext[Job]!!)
+            vm.submitReport("spam", escalate = false)
+            awaitChildren(coroutineContext[Job]!!)
+            val ready = assertIs<ReportState.Ready>(vm.reportState.value)
+            assertFalse(ready.submitting)
+            assertEquals("Reason is required", ready.error)
+        }
+
+    @Test
+    fun `submitReport session expiry signals sessionExpired and clears submitting`() =
+        runTest(UnconfinedTestDispatcher()) {
+            // Fetching the form succeeds normally; only the POST that submits it expires —
+            // distinct from openReportDialog's own session-expiry test above.
+            val engine = MockEngine { request ->
+                if (request.method == HttpMethod.Post && request.url.encodedPath.contains("/flag")) {
+                    throw SessionExpiredException("Session expired")
+                }
+                val body = when {
+                    request.url.encodedPath.contains("/posts.json") -> postsJson(1L)
+                    request.url.encodedPath.contains("/flag") -> flagFormHtml
+                    else -> TOKEN_PAGE_HTML
+                }
+                respond(body, HttpStatusCode.OK, headersOf("Content-Type", ContentType.Text.Html.toString()))
+            }
+            val httpClient = HttpClient(engine) {
+                install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+            }
+            val vm = TopicDetailViewModel(RavelryApiClient(httpClient, FakeFeedTokenStorage()), this)
+            vm.openReportDialog(reportedPost)
+            awaitChildren(coroutineContext[Job]!!)
+            vm.submitReport("spam", escalate = false)
+            awaitChildren(coroutineContext[Job]!!)
+            val ready = assertIs<ReportState.Ready>(vm.reportState.value)
+            assertFalse(ready.submitting)
+            assertEquals(Unit, vm.sessionExpired.first())
+        }
+
+    @Test
+    fun `submitReport failure with a generic exception keeps Ready with an error`() =
+        runTest(UnconfinedTestDispatcher()) {
+            // Distinct from the ValidationFailed-result and SessionExpiredException paths
+            // above: an ordinary thrown exception (e.g. a network failure) from flagPost.
+            val engine = MockEngine { request ->
+                when {
+                    request.method == HttpMethod.Post && request.url.encodedPath.contains("/flag") ->
+                        error("Simulated network failure")
+                    request.url.encodedPath.contains("/posts.json") ->
+                        respond(postsJson(1L), HttpStatusCode.OK,
+                            headersOf("Content-Type", ContentType.Application.Json.toString()))
+                    else -> respond(flagFormHtml, HttpStatusCode.OK, headersOf("Content-Type", "text/html"))
+                }
+            }
+            val httpClient = HttpClient(engine) {
+                install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+            }
+            val vm = TopicDetailViewModel(RavelryApiClient(httpClient, FakeFeedTokenStorage()), this)
+            vm.openReportDialog(reportedPost)
+            awaitChildren(coroutineContext[Job]!!)
+            vm.submitReport("spam", escalate = false)
+            awaitChildren(coroutineContext[Job]!!)
+            val ready = assertIs<ReportState.Ready>(vm.reportState.value)
+            assertFalse(ready.submitting)
+            assertEquals("Simulated network failure", ready.error)
+        }
+
+    @Test
+    fun `a report submission that outlives its topic leaves the new topic's dialog untouched`() =
+        runTest(UnconfinedTestDispatcher()) {
+            // Mirrors "a successful delete that outlives its topic leaves the new thread
+            // untouched": switching topics mid-submit must not resurrect (or clobber) a
+            // report dialog for a post that's no longer on screen.
+            val releaseSubmit = CompletableDeferred<Unit>()
+            val engine = MockEngine { request ->
+                when {
+                    request.method == HttpMethod.Post && request.url.encodedPath.contains("/flag") -> {
+                        releaseSubmit.await()
+                        respond("", HttpStatusCode.Found,
+                            headersOf(HttpHeaders.Location, "/discuss/some-group/1"))
+                    }
+                    request.url.encodedPath.contains("/flag") ->
+                        respond(flagFormHtml, HttpStatusCode.OK, headersOf("Content-Type", "text/html"))
+                    else ->
+                        respond(postsJson(1L), HttpStatusCode.OK,
+                            headersOf("Content-Type", ContentType.Application.Json.toString()))
+                }
+            }
+            val httpClient = HttpClient(engine) {
+                install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+            }
+            val vm = TopicDetailViewModel(RavelryApiClient(httpClient, FakeFeedTokenStorage()), this)
+            vm.load(1L)
+            awaitChildren(coroutineContext[Job]!!)
+            vm.openReportDialog(reportedPost)
+            awaitChildren(coroutineContext[Job]!!)
+            vm.submitReport("spam", escalate = false)
+
+            vm.load(2L)
+            vm.state.first { it is TopicDetailState.Loaded }
+            // load(2L) already reset reportState to Idle synchronously; assert that BEFORE
+            // releasing the stale submission below (awaiting all children while it's still
+            // parked on releaseSubmit would deadlock this test).
+            assertIs<ReportState.Idle>(vm.reportState.value)
+            releaseSubmit.complete(Unit)
+            awaitChildren(coroutineContext[Job]!!)
+
+            // The stale submission landing afterwards must not resurrect it as Sent.
+            assertIs<ReportState.Idle>(vm.reportState.value)
+        }
+
+    @Test
+    fun `submitReport is a no-op unless the dialog is Ready`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = TopicDetailViewModel(reportRoutingClient(), this)
+        vm.submitReport("spam", escalate = false)
+        awaitChildren(coroutineContext[Job]!!)
+        assertIs<ReportState.Idle>(vm.reportState.value)
+    }
+
+    @Test
+    fun `submitReport ignores a second call while already submitting`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = TopicDetailViewModel(reportRoutingClient(), this)
+        vm.openReportDialog(reportedPost)
+        awaitChildren(coroutineContext[Job]!!)
+        vm.submitReport("spam", escalate = false)
+        // Still submitting synchronously (UnconfinedTestDispatcher hasn't drained the
+        // launched coroutine's completion yet) — a second call here must be dropped.
+        vm.submitReport("off_topic", escalate = true)
+        awaitChildren(coroutineContext[Job]!!)
+        assertIs<ReportState.Sent>(vm.reportState.value)
+    }
+
+    @Test
+    fun `dismissReport resets to Idle`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = TopicDetailViewModel(reportRoutingClient(), this)
+        vm.openReportDialog(reportedPost)
+        awaitChildren(coroutineContext[Job]!!)
+        vm.dismissReport()
+        assertIs<ReportState.Idle>(vm.reportState.value)
+    }
+
+    @Test
+    fun `dismissReport is a no-op while a submission is in flight`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = TopicDetailViewModel(reportRoutingClient(), this)
+        vm.openReportDialog(reportedPost)
+        awaitChildren(coroutineContext[Job]!!)
+        vm.submitReport("spam", escalate = false)
+        vm.dismissReport()
+        awaitChildren(coroutineContext[Job]!!)
+        // The submission still completed to Sent — dismissReport must not have
+        // interrupted it or forced it back to Idle mid-flight.
+        assertIs<ReportState.Sent>(vm.reportState.value)
+    }
+
+    @Test
+    fun `acknowledgeReportSent resets Sent back to Idle`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = TopicDetailViewModel(reportRoutingClient(), this)
+        vm.openReportDialog(reportedPost)
+        awaitChildren(coroutineContext[Job]!!)
+        vm.submitReport("spam", escalate = false)
+        awaitChildren(coroutineContext[Job]!!)
+        assertIs<ReportState.Sent>(vm.reportState.value)
+        vm.acknowledgeReportSent()
+        assertIs<ReportState.Idle>(vm.reportState.value)
+    }
+
+    @Test
+    fun `acknowledgeReportSent does not clear a Ready state`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = TopicDetailViewModel(reportRoutingClient(), this)
+        vm.openReportDialog(reportedPost)
+        awaitChildren(coroutineContext[Job]!!)
+        vm.acknowledgeReportSent()
+        assertIs<ReportState.Ready>(vm.reportState.value)
+    }
+
+    @Test
+    fun `loading a different topic resets an open report dialog`() = runTest(UnconfinedTestDispatcher()) {
+        val vm = TopicDetailViewModel(reportRoutingClient(), this)
+        vm.load(1L)
+        awaitChildren(coroutineContext[Job]!!)
+        vm.openReportDialog(reportedPost)
+        awaitChildren(coroutineContext[Job]!!)
+        assertIs<ReportState.Ready>(vm.reportState.value)
+
+        vm.load(2L)
+        assertIs<ReportState.Idle>(vm.reportState.value)
+    }
 }

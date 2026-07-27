@@ -1093,6 +1093,77 @@ class RavelryApiClient(
         }
     }
 
+    /**
+     * Fetches Ravelry's "report a post" flag form for [postId] (issue #409 — Apple
+     * Guideline 1.2's required "flag objectionable content" mechanism). There is no
+     * flag/report API — this scrapes the website's own form (see [FlagPostForm] for the
+     * URL-shape assumption this makes, unverified against a real session).
+     *
+     * @throws ForbiddenException on 403 — valid session, but no permission for this page.
+     * @throws SessionExpiredException if the session cookie is rejected (401, or a
+     *   redirect off the expected path — Ravelry sends expired sessions to the login page).
+     * @throws IllegalStateException on any other non-2xx response, or when the page
+     *   loaded but didn't contain the expected form.
+     */
+    suspend fun getFlagPostForm(postId: Long): FlagPostForm {
+        val html = scrapeHtml(
+            "$WWW_URL/forum_posts/$postId/flag",
+            "/forum_posts/",
+            "Flag form for post $postId",
+        )
+        return FlagPostFormParser.parse(postId, html)
+            ?: error("Flag form for post $postId didn't contain the expected form")
+    }
+
+    /**
+     * Submits a report ("flag") of the post [form] was fetched for, reaching the post's
+     * group's volunteer moderators (and, when [escalate] is set, Ravelry staff too — see
+     * [FlagPostForm.supportsEscalate]). Issue #409's primary reporting channel.
+     *
+     * PROTOCOL ASSUMPTION (unverified — see [FlagPostForm]'s KDoc and the PR's "Needs
+     * on-device verification" section): a plain POST (Rails' default "create" verb for a
+     * new sub-resource, unlike the `_method=put/delete` tunnel [deletePost]/[joinGroup]
+     * use for updating/removing an existing one) to the same
+     * `/forum_posts/{postId}/flag` path the form was fetched from, with
+     * `post_flag[reason]`/`post_flag[escalate]` fields. Success/failure detection mirrors
+     * [deletePost]: Ktor doesn't follow redirects for POST, so a login-page redirect
+     * (expired session) and an accepted report's own redirect both surface as a 3xx here
+     * — matched on the redirect path, same as every other website write in this client.
+     *
+     * @throws ForbiddenException on 403.
+     * @throws SessionExpiredException if the session cookie is rejected.
+     */
+    suspend fun flagPost(form: FlagPostForm, reasonId: String, escalate: Boolean): FlagPostResult {
+        val cookie = sessionCookie()
+        val response = httpClient.submitForm(
+            url = "$WWW_URL/forum_posts/${form.postId}/flag",
+            formParameters = parameters {
+                append("authenticity_token", form.authenticityToken)
+                append("post_flag[reason]", reasonId)
+                if (escalate) append("post_flag[escalate]", "1")
+            },
+        ) {
+            header(HttpHeaders.Cookie, cookie)
+        }
+        println("FiberSocial: flagPost(postId=${form.postId}, reason=$reasonId, escalate=$escalate) -> ${response.status}")
+        val redirectPath = response.headers[HttpHeaders.Location]
+            ?.let { runCatching { Url(it).encodedPath }.getOrDefault(it) }
+            .orEmpty()
+        if (redirectPath.startsWith("/login") || redirectPath.startsWith("/account")) {
+            throw SessionExpiredException("Flag of post ${form.postId} redirected to login")
+        }
+        if (response.status == HttpStatusCode.Forbidden) {
+            throw ForbiddenException(forbiddenMessage(response))
+        }
+        if (response.status.isSuccess() || response.status.value in 300..399) {
+            return FlagPostResult.Success
+        }
+        val errors = EventCreateResponseParser.parseErrors(response.bodyAsText())
+        return FlagPostResult.ValidationFailed(
+            errors.ifEmpty { listOf("Ravelry rejected the report (HTTP ${response.status.value}).") },
+        )
+    }
+
     /** Session-stable CSRF token, cached after the first scrape (see [fetchAuthenticityToken]). */
     private var cachedAuthenticityToken: String? = null
 
