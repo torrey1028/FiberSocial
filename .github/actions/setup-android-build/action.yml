@@ -2,8 +2,9 @@ name: Set up Android build environment
 description: >-
   Installs the JDK, materializes src/platform/android/local.properties (SDK
   path, Ravelry OAuth credentials, and optionally the release signing config),
-  and configures Gradle. Shared by android-build.yml, release.yml and tests.yml
-  so a fix to the JDK/secret handling reaches every workflow at once (#274).
+  and configures Gradle. Shared by android-build.yml, release-android.yml,
+  release-ios.yml and tests.yml so a fix to the JDK/secret handling reaches
+  every workflow at once (#274).
 
 # The `secrets` context is NOT available inside a composite action, so every
 # secret has to be handed in explicitly by the caller as an input. All of them

@@ -1,6 +1,9 @@
 #!/bin/bash
-# Tags and pushes a release version, triggering .github/workflows/release.yml
-# to build the signed APK and publish it as a GitHub Release.
+# Tags and pushes a release version, triggering release-android.yml and
+# release-ios.yml to build signed release-candidate builds, run the
+# automated test suites against them, and push them to a QA testing channel
+# (Play Console testing track / TestFlight external group). Going fully live
+# needs a reviewer's approval afterward — see the printed instructions below.
 #
 # Usage: scripts/release.sh 1.2.0   (or v1.2.0 - the "v" prefix is optional)
 set -e
@@ -74,7 +77,15 @@ if ! git push origin "$TAG"; then
 fi
 
 echo ""
-echo "Pushed $TAG. This triggers the Release workflow, which builds the signed"
-echo "APK and publishes it at:"
-echo "  https://github.com/torrey1028/FiberSocial/releases/tag/$TAG"
-echo "  https://github.com/torrey1028/FiberSocial/releases/latest/download/app-release.apk"
+echo "Pushed $TAG. This triggers the Release Android and Release iOS workflows,"
+echo "which build signed release-candidate builds, run the automated test suites"
+echo "against them, and push them to a QA testing channel:"
+echo "  https://github.com/torrey1028/FiberSocial/releases/tag/$TAG  (marked as a pre-release until promoted)"
+echo "  https://github.com/torrey1028/FiberSocial/actions/workflows/release-android.yml"
+echo "  https://github.com/torrey1028/FiberSocial/actions/workflows/release-ios.yml"
+echo ""
+echo "This is NOT live yet. After manual QA passes against the release-candidate"
+echo "build (see docs/android-release-qa-checklist.md / docs/ios-device-checklist.md),"
+echo "approve the android-release / ios-release environment on each run's 'promote'"
+echo "job to push to production and flip the GitHub Release live. iOS App Store"
+echo "submission itself stays a manual App Store Connect step even after approval."
