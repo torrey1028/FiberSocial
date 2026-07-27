@@ -24,6 +24,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import com.myhobbyislearning.fibersocial.app.ForegroundActivations
 import com.myhobbyislearning.fibersocial.auth.AuthState
+import com.myhobbyislearning.fibersocial.debug.DebugFlags
 import com.myhobbyislearning.fibersocial.feed.FeedAndroidViewModel
 import androidx.compose.runtime.CompositionLocalProvider
 import com.myhobbyislearning.fibersocial.feed.FeedScreen
@@ -63,6 +64,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Before anything can log: DebugFlags defaults to "not a debug build", so a
+        // missed call here fails closed (nothing sensitive logged) rather than open
+        // (issue #395). Same signal that gates the debug panel below.
+        DebugFlags.initDebugBuild(BuildConfig.DEBUG)
         // targetSdk 35+ enforces edge-to-edge with no opt-out; this call makes that
         // consistent from minSdk 26 up, instead of only on 35+ devices. Per-screen
         // system-bar icon contrast is still handled dynamically in SystemBarStyle,
@@ -112,6 +117,15 @@ class MainActivity : ComponentActivity() {
                         onAuthComplete = { code, state, cookie ->
                             showWebView = false
                             authVm.handleAuthCode(code, state, cookie)
+                        },
+                        // Leave the web view and report it, rather than sitting on a
+                        // dead authorize page (issue #394). Routed through failLogin so
+                        // an authorization-server refusal lands in the same place as the
+                        // state-mismatch rejection: AuthState.Error on the login screen,
+                        // which already offers a retry.
+                        onAuthError = { message ->
+                            showWebView = false
+                            authVm.auth.failLogin(message)
                         },
                         onBack = { showWebView = false },
                     )
