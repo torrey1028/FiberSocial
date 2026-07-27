@@ -70,6 +70,11 @@ jobs:
           RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
           RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
           PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          # Same reasoning as the setup-android-build composite action's
+          # "Write local.properties" step: route through env rather than
+          # ${{ }} inside the script, so a value containing shell
+          # metacharacters can't inject commands here.
+          PLAY_TESTING_TRACK: ${{ vars.PLAY_TESTING_TRACK }}
         run: |
           missing=""
           [ -z "$RAVELRY_CLIENT_ID" ] && missing="$missing RAVELRY_CLIENT_ID"
@@ -83,7 +88,7 @@ jobs:
             echo "::error::Missing required repo secret(s):$missing. Add them at Settings > Secrets and variables > Actions before pushing a release tag."
             exit 1
           fi
-          if [ -z "${{ vars.PLAY_TESTING_TRACK }}" ]; then
+          if [ -z "$PLAY_TESTING_TRACK" ]; then
             echo "::error::Missing required repo variable PLAY_TESTING_TRACK (the Play Console track alias to push release candidates to, e.g. 'internal'). Add it at Settings > Secrets and variables > Actions > Variables."
             exit 1
           fi
@@ -176,11 +181,15 @@ jobs:
       # below — this summary just tells the approving reviewer what to check
       # before they click Approve.
       - name: Write QA summary
+        env:
+          # Same reasoning as "Verify release secrets are configured": route
+          # through env rather than ${{ }} inside the script.
+          PLAY_TESTING_TRACK: ${{ vars.PLAY_TESTING_TRACK }}
         run: |
           {
             echo "## Release candidate $GITHUB_REF_NAME is ready for QA"
             echo ""
-            echo "- Install from the Play Console **${{ vars.PLAY_TESTING_TRACK }}** testing track, or download the prerelease APK from the [GitHub Release]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$GITHUB_REF_NAME)."
+            echo "- Install from the Play Console **$PLAY_TESTING_TRACK** testing track, or download the prerelease APK from the [GitHub Release]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$GITHUB_REF_NAME)."
             echo "- Run through [docs/android-release-qa-checklist.md]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/blob/main/docs/android-release-qa-checklist.md)."
             echo "- Once QA passes, approve the \`android-release\` environment on the \`promote\` job of this run to push to production and flip the GitHub Release live."
           } >> "$GITHUB_STEP_SUMMARY"
@@ -188,9 +197,11 @@ jobs:
   promote:
     needs: build-rc
     runs-on: ubuntu-latest
-    concurrency:
-      group: release-android
-      cancel-in-progress: false
+    # No concurrency group here (unlike build-rc): this job can sit paused for
+    # however long manual QA/approval takes, and needs.build-rc.outputs already
+    # scopes it to this run's own RC — sharing build-rc's `release-android`
+    # group would make a still-pending approval block every later run's
+    # build-rc (a real release fix-forward) from even starting.
     permissions:
       contents: write
     # Required reviewers on this environment (Settings > Environments >
@@ -214,12 +225,18 @@ jobs:
       # its action.yml) always requires a bundle file per upload. What matters
       # is that these are the *exact same bytes* built and tested in build-rc,
       # not a fresh build from source — no new compile happens here.
+      #
+      # build-rc's upload step gives actions/upload-artifact two paths at
+      # once (the AAB and the APK); when given multiple paths, that action
+      # roots the artifact at their least common ancestor
+      # (src/platform/android/app/build/outputs), so the AAB extracts here to
+      # rc-artifacts/bundle/release/app-release.aab, not rc-artifacts/app-release.aab.
       - name: Promote AAB to production track
         uses: r0adkll/upload-google-play@v1
         with:
           serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
           packageName: com.myhobbyislearning.fibersocial
-          releaseFiles: rc-artifacts/app-release.aab
+          releaseFiles: rc-artifacts/bundle/release/app-release.aab
           track: production
           status: completed
 
