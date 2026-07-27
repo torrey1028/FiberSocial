@@ -653,7 +653,7 @@ class RavelryApiClientTest {
     }
 
     @Test
-    fun `on 403 with invalid OAuth token body retries after refresh, like a 401`() = runTest {
+    fun `on 403 with invalid OAuth token body retries after refresh same as a 401`() = runTest {
         // Ravelry's OAuth gateway rejects an invalid or expired Bearer token with a 403
         // and this exact plain-text body (confirmed against the live API), not the 401
         // the OAuth spec would suggest. It must be treated as a session-expiry signal and
