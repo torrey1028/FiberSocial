@@ -245,8 +245,19 @@ class RavelryApiClient(
     // as `403` with this exact plain-text body (content-type text/html), issued by
     // Ravelry's OAuth gateway before the request ever reaches the JSON API layer — unlike
     // a genuine in-app permission 403, which returns a JSON `errors` body instead.
+    //
+    // Matches the full "oauth 2 token is not valid" phrase, not just "oauth 2 token":
+    // a genuine permission 403 for a stale token *scope* (issue #367's
+    // withMessagingForbiddenMessage cause (b) — a token minted before message-write was
+    // added to SCOPE) is exactly the kind of body that could plausibly also mention
+    // "OAuth 2 token" (e.g. "this OAuth 2 token doesn't have the required scope") without
+    // being the gateway's invalid-token case. Refreshing can't fix a scope problem, so
+    // misclassifying that as session expiry would route it into the full forced-logout
+    // flow instead of withMessagingForbiddenMessage's friendly in-context message. The
+    // narrower phrase is what the live-confirmed gateway body actually contains, so it
+    // stays a precise match rather than a broader, riskier one.
     private fun isInvalidOAuthTokenBody(bodyText: String): Boolean =
-        bodyText.contains("oauth 2 token", ignoreCase = true)
+        bodyText.contains("oauth 2 token is not valid", ignoreCase = true)
 
     private suspend fun tryRefresh(tokenUsedForRequest: String) {
         val doRefresh = refreshToken ?: throw SessionExpiredException("Session expired")
