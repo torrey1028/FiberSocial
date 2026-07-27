@@ -653,6 +653,66 @@ class RavelryApiClientTest {
     }
 
     @Test
+    fun `on 403 with invalid OAuth token body retries after refresh, like a 401`() = runTest {
+        // Ravelry's OAuth gateway rejects an invalid or expired Bearer token with a 403
+        // and this exact plain-text body (confirmed against the live API), not the 401
+        // the OAuth spec would suggest. It must be treated as a session-expiry signal and
+        // retried after a refresh, same as a real 401 — not misclassified as a permission
+        // problem a refresh can't fix.
+        var callCount = 0
+        val engine = MockEngine {
+            callCount++
+            if (callCount == 1) {
+                respond("403 Forbidden. OAuth 2 token is not valid.", HttpStatusCode.Forbidden,
+                    headersOf("Content-Type", ContentType.Text.Html.toString()))
+            } else {
+                respond(CURRENT_USER_JSON, HttpStatusCode.OK,
+                    headersOf("Content-Type", ContentType.Application.Json.toString()))
+            }
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        var refreshCalled = false
+        val client = RavelryApiClient(httpClient, FakeFeedTokenStorage(),
+            refreshToken = { refreshCalled = true })
+        val user = client.getCurrentUser()
+        assertEquals("yarnie", user.username)
+        assertTrue(refreshCalled)
+        assertEquals(2, callCount)
+    }
+
+    @Test
+    fun `on 403 with invalid OAuth token body when retry still fails throws SessionExpiredException`() = runTest {
+        val engine = MockEngine {
+            respond("403 Forbidden. OAuth 2 token is not valid.", HttpStatusCode.Forbidden,
+                headersOf("Content-Type", ContentType.Text.Html.toString()))
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val client = RavelryApiClient(httpClient, FakeFeedTokenStorage(),
+            refreshToken = { /* refresh succeeds, but retry still fails */ })
+        assertFailsWith<SessionExpiredException> {
+            client.getCurrentUser()
+        }
+    }
+
+    @Test
+    fun `on 403 with invalid OAuth token body and no refresh callback throws SessionExpiredException`() = runTest {
+        val engine = MockEngine {
+            respond("403 Forbidden. OAuth 2 token is not valid.", HttpStatusCode.Forbidden,
+                headersOf("Content-Type", ContentType.Text.Html.toString()))
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        assertFailsWith<SessionExpiredException> {
+            RavelryApiClient(httpClient, FakeFeedTokenStorage()).getCurrentUser()
+        }
+    }
+
+    @Test
     fun `on 401 when retry also returns 401 throws SessionExpiredException`() = runTest {
         val engine = MockEngine { respond("", HttpStatusCode.Unauthorized, headersOf()) }
         val httpClient = HttpClient(engine) {
