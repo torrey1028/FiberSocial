@@ -1,0 +1,286 @@
+name: iOS Debug Build
+
+# On-demand (workflow_dispatch only, no automatic trigger — every run costs a
+# macOS runner, the most expensive tier). Run it from whatever branch you want
+# to test on a physical device: `gh workflow run ios-debug-build.yml --ref
+# <branch>`, or use the "Run workflow" button in the Actions tab and pick the
+# branch there.
+#
+# Builds a Debug-configuration archive, signs it Ad Hoc (same Apple
+# Distribution certificate release.yml's ios-release job already uses — Ad
+# Hoc profiles are signed with a Distribution cert, just scoped to specific
+# registered devices, so no new certificate is needed), and publishes an
+# over-the-air install page via GitHub Pages: open the page's link in Safari
+# on a registered iPhone and tap Install, no cable and no Mac required.
+#
+# One-time setup this needs that release.yml's ios-release job doesn't
+# already have — see docs/ios-debug-builds.md:
+#   - Your iPhone's UDID registered as a Device in the Apple Developer portal.
+#   - An Ad Hoc provisioning profile for com.myhobbyislearning.fibersocial
+#     covering that device, base64'd into the IOS_ADHOC_PROVISIONING_PROFILE_BASE64
+#     repo secret.
+on:
+  workflow_dispatch:
+
+# Shares release.yml's ios-release job's macOS toolchain setup pattern, but
+# is otherwise independent — no test suites, no App Store Connect upload, no
+# promotion gate. This is a developer convenience tool, not a release artifact.
+jobs:
+  build-and-publish:
+    runs-on: macos-15
+    # A distinct group from pages.yml's own "pages" group, not the same one:
+    # this job costs a macOS runner (the most expensive tier) and can run for
+    # several minutes, while pages.yml's legal-docs deploy is a cheap ubuntu
+    # job. Sharing a group with cancel-in-progress would let an unrelated
+    # legal/*.html push cancel an in-flight (expensive) debug build. Each
+    # side's "carry the other's latest output forward" step already handles
+    # the case where both happen to deploy around the same time, so nothing
+    # here needs to serialize with pages.yml — only with itself, so a second
+    # dispatch doesn't run concurrently with a still-building first one.
+    concurrency:
+      group: ios-debug-build
+      cancel-in-progress: true
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # See the twin comment in tests.yml's common-ios-tests job.
+      - name: Select Xcode 26
+        run: |
+          sudo xcode-select -s "$(ls -d /Applications/Xcode_26*.app | sort -V | tail -1)"
+          xcodebuild -version
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: "temurin"
+
+      # See the twin comment in release.yml's ios-release job: the build
+      # applies AGP even for the composeApp framework build, and macOS
+      # runners don't ship an Android SDK.
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: "platforms;android-34 platforms;android-36"
+
+      - name: Verify secrets are configured
+        env:
+          IOS_DIST_CERTIFICATE_BASE64: ${{ secrets.IOS_DIST_CERTIFICATE_BASE64 }}
+          IOS_DIST_CERTIFICATE_PASSWORD: ${{ secrets.IOS_DIST_CERTIFICATE_PASSWORD }}
+          IOS_ADHOC_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_ADHOC_PROVISIONING_PROFILE_BASE64 }}
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+          RAVELRY_CLIENT_ID: ${{ secrets.RAVELRY_CLIENT_ID }}
+          RAVELRY_CLIENT_SECRET: ${{ secrets.RAVELRY_CLIENT_SECRET }}
+        run: |
+          missing=""
+          [ -z "$IOS_DIST_CERTIFICATE_BASE64" ] && missing="$missing IOS_DIST_CERTIFICATE_BASE64"
+          [ -z "$IOS_DIST_CERTIFICATE_PASSWORD" ] && missing="$missing IOS_DIST_CERTIFICATE_PASSWORD"
+          [ -z "$IOS_ADHOC_PROVISIONING_PROFILE_BASE64" ] && missing="$missing IOS_ADHOC_PROVISIONING_PROFILE_BASE64"
+          [ -z "$APPLE_TEAM_ID" ] && missing="$missing APPLE_TEAM_ID(variable)"
+          [ -z "$RAVELRY_CLIENT_ID" ] && missing="$missing RAVELRY_CLIENT_ID"
+          [ -z "$RAVELRY_CLIENT_SECRET" ] && missing="$missing RAVELRY_CLIENT_SECRET"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing required repo secret(s)/variable(s):$missing. See docs/ios-debug-builds.md for setup."
+            exit 1
+          fi
+
+      - name: Write Config.local.xcconfig
+        env:
+          RAVELRY_CLIENT_ID: ${{ secrets.RAVELRY_CLIENT_ID }}
+          RAVELRY_CLIENT_SECRET: ${{ secrets.RAVELRY_CLIENT_SECRET }}
+        run: |
+          {
+            printf 'RAVELRY_CLIENT_ID = %s\n' "$RAVELRY_CLIENT_ID"
+            printf 'RAVELRY_CLIENT_SECRET = %s\n' "$RAVELRY_CLIENT_SECRET"
+          } > src/platform/ios/Config.local.xcconfig
+
+      # A temporary keychain scoped to this job — see the twin comment in
+      # release.yml's ios-release job.
+      - name: Import distribution certificate
+        env:
+          IOS_DIST_CERTIFICATE_BASE64: ${{ secrets.IOS_DIST_CERTIFICATE_BASE64 }}
+          IOS_DIST_CERTIFICATE_PASSWORD: ${{ secrets.IOS_DIST_CERTIFICATE_PASSWORD }}
+        run: |
+          KEYCHAIN_PW="$(openssl rand -base64 24)"
+          KEYCHAIN_PATH="$RUNNER_TEMP/ci-signing.keychain-db"
+          echo "$IOS_DIST_CERTIFICATE_BASE64" | base64 -d > "$RUNNER_TEMP/dist_cert.p12"
+          security create-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN_PATH"
+          security import "$RUNNER_TEMP/dist_cert.p12" -k "$KEYCHAIN_PATH" -P "$IOS_DIST_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PW" "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | tr -d '"')
+
+      - name: Install Ad Hoc provisioning profile
+        env:
+          IOS_ADHOC_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_ADHOC_PROVISIONING_PROFILE_BASE64 }}
+        run: |
+          PROFILE_PATH="$RUNNER_TEMP/profile.mobileprovision"
+          echo "$IOS_ADHOC_PROVISIONING_PROFILE_BASE64" | base64 -d > "$PROFILE_PATH"
+          PROFILE_UUID="$(security cms -D -i "$PROFILE_PATH" | plutil -extract UUID raw -o - -)"
+          mkdir -p ~/Library/MobileDevice/"Provisioning Profiles"
+          cp "$PROFILE_PATH" ~/Library/MobileDevice/"Provisioning Profiles"/"$PROFILE_UUID".mobileprovision
+          echo "profile_uuid=$PROFILE_UUID" >> "$GITHUB_OUTPUT"
+        id: profile
+
+      # CFBundleVersion just needs to be a number that identifies this build;
+      # ad hoc/OTA installs aren't subject to TestFlight's strictly-increasing
+      # build-number rule, so the run number is enough.
+      - name: Archive (Debug configuration)
+        env:
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+        run: |
+          xcodebuild -project src/platform/ios/FiberSocial.xcodeproj -scheme FiberSocial \
+            -configuration Debug -archivePath "$RUNNER_TEMP/FiberSocial.xcarchive" \
+            -destination 'generic/platform=iOS' \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="Apple Distribution" \
+            DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
+            PROVISIONING_PROFILE="${{ steps.profile.outputs.profile_uuid }}" \
+            CURRENT_PROJECT_VERSION="$GITHUB_RUN_NUMBER" \
+            archive
+
+      - name: Write exportOptions.plist
+        env:
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+        run: |
+          cat > "$RUNNER_TEMP/exportOptions.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key>
+            <string>ad-hoc</string>
+            <key>teamID</key>
+            <string>$APPLE_TEAM_ID</string>
+            <key>signingStyle</key>
+            <string>manual</string>
+            <key>provisioningProfiles</key>
+            <dict>
+              <key>com.myhobbyislearning.fibersocial</key>
+              <string>${{ steps.profile.outputs.profile_uuid }}</string>
+            </dict>
+          </dict>
+          </plist>
+          PLIST
+
+      - name: Export archive
+        run: |
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/FiberSocial.xcarchive" \
+            -exportPath "$RUNNER_TEMP/export" \
+            -exportOptionsPlist "$RUNNER_TEMP/exportOptions.plist"
+
+      # The itms-services OTA protocol needs a manifest.plist naming where to
+      # fetch the ipa, plus a bundle-identifier/version/title. Both files end
+      # up at a fixed URL under this repo's Pages site (see the deploy step
+      # below), so the manifest can reference that URL directly.
+      - name: Write manifest.plist
+        run: |
+          IPA_URL="https://torrey1028.github.io/FiberSocial/ios-debug/app.ipa"
+          cat > "$RUNNER_TEMP/manifest.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>items</key>
+            <array>
+              <dict>
+                <key>assets</key>
+                <array>
+                  <dict>
+                    <key>kind</key>
+                    <string>software-package</string>
+                    <key>url</key>
+                    <string>$IPA_URL</string>
+                  </dict>
+                </array>
+                <key>metadata</key>
+                <dict>
+                  <key>bundle-identifier</key>
+                  <string>com.myhobbyislearning.fibersocial</string>
+                  <key>bundle-version</key>
+                  <string>$GITHUB_RUN_NUMBER</string>
+                  <key>kind</key>
+                  <string>software</string>
+                  <key>title</key>
+                  <string>FiberSocial (Debug)</string>
+                </dict>
+              </dict>
+            </array>
+          </dict>
+          </plist>
+          PLIST
+
+      - name: Write install page
+        run: |
+          cat > "$RUNNER_TEMP/install.html" <<HTML
+          <!DOCTYPE html>
+          <html>
+          <head><meta charset="utf-8"><title>FiberSocial debug build</title></head>
+          <body>
+            <h1>FiberSocial debug build</h1>
+            <p>Build #$GITHUB_RUN_NUMBER from commit ${GITHUB_SHA:0:7}, built $(date -u +%Y-%m-%dT%H:%M:%SZ).</p>
+            <p>Open this page in <strong>Safari</strong> on a registered iPhone (this link
+            won't work in Chrome or any other browser) and tap the button below.</p>
+            <p><a href="itms-services://?action=download-manifest&url=https://torrey1028.github.io/FiberSocial/ios-debug/manifest.plist">Install FiberSocial (Debug)</a></p>
+            <p>If nothing happens: your iPhone's UDID must be registered and included in
+            the Ad Hoc provisioning profile this build was signed with. See
+            docs/ios-debug-builds.md for setup and troubleshooting.</p>
+          </body>
+          </html>
+          HTML
+
+      # Deploys the full Pages site, not just this build's output — legal/ has
+      # to come along too since a Pages deployment replaces the entire site,
+      # it doesn't merge with what's already live. pages.yml (triggered by
+      # legal/ changes) mirrors this in reverse: it pulls the latest
+      # successful run of *this* workflow forward so a legal-only redeploy
+      # doesn't wipe the debug build off the live site.
+      - name: Prepare site
+        run: |
+          mkdir -p _site/ios-debug
+          cp legal/*.html _site/
+          cp legal/privacy-policy.html _site/index.html
+          cp legal/favicon.png _site/
+          cp "$RUNNER_TEMP/export/FiberSocial.ipa" _site/ios-debug/app.ipa
+          cp "$RUNNER_TEMP/manifest.plist" _site/ios-debug/manifest.plist
+          cp "$RUNNER_TEMP/install.html" _site/ios-debug/index.html
+
+      # Also uploaded as a plain (non-Pages) artifact so pages.yml can pull it
+      # forward on a later legal-only redeploy — see the comment above and the
+      # twin comment in pages.yml. Deliberately a separate artifact type from
+      # actions/upload-pages-artifact below: that one is Pages-deployment-only
+      # and isn't fetchable via `gh run download`.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios-debug-ota
+          path: _site/ios-debug
+          retention-days: 90
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+      - name: Write summary
+        run: |
+          {
+            echo "## Debug build #$GITHUB_RUN_NUMBER published"
+            echo ""
+            echo "Open on your registered iPhone, in Safari:"
+            echo "https://torrey1028.github.io/FiberSocial/ios-debug/"
+          } >> "$GITHUB_STEP_SUMMARY"

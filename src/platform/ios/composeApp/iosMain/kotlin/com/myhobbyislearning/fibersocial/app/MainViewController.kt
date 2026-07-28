@@ -14,11 +14,13 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.window.ComposeUIViewController
 import coil3.ImageLoader
 import coil3.SingletonImageLoader
 import coil3.network.ktor2.KtorNetworkFetcherFactory
 import com.myhobbyislearning.fibersocial.auth.AuthState
+import com.myhobbyislearning.fibersocial.debug.DebugFlags
 import com.myhobbyislearning.fibersocial.auth.KeyValueTokenStorage
 import com.myhobbyislearning.fibersocial.feed.FeedScreen
 import com.myhobbyislearning.fibersocial.feed.LocalProjectLinkOpener
@@ -30,14 +32,20 @@ import com.myhobbyislearning.fibersocial.login.WebViewLoginScreen
 import com.myhobbyislearning.fibersocial.moderation.KeyValueBlockedUsersStore
 import com.myhobbyislearning.fibersocial.notifications.KeyValueMutedTopicsStore
 import com.myhobbyislearning.fibersocial.notifications.KeyValueNotificationSettingsStore
+import com.myhobbyislearning.fibersocial.settings.CURRENT_TERMS_VERSION
+import com.myhobbyislearning.fibersocial.settings.KeyValueTermsAcceptanceStore
 import com.myhobbyislearning.fibersocial.settings.KeyValueThemeSettingsStore
+import com.myhobbyislearning.fibersocial.settings.TermsAcceptance
 import com.myhobbyislearning.fibersocial.settings.ThemeMode
 import com.myhobbyislearning.fibersocial.settings.ThemeSettings
+import com.myhobbyislearning.fibersocial.settings.shouldShowTermsGate
 import com.myhobbyislearning.fibersocial.storage.BLOCKED_USERS_STORE_NAME
 import com.myhobbyislearning.fibersocial.storage.NOTIFICATION_SETTINGS_STORE_NAME
 import com.myhobbyislearning.fibersocial.storage.NOTIFICATION_STATE_STORE_NAME
+import com.myhobbyislearning.fibersocial.storage.TERMS_ACCEPTANCE_STORE_NAME
 import com.myhobbyislearning.fibersocial.storage.THEME_SETTINGS_STORE_NAME
 import com.myhobbyislearning.fibersocial.storage.NsUserDefaultsKeyValueStore
+import com.myhobbyislearning.fibersocial.terms.TermsGateScreen
 import com.myhobbyislearning.fibersocial.ui.FiberSocialTheme
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.darwin.Darwin
@@ -55,7 +63,12 @@ import platform.UIKit.UIViewController
  * The app's Compose root, embedded by the SwiftUI host (src/platform/ios). The iOS
  * counterpart of `MainActivity.onCreate/setContent`.
  */
+@OptIn(ExperimentalNativeApi::class)
 fun MainViewController(): UIViewController {
+    // Before anything can log: DebugFlags defaults to "not a debug build", so a missed
+    // call here fails closed (nothing sensitive logged) rather than open (issue #395).
+    // Same signal that gates the debug panel below.
+    DebugFlags.initDebugBuild(Platform.isDebugBinary)
     // App-lifetime scope: a single-window iOS app has no Activity recreation, so the
     // models simply live as long as the process (the ViewModel-shaped equivalent of
     // `by viewModels()` retention).
@@ -128,6 +141,16 @@ private fun IosApp(authModel: IosAuthModel, feedModel: IosFeedModel) {
         val authState by authModel.auth.state.collectAsState()
         var showWebView by remember { mutableStateOf(false) }
 
+        // Terms-of-use gate (issue #408, Apple Guideline 1.2) — same shape as MainActivity.
+        // null while loading; the auth-state check below (not this store) decides what
+        // renders during that gap, so an already-authenticated user is never blocked on it.
+        val termsStore = remember {
+            KeyValueTermsAcceptanceStore(NsUserDefaultsKeyValueStore(TERMS_ACCEPTANCE_STORE_NAME))
+        }
+        var termsAcceptance by remember { mutableStateOf<TermsAcceptance?>(null) }
+        LaunchedEffect(Unit) { if (termsAcceptance == null) termsAcceptance = termsStore.load() }
+        val termsScope = rememberCoroutineScope()
+
         // Checked ahead of the AuthState when-branch below so a retry from
         // AuthState.Error re-opens the WebView (issue #149) — same as MainActivity.
         if (showWebView) {
@@ -138,7 +161,25 @@ private fun IosApp(authModel: IosAuthModel, feedModel: IosFeedModel) {
                     showWebView = false
                     authModel.handleAuthCode(code, state, cookie)
                 },
+                // Leave the web view and report it, rather than sitting on a dead
+                // authorize page (issue #394) — same routing as MainActivity.
+                onAuthError = { message ->
+                    showWebView = false
+                    authModel.auth.failLogin(message)
+                },
                 onBack = { showWebView = false },
+            )
+        } else if (shouldShowTermsGate(authState, termsAcceptance)) {
+            val uriHandler = LocalUriHandler.current
+            TermsGateScreen(
+                onOpenFullTerms = {
+                    uriHandler.openUri("https://torrey1028.github.io/FiberSocial/terms-of-use.html")
+                },
+                onAgree = {
+                    val updated = TermsAcceptance(version = CURRENT_TERMS_VERSION)
+                    termsAcceptance = updated
+                    termsScope.launch { termsStore.save(updated) }
+                },
             )
         } else {
             when (authState) {

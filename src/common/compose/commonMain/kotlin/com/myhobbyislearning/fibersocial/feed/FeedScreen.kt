@@ -954,6 +954,7 @@ fun FeedScreen(
             onBack = { showAbout = false },
             onOpenRepo = { uriHandler.openUri("https://github.com/torrey1028/FiberSocial") },
             onOpenPrivacyPolicy = { uriHandler.openUri("https://torrey1028.github.io/FiberSocial/") },
+            onOpenTermsOfUse = { uriHandler.openUri("https://torrey1028.github.io/FiberSocial/terms-of-use.html") },
             // Private mailto, deliberately not the public "Send feedback" flow — see the
             // param KDoc on AboutScreen. Also reported to NCMEC/Ravelry per
             // legal/child-safety-standards.html; this is just the in-app entry point.
