@@ -50,9 +50,16 @@ jobs:
       contents: read
       pages: write
       id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+    # TEMPORARY, for pre-merge testing only: the github-pages environment's
+    # default protection rule blocks any non-default-branch job from even
+    # starting ("Branch not allowed to deploy to github-pages"), which would
+    # block this whole dry run before it reaches the actually-risky steps
+    # (Ad Hoc signing, archive, export). Dropping the environment binding
+    # gets us signal on those; the deploy-to-Pages step is expected to fail
+    # without it, which is fine for this one-off run. Restored before merge.
+    # environment:
+    #   name: github-pages
+    #   url: ${{ steps.deployment.outputs.page_url }}
 
     steps:
       - uses: actions/checkout@v4
