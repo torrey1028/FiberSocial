@@ -100,6 +100,15 @@ fun TopicDetailScreen(
     editState: EditState = EditState.Idle,
     onEditPost: (Post, String) -> Unit = { _, _ -> },
     onEditErrorShown: () -> Unit = {},
+    // Report a post (issue #409): the flag dialog's state, opening it for a post, its
+    // reason-picker submission, dismissal, acknowledging a successful send, and the
+    // secondary "report to app developer" email fallback.
+    reportState: ReportState = ReportState.Idle,
+    onReportPost: (Post) -> Unit = {},
+    onSubmitReport: (reasonId: String, escalate: Boolean) -> Unit = { _, _ -> },
+    onDismissReport: () -> Unit = {},
+    onReportSent: () -> Unit = {},
+    onReportToDeveloper: (Post) -> Unit = {},
     replyState: ReplyState = ReplyState.Idle,
     onSendReply: (String) -> Unit = {},
     onReplySent: () -> Unit = {},
@@ -142,6 +151,26 @@ fun TopicDetailScreen(
             message = deleteState.message,
             onDismiss = onDeleteErrorShown,
         )
+    }
+    // Report a post (issue #409): the report dialog covers Loading/Ready/LoadError (see
+    // ReportPostDialog); a successful send instead shows a separate one-shot confirmation,
+    // matching PostActionErrorDialog's shape for the failure side of other post actions.
+    val reportedPost = when (val r = reportState) {
+        is ReportState.LoadingForm -> r.post
+        is ReportState.Ready -> r.post
+        is ReportState.LoadError -> r.post
+        else -> null
+    }
+    if (reportedPost != null) {
+        ReportPostDialog(
+            state = reportState,
+            onSubmit = onSubmitReport,
+            onReportToDeveloper = { onReportToDeveloper(reportedPost) },
+            onDismiss = onDismissReport,
+        )
+    }
+    if (reportState is ReportState.Sent) {
+        ReportSentDialog(onDismiss = onReportSent)
     }
     // Furthest post number the user has scrolled to this visit (issue #206): the read
     // marker follows how far they actually got, not how many posts the app fetched. A
@@ -569,6 +598,7 @@ fun TopicDetailScreen(
                                 onEditErrorShown()
                                 editingPostId = post.id
                             },
+                            onReport = { onReportPost(post) },
                         )
                         HorizontalDivider()
                     }
@@ -714,6 +744,12 @@ internal fun ReplyItem(
     saving: Boolean = false,
     actionsEnabled: Boolean = true,
     onEdit: () -> Unit = {},
+    // Report a post (issue #409): a minimal per-post overflow menu, offered on every
+    // post (own or not — objectionable content isn't limited to other people's posts,
+    // and Apple's requirement is a flag mechanism, not one gated on authorship). Built
+    // as a DropdownMenu rather than a bare icon so #410 (block user) can add a second
+    // item to the same menu later instead of accumulating more inline icon buttons.
+    onReport: () -> Unit = {},
 ) {
     Column(modifier = Modifier.padding(vertical = 12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -740,6 +776,23 @@ internal fun ReplyItem(
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
+                }
+                var overflowOpen by remember { mutableStateOf(false) }
+                IconButton(onClick = { overflowOpen = true }, enabled = actionsEnabled) {
+                    Icon(
+                        Icons.Default.MoreVert,
+                        contentDescription = "More post options",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                DropdownMenu(expanded = overflowOpen, onDismissRequest = { overflowOpen = false }) {
+                    DropdownMenuItem(
+                        text = { Text("Report post") },
+                        onClick = {
+                            overflowOpen = false
+                            onReport()
+                        },
+                    )
                 }
             }
         }
