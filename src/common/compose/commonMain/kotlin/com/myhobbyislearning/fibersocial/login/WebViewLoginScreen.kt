@@ -15,10 +15,10 @@ import androidx.compose.runtime.Composable
  *   observed stale-challenge dead-end where accepting the authorize dialog bounces
  *   through `/account/login?prompt=1` onto the home page — the WebView recovers by
  *   loading a freshly minted URL instead of stranding the user
- *   (see [loginNavigationDecision]).
+ *   (see `loginNavigationDecision` in the logic module's auth package).
  * @param onAuthError Called when the redirect carries an OAuth failure instead of a code
  *   (RFC 6749 §4.1.2.1 — `access_denied`, `invalid_scope`, `server_error`, …), is
- *   otherwise unreadable, or the flow collapsed [MAX_LOGIN_FLOW_RESTARTS] times.
+ *   otherwise unreadable, or the flow collapsed `MAX_LOGIN_FLOW_RESTARTS` times.
  *   Callers must leave this screen and surface the message; before issue #394 nothing
  *   handled this case and the user was left on a frozen authorize page. The most common
  *   trigger is not an exotic failure but the user tapping Deny.

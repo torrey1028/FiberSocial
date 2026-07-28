@@ -91,6 +91,35 @@ class LoginNavigationPolicyTest {
         assertFalse(isAllowedLoginNavigation("https://www.ravelry.com/account/login/../../messages"))
     }
 
+    // --- Parser quirks must not smuggle paths past the allowlist ---
+    // Ktor's Url leaves dot-segments and %-escapes in encodedPath untouched, so the
+    // policy must reject them itself rather than trust the WebView and Ravelry's
+    // Rails router to agree on canonicalization (a Rack front end unescapes %2F
+    // after routing, which would turn /oauth2/..%2fmessages into /messages).
+
+    @Test
+    fun `blocks dot-segment and encoded traversal under the oauth2 prefix`() {
+        assertFalse(isAllowedLoginNavigation("https://www.ravelry.com/oauth2/../messages"))
+        assertFalse(isAllowedLoginNavigation("https://www.ravelry.com/oauth2/..%2fmessages"))
+        assertFalse(isAllowedLoginNavigation("https://www.ravelry.com/oauth2/%2e%2e/messages"))
+        assertFalse(isAllowedLoginNavigation("https://www.ravelry.com/oauth2//messages"))
+    }
+
+    @Test
+    fun `treats the host case-insensitively`() {
+        // Hosts are case-insensitive (RFC 3986); a server redirect carrying an
+        // uppercase host must not read as off-flow — that would burn a restart.
+        assertTrue(isAllowedLoginNavigation("https://WWW.Ravelry.com/account/login"))
+    }
+
+    @Test
+    fun `allows the exact url the auth manager actually builds`() {
+        // Ties the allowlist to the real authorize URL so the two can't silently
+        // drift apart — an off-allowlist entry point would restart-loop straight
+        // into FAIL_LOGIN on both platforms with every unit test still green.
+        assertTrue(isAllowedLoginNavigation(RavelryAuthManager().buildAuthUrl("client-id")))
+    }
+
     // --- Non-Ravelry and lookalike destinations are not ---
 
     @Test
@@ -116,6 +145,20 @@ class LoginNavigationPolicyTest {
     @Test
     fun `blocks unparseable garbage`() {
         assertFalse(isAllowedLoginNavigation("not a url at all"))
+    }
+
+    @Test
+    fun `blocks a malformed port`() {
+        // The one input shape that actually throws inside Ktor's Url parser —
+        // "not a url at all" above parses fine and is caught by the scheme check.
+        assertFalse(isAllowedLoginNavigation("https://www.ravelry.com:notaport/account/login"))
+    }
+
+    @Test
+    fun `blocks a lookalike that merely extends the redirect uri`() {
+        assertFalse(
+            isAllowedLoginNavigation("${RavelryAuthManager.REDIRECT_URI}evil?code=abc&state=xyz"),
+        )
     }
 
     // --- Off-flow handling splits on who initiated the navigation ---

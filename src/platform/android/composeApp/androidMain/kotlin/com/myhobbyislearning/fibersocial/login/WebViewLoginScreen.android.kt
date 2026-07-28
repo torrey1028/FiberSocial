@@ -26,6 +26,7 @@ import com.myhobbyislearning.fibersocial.auth.RavelryAuthManager
 import com.myhobbyislearning.fibersocial.auth.LOGIN_FLOW_LOST_MESSAGE
 import com.myhobbyislearning.fibersocial.auth.LoginNavigationDecision
 import com.myhobbyislearning.fibersocial.auth.authFailureMessage
+import com.myhobbyislearning.fibersocial.auth.isAuthRedirect
 import com.myhobbyislearning.fibersocial.auth.loginNavigationDecision
 import com.myhobbyislearning.fibersocial.auth.parseAuthCallback
 import com.myhobbyislearning.fibersocial.debug.describeSessionCookie
@@ -89,7 +90,7 @@ actual fun WebViewLoginScreen(
                     ): Boolean {
                         val url = request.url.toString()
                         println("FiberSocial: WebView navigating to ${url.take(120)}")
-                        if (url.startsWith(RavelryAuthManager.REDIRECT_URI)) {
+                        if (isAuthRedirect(url)) {
                             // Every branch below must call something. Returning true
                             // cancels the navigation, so a silent return strands the user
                             // on the authorize page with no way forward (issue #394).

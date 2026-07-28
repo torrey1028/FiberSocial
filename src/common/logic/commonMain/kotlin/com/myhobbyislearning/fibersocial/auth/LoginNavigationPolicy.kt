@@ -29,28 +29,50 @@ import io.ktor.http.Url
  * pages render the site's full footer, but its links are blocked like any other.
  *
  * Host and path are compared on a parsed URL, not by string prefix, so lookalike
- * hosts (`www.ravelry.com.evil.com`) don't pass.
+ * hosts (`www.ravelry.com.evil.com`) don't pass. The host compares case-insensitively
+ * (hosts are; a server redirect carrying an uppercase host must not read as off-flow),
+ * and paths still containing dot-segments or %-escapes are rejected outright: Ktor's
+ * `Url` leaves both untouched in `encodedPath`, so `/oauth2/..%2fmessages` would
+ * otherwise ride the `/oauth2/` prefix into whatever Ravelry's Rails router unescapes
+ * it to. No allowlisted path needs an escape, so rejecting them costs nothing.
  */
 fun isAllowedLoginNavigation(url: String): Boolean {
-    if (url.startsWith(RavelryAuthManager.REDIRECT_URI)) return true
+    if (isAuthRedirect(url)) return true
     // WebViews use about:blank for internal empty documents (e.g. before the first
     // real load); blocking it can only break the flow, never open the site.
     if (url == "about:blank") return true
-    val parsed = try {
-        Url(url)
-    } catch (e: Exception) {
+    val parsed = runCatching { Url(url) }.getOrElse {
         println("FiberSocial: isAllowedLoginNavigation could not parse ${url.take(120)}")
         return false
     }
     if (parsed.protocol != URLProtocol.HTTPS) return false
-    if (parsed.host != "www.ravelry.com" && parsed.host != "ravelry.com") return false
+    val host = parsed.host.lowercase()
+    if (host != "www.ravelry.com" && host != "ravelry.com") return false
     val path = parsed.encodedPath
+    if (path.contains("..") || path.contains('%') || path.contains("//") || path.contains('\\')) {
+        return false
+    }
     return path.startsWith("/oauth2/") ||
         path == "/account/login" ||
         path == "/account/forgot" ||
         path == "/consent" ||
         path == "/invitations" ||
         path.startsWith("/invitations/")
+}
+
+/**
+ * Whether [url] is the app's own OAuth redirect ([RavelryAuthManager.REDIRECT_URI]),
+ * with a delimiter boundary: the URI itself, or the URI followed by a query or
+ * fragment. A bare `startsWith` would also match `fibersocial://auth/callbackevil`,
+ * handing a page-controlled lookalike URL to the auth-code capture path — the `state`
+ * check would still reject it (issue #149), but the prefix match shouldn't be the
+ * only thing standing in front of that defense. Shared by this policy and both
+ * platform navigation handlers so the boundary rule can't drift per-platform.
+ */
+fun isAuthRedirect(url: String): Boolean {
+    if (!url.startsWith(RavelryAuthManager.REDIRECT_URI)) return false
+    val rest = url.substring(RavelryAuthManager.REDIRECT_URI.length)
+    return rest.isEmpty() || rest[0] == '?' || rest[0] == '#'
 }
 
 /** What the login WebView should do with a proposed main-frame navigation. */
