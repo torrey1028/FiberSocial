@@ -102,6 +102,7 @@ fun ProjectPageScreen(
     currentUsername: String? = null,
     onDeleteComment: (ProjectComment) -> Unit = {},
     onPostAcknowledged: () -> Unit = {},
+    blockedUsernames: Set<String> = emptySet(),
 ) {
     if (state is ProjectPageState.Hidden) return
     val link = when (state) {
@@ -159,6 +160,7 @@ fun ProjectPageScreen(
                 onPostErrorShown = onPostErrorShown,
                 onDeleteComment = onDeleteComment,
                 onPostAcknowledged = onPostAcknowledged,
+                blockedUsernames = blockedUsernames,
                 modifier = Modifier.padding(padding),
             )
 
@@ -179,6 +181,7 @@ private fun ProjectContent(
     onPostErrorShown: () -> Unit,
     onDeleteComment: (ProjectComment) -> Unit,
     onPostAcknowledged: () -> Unit,
+    blockedUsernames: Set<String> = emptySet(),
     modifier: Modifier = Modifier,
 ) {
     val project = loaded.project
@@ -261,6 +264,7 @@ private fun ProjectContent(
             onPostErrorShown = onPostErrorShown,
             onDeleteComment = onDeleteComment,
             onPostAcknowledged = onPostAcknowledged,
+            blockedUsernames = blockedUsernames,
         )
 
         Spacer(Modifier.height(16.dp))
@@ -340,6 +344,7 @@ private fun CommentsSection(
     onPostErrorShown: () -> Unit,
     onDeleteComment: (ProjectComment) -> Unit,
     onPostAcknowledged: () -> Unit,
+    blockedUsernames: Set<String> = emptySet(),
 ) {
     Text("Comments", style = MaterialTheme.typography.titleSmall)
     Spacer(Modifier.height(8.dp))
@@ -350,8 +355,13 @@ private fun CommentsSection(
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.error,
         )
-        is ProjectCommentsState.Loaded ->
-            if (commentsState.comments.isEmpty()) {
+        is ProjectCommentsState.Loaded -> {
+            // Blocked authors' comments are filtered out here too — fully hidden, not
+            // greyed or collapsed, same as feed cards/topic replies/messages (issue #410).
+            val visibleComments = commentsState.comments.filterNot { comment ->
+                blockedUsernames.any { it.equals(comment.user?.username, ignoreCase = true) }
+            }
+            if (visibleComments.isEmpty()) {
                 Text(
                     text = "No comments yet.",
                     style = MaterialTheme.typography.bodySmall,
@@ -359,7 +369,7 @@ private fun CommentsSection(
                 )
             } else {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    commentsState.comments.forEach { comment ->
+                    visibleComments.forEach { comment ->
                         val deletable = currentUsername != null &&
                             comment.user?.username?.equals(currentUsername, ignoreCase = true) == true
                         CommentRow(
@@ -369,6 +379,7 @@ private fun CommentsSection(
                     }
                 }
             }
+        }
     }
 
     Spacer(Modifier.height(12.dp))

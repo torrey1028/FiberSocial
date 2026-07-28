@@ -39,6 +39,7 @@ import com.myhobbyislearning.fibersocial.notifications.DeepLink
 import com.myhobbyislearning.fibersocial.notifications.EventNotifier
 import com.myhobbyislearning.fibersocial.notifications.toDeepLink
 import com.myhobbyislearning.fibersocial.notifications.EventSyncWorker
+import com.myhobbyislearning.fibersocial.moderation.KeyValueBlockedUsersStore
 import com.myhobbyislearning.fibersocial.notifications.KeyValueMutedTopicsStore
 import com.myhobbyislearning.fibersocial.notifications.KeyValueNotificationSettingsStore
 import com.myhobbyislearning.fibersocial.settings.CURRENT_TERMS_VERSION
@@ -48,6 +49,7 @@ import com.myhobbyislearning.fibersocial.settings.TermsAcceptance
 import com.myhobbyislearning.fibersocial.settings.ThemeMode
 import com.myhobbyislearning.fibersocial.settings.ThemeSettings
 import com.myhobbyislearning.fibersocial.settings.shouldShowTermsGate
+import com.myhobbyislearning.fibersocial.storage.BLOCKED_USERS_PREFS_NAME
 import com.myhobbyislearning.fibersocial.storage.NOTIFICATION_SETTINGS_PREFS_NAME
 import com.myhobbyislearning.fibersocial.storage.NOTIFICATION_STATE_PREFS_NAME
 import com.myhobbyislearning.fibersocial.storage.TERMS_ACCEPTANCE_PREFS_NAME
@@ -190,6 +192,17 @@ class MainActivity : ComponentActivity() {
                                     plainKeyValueStore(this@MainActivity, NOTIFICATION_STATE_PREFS_NAME),
                                 )
                             }
+                            // Local blocked-users list (issue #410). remember, not
+                            // rememberSaveable — the store is a plain object wrapping a
+                            // SharedPreferences handle, not serializable state; its own
+                            // backing prefs file is what survives process death, and load()
+                            // below repopulates blockedUsernames from it on the fresh instance
+                            // a recreation produces.
+                            val blockedUsersStore = remember {
+                                KeyValueBlockedUsersStore(
+                                    plainKeyValueStore(this@MainActivity, BLOCKED_USERS_PREFS_NAME),
+                                )
+                            }
                             LaunchedEffect(Unit) {
                                 feedVm.load()
                                 EventSyncWorker.schedulePeriodic(
@@ -197,6 +210,7 @@ class MainActivity : ComponentActivity() {
                                     notificationSettingsStore.load().effectivePollCadence,
                                 )
                             }
+                            LaunchedEffect(blockedUsersStore) { blockedUsersStore.load() }
                             // On session expiry: show WebView login before clearing auth so there's no
                             // LoginScreen flash between the state change and the WebView appearing.
                             LaunchedEffect(feedVm) {
@@ -233,6 +247,7 @@ class MainActivity : ComponentActivity() {
                                 },
                                 notificationSettingsStore = notificationSettingsStore,
                                 mutedTopicsStore = mutedTopicsStore,
+                                blockedUsersStore = blockedUsersStore,
                                 // UPDATE policy re-registers the periodic sync at the new cadence.
                                 onPollCadenceChanged = { cadence ->
                                     EventSyncWorker.schedulePeriodic(this@MainActivity, cadence)
