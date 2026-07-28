@@ -12,6 +12,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import com.myhobbyislearning.fibersocial.feed.models.UserSearchResult
 import org.junit.Assert.assertEquals
@@ -329,9 +330,12 @@ class NewMessageScreenTest {
         )
         compose.onNodeWithTag("MessageBodyField").performTextInput("Interested?")
 
-        compose.onNodeWithTag("SendMessageError").assertIsDisplayed()
-        compose.onNodeWithText("This person isn't accepting messages.").assertIsDisplayed()
-        compose.onNodeWithText("Interested?").assertIsDisplayed()
+        // The form is scrollable (issue #432) and typing auto-scrolled the body field into
+        // view, so scroll each assert target back into view first.
+        compose.onNodeWithTag("SendMessageError").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("This person isn't accepting messages.")
+            .performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Interested?").performScrollTo().assertIsDisplayed()
     }
 
     @Test

@@ -8,8 +8,11 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.DropdownMenuItem
@@ -118,11 +121,15 @@ fun NewTopicScreen(
             )
         },
     ) { padding ->
+        // Scrollable so the form degrades gracefully when the keyboard halves the screen
+        // (issue #432): without it the weighted body field collapsed to zero height and
+        // the attach row sat where the field should be.
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
                 .imePadding()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp, vertical = 8.dp),
         ) {
             if (state is NewTopicState.Error) {
@@ -189,9 +196,12 @@ fun NewTopicScreen(
                 label = { Text("Your post") },
                 placeholder = { Text("Write your post…") },
                 enabled = !sending,
+                // A minimum rather than weight(1f): weight is illegal inside a scrollable
+                // column (unbounded height), and a fixed floor keeps the field usable
+                // however little room the keyboard leaves. The field grows with its text.
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(1f)
+                    .heightIn(min = 200.dp)
                     .padding(top = 8.dp),
             )
 

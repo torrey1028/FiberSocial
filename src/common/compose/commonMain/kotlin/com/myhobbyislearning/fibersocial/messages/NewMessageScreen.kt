@@ -19,6 +19,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
@@ -221,11 +223,16 @@ fun NewMessageScreen(
             )
         },
     ) { padding ->
+        // Scrollable for the same reason as NewTopicScreen (issue #432): with the keyboard
+        // up on a small screen, a non-scrollable column starved the weighted body field to
+        // zero height. The results list is already max-height-bounded, so nesting it inside
+        // this scroll is safe.
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
                 .imePadding()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp, vertical = 8.dp),
         ) {
             if (sendState is SendMessageState.Error) {
@@ -282,9 +289,12 @@ fun NewMessageScreen(
                 label = { Text("Message") },
                 placeholder = { Text("Write your message…") },
                 enabled = !sending,
+                // Minimum height instead of weight(1f): weight is illegal inside a
+                // scrollable column, and the floor keeps the field usable with the
+                // keyboard open. The field grows with its text.
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(1f)
+                    .heightIn(min = 200.dp)
                     .padding(top = 8.dp)
                     .testTag("MessageBodyField"),
             )
