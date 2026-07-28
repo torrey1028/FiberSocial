@@ -39,7 +39,11 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -49,6 +53,8 @@ import androidx.compose.ui.unit.dp
 import com.myhobbyislearning.fibersocial.feed.PostBody
 import com.myhobbyislearning.fibersocial.feed.html.HtmlPostParser
 import com.myhobbyislearning.fibersocial.feed.models.Group
+import com.myhobbyislearning.fibersocial.moderation.BlockGlyph
+import com.myhobbyislearning.fibersocial.moderation.BlockUserConfirmDialog
 import com.myhobbyislearning.fibersocial.projects.ProjectLink
 import com.myhobbyislearning.fibersocial.projects.ProjectSummary
 import androidx.compose.ui.layout.ContentScale
@@ -79,6 +85,15 @@ import com.myhobbyislearning.fibersocial.ui.GroupBadge
  *   worse failure than briefly omitting an affordance, and the profile is only reachable
  *   from screens the loaded feed already backs.
  * @param onSendMessage Invoked with the profile owner's username.
+ * @param isBlocked Whether the profile owner is on the local blocked-users list (issue
+ *   #410). Drives the header's Block/Unblock action; like [onSendMessage] this is gated
+ *   below on not being the signed-in user's own profile — blocking yourself is meaningless.
+ * @param onBlockUser Invoked (after the confirmation dialog) with whether the user also
+ *   asked to notify the developer. The caller is expected to persist the block and, if
+ *   requested, open a pre-addressed "notify the developer" email draft — see
+ *   `blockUserEmailUri` in `FeedScreen.kt` and [com.myhobbyislearning.fibersocial.moderation.BlockUserConfirmDialog].
+ * @param onUnblockUser Invoked to reverse a block. No confirmation: unblocking only ever
+ *   restores content, so it needs none of the caution blocking does.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -90,6 +105,9 @@ fun UserProfileScreen(
     onGroupClick: (Group) -> Unit = {},
     onSendMessage: (String) -> Unit = {},
     currentUsername: String? = null,
+    isBlocked: Boolean = false,
+    onBlockUser: (notifyDeveloper: Boolean) -> Unit = {},
+    onUnblockUser: () -> Unit = {},
 ) {
     if (state is UserProfileState.Hidden) return
     val username = when (state) {
@@ -153,6 +171,19 @@ fun UserProfileScreen(
                 } else {
                     null
                 },
+                // Same own-profile gate as onSendMessage above: blocking yourself is
+                // meaningless, and Ravelry usernames are compared case-insensitively
+                // throughout this app (see BlockedUsersStore.isBlocked).
+                onBlockUser = if (
+                    currentUsername != null &&
+                    !currentUsername.equals(state.profile.username, ignoreCase = true)
+                ) {
+                    onBlockUser
+                } else {
+                    null
+                },
+                isBlocked = isBlocked,
+                onUnblockUser = onUnblockUser,
                 modifier = Modifier.padding(padding),
             )
 
@@ -165,6 +196,8 @@ fun UserProfileScreen(
  * @param onSendMessage Null when the action must not be offered at all — see the own-profile
  *   gate on [UserProfileScreen]. Nullable rather than a boolean so there is no way to render
  *   an enabled button with nothing behind it.
+ * @param onBlockUser Same own-profile gate and nullability convention as [onSendMessage].
+ *   Called (via the confirmation dialog) with whether to also notify the developer.
  */
 @Composable
 private fun ProfileContent(
@@ -172,9 +205,20 @@ private fun ProfileContent(
     onOpenProject: (ProjectSummary) -> Unit,
     onGroupClick: (Group) -> Unit,
     onSendMessage: (() -> Unit)?,
+    onBlockUser: ((notifyDeveloper: Boolean) -> Unit)?,
+    isBlocked: Boolean,
+    onUnblockUser: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val profile = state.profile
+    var showBlockConfirm by rememberSaveable(profile.username) { mutableStateOf(false) }
+    if (showBlockConfirm) {
+        BlockUserConfirmDialog(
+            username = profile.username,
+            onConfirm = { notifyDeveloper -> onBlockUser?.invoke(notifyDeveloper) },
+            onDismiss = { showBlockConfirm = false },
+        )
+    }
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -197,24 +241,40 @@ private fun ProfileContent(
             }
         }
 
-        // The header's action row (issue #373). Directly under the header and above the
-        // "about" text on purpose: it acts on the person identified immediately above it,
-        // and putting it below a bio of arbitrary length would push it off-screen for
-        // exactly the users whose profile the reader spent the longest looking at.
-        onSendMessage?.let { send ->
+        // The header's action row (issue #373, extended by #410). Directly under the header
+        // and above the "about" text on purpose: it acts on the person identified
+        // immediately above it, and putting it below a bio of arbitrary length would push
+        // it off-screen for exactly the users whose profile the reader spent the longest
+        // looking at.
+        if (onSendMessage != null || onBlockUser != null) {
             Spacer(Modifier.height(12.dp))
             Row(
                 modifier = Modifier.fillMaxWidth().testTag("ProfileActions"),
                 verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                OutlinedButton(onClick = send, modifier = Modifier.testTag("SendMessageAction")) {
-                    Icon(
-                        Icons.AutoMirrored.Filled.Send,
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp),
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text("Send message")
+                onSendMessage?.let { send ->
+                    OutlinedButton(onClick = send, modifier = Modifier.testTag("SendMessageAction")) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.Send,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text("Send message")
+                    }
+                }
+                onBlockUser?.let {
+                    OutlinedButton(
+                        onClick = {
+                            if (isBlocked) onUnblockUser() else showBlockConfirm = true
+                        },
+                        modifier = Modifier.testTag("BlockUserAction"),
+                    ) {
+                        BlockGlyph(modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text(if (isBlocked) "Unblock" else "Block")
+                    }
                 }
             }
         }

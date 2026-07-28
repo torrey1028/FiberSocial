@@ -24,6 +24,7 @@ const val NOTIFICATION_STATE_PREFS_NAME = "notification_state"
 const val NOTIFICATION_SETTINGS_PREFS_NAME = "notification_settings"
 const val THEME_SETTINGS_PREFS_NAME = "theme_settings"
 const val TERMS_ACCEPTANCE_PREFS_NAME = "terms_acceptance"
+const val BLOCKED_USERS_PREFS_NAME = "blocked_users"
 
 /**
  * Plain `SharedPreferences`-backed store — for non-sensitive data.
