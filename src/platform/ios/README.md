@@ -44,15 +44,25 @@ link for a registered iPhone — see `docs/ios-debug-builds.md`.
 
 ## TestFlight & signing
 
-**Tagged releases upload to TestFlight automatically** — pushing a
+**Tagged releases build a release candidate automatically** — pushing a
 `vMAJOR.MINOR.PATCH` tag via `scripts/release.sh` (see the root `CLAUDE.md`'s
-"Versioning & cutting a release") fires the `ios-release` job in
-`.github/workflows/release.yml` alongside the Android release job, archiving
-and uploading a signed build with no local Xcode step. That job needs the
-`IOS_*` repo secrets and the `APPLE_TEAM_ID` repo variable documented in
-`CLAUDE.md`'s "Secrets" section to be configured first; it can also be
-dry-run via the workflow's `workflow_dispatch` trigger without cutting a real
-tag.
+"Versioning & cutting a release") fires the `build-rc` job in
+`.github/workflows/release-ios.yml`, archiving and uploading a signed build to
+App Store Connect with no local Xcode step, then auto-adding it to the
+`IOS_TESTFLIGHT_QA_GROUP_NAME` external TestFlight group so QA testers get it
+immediately. That job needs the `IOS_*` repo secrets and the `APPLE_TEAM_ID` /
+`IOS_TESTFLIGHT_QA_GROUP_NAME` repo variables documented in `CLAUDE.md`'s
+"Secrets" section to be configured first; it can also be dry-run via the
+workflow's `workflow_dispatch` trigger without cutting a real tag.
+
+This upload is **not** an App Store release yet. After QA runs through
+`docs/ios-device-checklist.md` against the TestFlight build, a reviewer
+approves the `ios-release` GitHub Environment on that same workflow run's
+`promote` job (Settings → Environments → required reviewers is what gates
+this). Apple review can't be triggered via the API, so approving doesn't
+submit anything automatically — it's an audited "QA passed" checkpoint whose
+job summary is a reminder that the already-uploaded build is now ready to
+submit for App Store review by hand in App Store Connect.
 
 The rest of this section covers doing the same thing manually from Xcode —
 useful for an ad-hoc build outside the tag/CI flow, or for the one-time setup
