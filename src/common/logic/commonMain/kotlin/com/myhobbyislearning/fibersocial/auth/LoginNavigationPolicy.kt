@@ -52,3 +52,57 @@ fun isAllowedLoginNavigation(url: String): Boolean {
         path == "/invitations" ||
         path.startsWith("/invitations/")
 }
+
+/** What the login WebView should do with a proposed main-frame navigation. */
+enum class LoginNavigationDecision {
+    /** On the auth flow — load it. */
+    ALLOW,
+
+    /** Off the flow by the user's own tap — cancel it and stay put. */
+    BLOCK,
+
+    /** Off the flow by a server redirect — cancel it and load a fresh authorize URL. */
+    RESTART_FLOW,
+
+    /** Off the flow by a server redirect, but the restart budget is spent — give up. */
+    FAIL_LOGIN,
+}
+
+/**
+ * Restarts are capped so a server that keeps breaking the flow produces one clear
+ * failure instead of an invisible redirect-restart loop. Two is deliberate: restart #1
+ * is the fix for the observed staleness dead-end (below) and should succeed — the
+ * session cookie from the broken attempt is already in the jar, so the restarted flow
+ * goes straight to a fresh consent page; #2 is margin for a second stale bounce.
+ */
+const val MAX_LOGIN_FLOW_RESTARTS = 2
+
+/** Shown when the flow keeps collapsing after [MAX_LOGIN_FLOW_RESTARTS] restarts. */
+const val LOGIN_FLOW_LOST_MESSAGE = "Ravelry lost track of the sign-in. Please try again."
+
+/**
+ * Decides what to do with a main-frame navigation the login WebView is about to make.
+ *
+ * The reason off-flow navigations split on [userInitiated]: a user tap on the site
+ * header is a browse attempt — cancel it and stay parked (issue #425). A navigation the
+ * user did NOT initiate is the server steering the flow somewhere it can't recover
+ * from, and staying parked would strand the user on a page whose flow state is dead.
+ * The observed case (on-device trace, 2026-07-28): accepting the authorize dialog after
+ * the login step took ~5½ minutes bounced to `/account/login?prompt=1&return_to=
+ * /consent?...` — the challenge had gone stale — and Ravelry's login page, seeing an
+ * already-active session, dropped the `return_to` and redirected to the home page.
+ * Restarting with a freshly built authorize URL recovers in seconds: the session cookie
+ * survives, so the restarted flow lands directly on a fresh consent page.
+ *
+ * @param restartsUsed How many restarts this login screen has already performed.
+ */
+fun loginNavigationDecision(
+    url: String,
+    userInitiated: Boolean,
+    restartsUsed: Int,
+): LoginNavigationDecision = when {
+    isAllowedLoginNavigation(url) -> LoginNavigationDecision.ALLOW
+    userInitiated -> LoginNavigationDecision.BLOCK
+    restartsUsed < MAX_LOGIN_FLOW_RESTARTS -> LoginNavigationDecision.RESTART_FLOW
+    else -> LoginNavigationDecision.FAIL_LOGIN
+}

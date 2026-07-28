@@ -1,6 +1,7 @@
 package com.myhobbyislearning.fibersocial.auth
 
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -115,5 +116,62 @@ class LoginNavigationPolicyTest {
     @Test
     fun `blocks unparseable garbage`() {
         assertFalse(isAllowedLoginNavigation("not a url at all"))
+    }
+
+    // --- Off-flow handling splits on who initiated the navigation ---
+    // The observed dead-end (on-device trace 2026-07-28): a stale authorize challenge
+    // bounces the accepted consent through /account/login?prompt=1 to the home page.
+
+    private val homePage = "https://www.ravelry.com/"
+
+    @Test
+    fun `allows on-flow navigation regardless of initiator or restart budget`() {
+        val url = "https://www.ravelry.com/consent?consent=8ed98e71"
+        assertEquals(
+            LoginNavigationDecision.ALLOW,
+            loginNavigationDecision(url, userInitiated = false, restartsUsed = MAX_LOGIN_FLOW_RESTARTS),
+        )
+        assertEquals(
+            LoginNavigationDecision.ALLOW,
+            loginNavigationDecision(url, userInitiated = true, restartsUsed = 0),
+        )
+    }
+
+    @Test
+    fun `a user tap off the flow is blocked in place`() {
+        // A browse attempt (issue #425) — never a reason to restart the flow.
+        assertEquals(
+            LoginNavigationDecision.BLOCK,
+            loginNavigationDecision(homePage, userInitiated = true, restartsUsed = 0),
+        )
+    }
+
+    @Test
+    fun `a server redirect off the flow restarts it`() {
+        assertEquals(
+            LoginNavigationDecision.RESTART_FLOW,
+            loginNavigationDecision(homePage, userInitiated = false, restartsUsed = 0),
+        )
+        assertEquals(
+            LoginNavigationDecision.RESTART_FLOW,
+            loginNavigationDecision(homePage, userInitiated = false, restartsUsed = MAX_LOGIN_FLOW_RESTARTS - 1),
+        )
+    }
+
+    @Test
+    fun `a server redirect past the restart budget fails the login`() {
+        // Give up loudly rather than looping invisibly against a broken server flow.
+        assertEquals(
+            LoginNavigationDecision.FAIL_LOGIN,
+            loginNavigationDecision(homePage, userInitiated = false, restartsUsed = MAX_LOGIN_FLOW_RESTARTS),
+        )
+    }
+
+    @Test
+    fun `an off-site server redirect also restarts rather than escapes`() {
+        assertEquals(
+            LoginNavigationDecision.RESTART_FLOW,
+            loginNavigationDecision("https://example.com/broken", userInitiated = false, restartsUsed = 0),
+        )
     }
 }
