@@ -116,15 +116,23 @@ actual fun WebViewLoginScreen(
                             onAuthComplete(code, state, cookie)
                             return true
                         }
-                        // Anything beyond the auth flow opens in the real browser instead
-                        // of being rendered in-app — the login WebView is not a Ravelry
-                        // browser (issue #425; Apple browsed it to the web messages
-                        // composer and crashed the app from its camera upload). Only the
+                        // Anything beyond the auth flow is cancelled — the login WebView
+                        // is not a Ravelry browser (issue #425; Apple browsed it to the
+                        // web messages composer and crashed the app from its camera
+                        // upload). A link the user actually tapped opens in the real
+                        // browser; a server-driven redirect (e.g. Ravelry occasionally
+                        // dropping the OAuth return-to after login and redirecting to the
+                        // homepage) is cancelled silently so the WebView stays on the
+                        // auth flow instead of surprise-launching the browser. Only the
                         // main frame is policed: subframe loads can't take the user
                         // anywhere, and cancelling them would just break allowed pages.
                         if (request.isForMainFrame && !isAllowedLoginNavigation(url)) {
-                            println("FiberSocial: WebView blocked non-login navigation to ${url.take(120)}; opening externally")
-                            context.startActivity(Intent(Intent.ACTION_VIEW, request.url))
+                            if (request.hasGesture()) {
+                                println("FiberSocial: WebView blocked tapped non-login link ${url.take(120)}; opening externally")
+                                context.startActivity(Intent(Intent.ACTION_VIEW, request.url))
+                            } else {
+                                println("FiberSocial: WebView cancelled non-login redirect to ${url.take(120)}")
+                            }
                             return true
                         }
                         return false
