@@ -2,6 +2,7 @@
 
 package com.myhobbyislearning.fibersocial.login
 
+import android.content.Intent
 import android.webkit.CookieManager
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
@@ -23,6 +24,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.myhobbyislearning.fibersocial.auth.AuthCallback
 import com.myhobbyislearning.fibersocial.auth.MALFORMED_AUTH_CALLBACK_MESSAGE
 import com.myhobbyislearning.fibersocial.auth.RavelryAuthManager
+import com.myhobbyislearning.fibersocial.auth.isAllowedLoginNavigation
 import com.myhobbyislearning.fibersocial.auth.authFailureMessage
 import com.myhobbyislearning.fibersocial.auth.parseAuthCallback
 import com.myhobbyislearning.fibersocial.debug.describeSessionCookie
@@ -39,9 +41,10 @@ actual fun WebViewLoginScreen(
     // AndroidView's factory runs once the underlying view exists, which BackHandler
     // (evaluated on every composition) can't reach any other way.
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
-    // System back navigates the WEB flow's own history first — e.g. backing out of a
-    // "sign up for an account" detour taken from the login page — and only leaves the
-    // screen entirely once there's nowhere further back to go within it. Without this,
+    // System back navigates the WEB flow's own history first — e.g. back from the
+    // authorize page to the login form — and only leaves the screen entirely once
+    // there's nowhere further back to go within it. (Sign-up/forgot-password detours
+    // open in the external browser since issue #425, so they're not in this history.) Without this,
     // nothing here handles back at all, so it falls through to the Activity default and
     // exits the app outright (issue #308).
     BackHandler {
@@ -111,6 +114,17 @@ actual fun WebViewLoginScreen(
                             println("FiberSocial: ravelry.com cookie ${describeSessionCookie(rootCookie)}")
                             val cookie = wwwCookie.ifEmpty { rootCookie }
                             onAuthComplete(code, state, cookie)
+                            return true
+                        }
+                        // Anything beyond the auth flow opens in the real browser instead
+                        // of being rendered in-app — the login WebView is not a Ravelry
+                        // browser (issue #425; Apple browsed it to the web messages
+                        // composer and crashed the app from its camera upload). Only the
+                        // main frame is policed: subframe loads can't take the user
+                        // anywhere, and cancelling them would just break allowed pages.
+                        if (request.isForMainFrame && !isAllowedLoginNavigation(url)) {
+                            println("FiberSocial: WebView blocked non-login navigation to ${url.take(120)}; opening externally")
+                            context.startActivity(Intent(Intent.ACTION_VIEW, request.url))
                             return true
                         }
                         return false
