@@ -1,6 +1,18 @@
 package com.myhobbyislearning.fibersocial.login
 
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
@@ -10,9 +22,11 @@ import com.myhobbyislearning.fibersocial.auth.MALFORMED_AUTH_CALLBACK_MESSAGE
 import com.myhobbyislearning.fibersocial.auth.RavelryAuthManager
 import com.myhobbyislearning.fibersocial.auth.authFailureMessage
 import com.myhobbyislearning.fibersocial.auth.parseAuthCallback
+import com.myhobbyislearning.fibersocial.debug.DebugFlags
 import com.myhobbyislearning.fibersocial.debug.DebugLog
 import com.myhobbyislearning.fibersocial.debug.describeSessionCookie
 import com.myhobbyislearning.fibersocial.debug.describeUrlForLog
+import com.myhobbyislearning.fibersocial.debug.rememberShareText
 import kotlinx.cinterop.ExperimentalForeignApi
 import platform.CoreGraphics.CGRectMake
 import platform.Foundation.NSError
@@ -47,6 +61,40 @@ actual fun WebViewLoginScreen(
     // remember: WKWebView.navigationDelegate is weak; the composition must hold the
     // strong reference or the delegate is collected mid-login.
     val delegate = remember { LoginNavigationDelegate(onAuthComplete, onAuthError) }
+    Column(Modifier.fillMaxSize()) {
+        // Debug builds only: a login failure can strand the flow INSIDE the web view
+        // (e.g. dumped onto ravelry.com's home page), and iOS has no system back to
+        // escape it — which also made the login screen's log export unreachable right
+        // after the failures it exists to capture. This bar keeps both an exit and the
+        // export reachable from anywhere in the web flow. Absent in release builds.
+        if (DebugFlags.debugToolsAvailable) {
+            DebugLoginToolbar(onBack)
+        }
+        LoginWebView(authUrl, delegate)
+    }
+}
+
+@Composable
+private fun DebugLoginToolbar(onBack: () -> Unit) {
+    val shareText = rememberShareText()
+    Surface {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .windowInsetsPadding(
+                    WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal),
+                ),
+            horizontalArrangement = Arrangement.End,
+        ) {
+            TextButton(onClick = onBack) { Text("Exit login") }
+            TextButton(onClick = { shareText(DebugLog.dump()) }) { Text("Share log") }
+        }
+    }
+}
+
+@OptIn(ExperimentalForeignApi::class)
+@Composable
+private fun LoginWebView(authUrl: String, delegate: LoginNavigationDelegate) {
     UIKitView(
         factory = {
             val configuration = WKWebViewConfiguration().apply {
@@ -63,9 +111,9 @@ actual fun WebViewLoginScreen(
                 // history — e.g. back out of a "sign up for an account" detour taken
                 // from the login page (issue #308) — mirroring Android's system-back
                 // handling of the same case. iOS has no system-level back button/gesture
-                // equivalent to fall back to once history is exhausted, so unlike
-                // Android's onBack, there's no natural trigger to wire it to here yet;
-                // [onBack] exists for signature parity with the common `expect`.
+                // equivalent to fall back to once history is exhausted, so in release
+                // builds nothing triggers onBack here; debug builds wire it to the
+                // toolbar's "Exit login" (see WebViewLoginScreen above).
                 allowsBackForwardNavigationGestures = true
                 DebugLog.log("WebView loading $authUrl")
                 loadRequest(NSURLRequest(uRL = NSURL(string = authUrl)!!))
