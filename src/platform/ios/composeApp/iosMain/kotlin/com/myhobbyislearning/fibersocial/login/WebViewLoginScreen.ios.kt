@@ -8,6 +8,7 @@ import androidx.compose.ui.viewinterop.UIKitView
 import com.myhobbyislearning.fibersocial.auth.AuthCallback
 import com.myhobbyislearning.fibersocial.auth.MALFORMED_AUTH_CALLBACK_MESSAGE
 import com.myhobbyislearning.fibersocial.auth.RavelryAuthManager
+import com.myhobbyislearning.fibersocial.auth.isAllowedLoginNavigation
 import com.myhobbyislearning.fibersocial.auth.authFailureMessage
 import com.myhobbyislearning.fibersocial.auth.parseAuthCallback
 import com.myhobbyislearning.fibersocial.debug.describeSessionCookie
@@ -19,6 +20,7 @@ import platform.Foundation.NSURLRequest
 import platform.WebKit.WKNavigationAction
 import platform.WebKit.WKNavigationActionPolicy
 import platform.WebKit.WKNavigationDelegateProtocol
+import platform.UIKit.UIApplication
 import platform.WebKit.WKWebView
 import platform.WebKit.WKWebViewConfiguration
 import platform.WebKit.WKWebsiteDataStore
@@ -51,9 +53,10 @@ actual fun WebViewLoginScreen(
             WKWebView(frame = CGRectMake(0.0, 0.0, 0.0, 0.0), configuration = configuration).apply {
                 navigationDelegate = delegate
                 // Lets the standard edge-swipe gesture navigate the web flow's own
-                // history — e.g. back out of a "sign up for an account" detour taken
-                // from the login page (issue #308) — mirroring Android's system-back
-                // handling of the same case. iOS has no system-level back button/gesture
+                // history within the allowed auth pages — e.g. back from the authorize
+                // page to the login form (issue #308) — mirroring Android's system-back
+                // handling of the same case. (Sign-up/forgot-password detours open in
+                // Safari since issue #425, so they're no longer part of this history.) iOS has no system-level back button/gesture
                 // equivalent to fall back to once history is exhausted, so unlike
                 // Android's onBack, there's no natural trigger to wire it to here yet;
                 // [onBack] exists for signature parity with the common `expect`.
@@ -79,6 +82,22 @@ private class LoginNavigationDelegate(
         val url = decidePolicyForNavigationAction.request.URL?.absoluteString ?: ""
         println("FiberSocial: WebView navigating to ${url.take(120)}")
         if (!url.startsWith(RavelryAuthManager.REDIRECT_URI)) {
+            // Anything beyond the auth flow opens in Safari instead of being rendered
+            // in-app — the login WebView is not a Ravelry browser (issue #425; Apple
+            // browsed it to the web messages composer and crashed the app from its
+            // camera upload, the 2.1(a) rejection). Only main-frame navigations are
+            // policed; a null targetFrame means a new-window attempt, which is treated
+            // as main-frame. Subframe loads can't take the user anywhere, and
+            // cancelling them would just break allowed pages.
+            val isMainFrame = decidePolicyForNavigationAction.targetFrame?.mainFrame ?: true
+            if (isMainFrame && !isAllowedLoginNavigation(url)) {
+                println("FiberSocial: WebView blocked non-login navigation to ${url.take(120)}; opening externally")
+                decidePolicyForNavigationAction.request.URL?.let { blocked ->
+                    UIApplication.sharedApplication.openURL(blocked, emptyMap<Any?, Any>(), null)
+                }
+                decisionHandler(WKNavigationActionPolicy.WKNavigationActionPolicyCancel)
+                return
+            }
             decisionHandler(WKNavigationActionPolicy.WKNavigationActionPolicyAllow)
             return
         }
