@@ -50,9 +50,47 @@ class ShouldShowTermsGateTest {
     }
 
     @Test
-    fun `does not gate an authenticated user regardless of acceptance`() {
+    fun `gates an authenticated user whose acceptance was wiped`() {
+        // iOS reinstall repro (issue #424): the Keychain token survives an
+        // uninstall/reinstall but the NSUserDefaults acceptance is wiped, so the app
+        // relaunches Authenticated with the never-agreed default. The session-expiry
+        // path then opens the login WebView directly, so the gate must trigger on the
+        // Authenticated state itself.
         val authenticated = AuthState.Authenticated(AuthToken("access", "refresh", Long.MAX_VALUE))
-        assertFalse(shouldShowTermsGate(authenticated, TermsAcceptance()))
+        assertTrue(shouldShowTermsGate(authenticated, TermsAcceptance()))
+    }
+
+    @Test
+    fun `gates an authenticated user whose accepted version is stale`() {
+        // A CURRENT_TERMS_VERSION bump must reach logged-in users (issue #424), not
+        // only users who happen to log out.
+        val authenticated = AuthState.Authenticated(AuthToken("access", "refresh", Long.MAX_VALUE))
+        assertTrue(shouldShowTermsGate(authenticated, TermsAcceptance(version = CURRENT_TERMS_VERSION - 1)))
+    }
+
+    @Test
+    fun `does not gate an authenticated user whose acceptance is current`() {
+        val authenticated = AuthState.Authenticated(AuthToken("access", "refresh", Long.MAX_VALUE))
+        assertFalse(shouldShowTermsGate(authenticated, TermsAcceptance(version = CURRENT_TERMS_VERSION)))
+    }
+
+    @Test
+    fun `does not gate an authenticated user while acceptance is still loading`() {
+        // null means the store hasn't loaded yet; gating on it would flash the gate
+        // at every launch for users whose stored acceptance is in fact current.
+        val authenticated = AuthState.Authenticated(AuthToken("access", "refresh", Long.MAX_VALUE))
+        assertFalse(shouldShowTermsGate(authenticated, acceptance = null))
+    }
+
+    @Test
+    fun `gates the session-expiry logout transition when acceptance is stale`() {
+        // The session-expiry collector opens the login WebView and logs out
+        // (Authenticated -> Unauthenticated). With wiped/stale acceptance the gate
+        // must hold on both sides of that transition, so the platform UI (which checks
+        // the gate ahead of its WebView flag) shows the gate before the WebView.
+        val authenticated = AuthState.Authenticated(AuthToken("access", "refresh", Long.MAX_VALUE))
+        assertTrue(shouldShowTermsGate(authenticated, TermsAcceptance()))
+        assertTrue(shouldShowTermsGate(AuthState.Unauthenticated, TermsAcceptance()))
     }
 
     @Test
@@ -60,8 +98,19 @@ class ShouldShowTermsGateTest {
         // A user authenticated before this feature shipped has a never-agreed
         // TermsAcceptance. If a later re-login attempt (e.g. after session expiry)
         // fails, AuthState.Error must still surface the failure message instead of
-        // being replaced by an unrelated terms re-prompt.
+        // being replaced by an unrelated terms re-prompt. Deliberately unchanged by
+        // issue #424.
         assertFalse(shouldShowTermsGate(AuthState.Error("session expired"), TermsAcceptance()))
+    }
+
+    @Test
+    fun `does not gate an errored login even with a stale accepted version`() {
+        assertFalse(
+            shouldShowTermsGate(
+                AuthState.Error("invalid_client"),
+                TermsAcceptance(version = CURRENT_TERMS_VERSION - 1),
+            ),
+        )
     }
 
     @Test

@@ -54,19 +54,29 @@ class KeyValueTermsAcceptanceStore(store: KeyValueStore) : TermsAcceptanceStore 
 }
 
 /**
- * Whether the pre-login terms gate should be shown ahead of the normal [AuthState]
- * screens, given the current auth state and stored [acceptance].
+ * Whether the terms gate should be shown ahead of the normal [AuthState] screens, given
+ * the current auth state and stored [acceptance].
  *
- * Only [AuthState.Unauthenticated] is gated, deliberately excluding
- * [AuthState.Error]: reaching [AuthState.Error] always means the user already got past
- * `LoginScreen`'s "Log in with Ravelry" button, which itself is only reachable once the
- * gate has already been cleared for this acceptance state — *except* for the
- * session-expiry retry path (`sessionExpired` collector), which jumps straight from
- * [AuthState.Authenticated] to the login WebView without ever passing through this gate.
- * A user who was authenticated before this feature shipped has a never-agreed (default)
- * [TermsAcceptance], so gating on [AuthState.Error] too would replace their login-failure
- * message with an unrelated "agree to terms" prompt on every failed re-login attempt,
- * hiding the retry information `AuthState.Error` exists to surface.
+ * [AuthState.Unauthenticated] gates the fresh pre-login flow. [AuthState.Authenticated]
+ * is gated too (issue #424), for two reasons:
+ * - On iOS the Keychain token survives an uninstall/reinstall while the NSUserDefaults
+ *   acceptance is wiped, so the app relaunches Authenticated with a never-agreed
+ *   acceptance — without this branch that user reached the feed (and, via the
+ *   session-expiry path, the login WebView) without ever seeing the gate.
+ * - Bumping [CURRENT_TERMS_VERSION] must reach logged-in users, not only those who
+ *   happen to log out: a stale accepted version re-shows the gate over the feed until
+ *   they agree to the new terms.
+ *
+ * [AuthState.Error] stays deliberately excluded: a user who was authenticated before
+ * this feature shipped has a never-agreed (default) [TermsAcceptance], so gating on
+ * [AuthState.Error] would replace their login-failure message with an unrelated "agree
+ * to terms" prompt on every failed re-login attempt, hiding the retry information
+ * [AuthState.Error] exists to surface. [AuthState.Loading] is likewise never gated —
+ * the gate waits for a settled state.
+ *
+ * A `null` [acceptance] (store still loading) never gates, so an already-authenticated
+ * user with a current acceptance isn't flashed the gate during the load gap.
  */
 fun shouldShowTermsGate(authState: AuthState, acceptance: TermsAcceptance?): Boolean =
-    authState is AuthState.Unauthenticated && acceptance?.isCurrent == false
+    (authState is AuthState.Unauthenticated || authState is AuthState.Authenticated) &&
+        acceptance?.isCurrent == false

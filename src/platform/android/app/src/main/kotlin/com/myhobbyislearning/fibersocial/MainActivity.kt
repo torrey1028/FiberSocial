@@ -133,11 +133,27 @@ class MainActivity : ComponentActivity() {
                 LaunchedEffect(Unit) { if (termsVersion == null) termsVersion = termsStore.load().version }
                 val termsScope = rememberCoroutineScope()
 
-                // Checked ahead of the AuthState when-branch below so a retry from
-                // AuthState.Error (e.g. a rejected OAuth state, issue #149) re-opens the
-                // WebView instead of being silently swallowed by the Error branch, which
-                // has no showWebView check of its own.
-                if (showWebView) {
+                // The gate is checked ahead of showWebView (issue #424): the session-expiry
+                // collector below opens the WebView directly, so a user whose acceptance was
+                // wiped (e.g. iOS reinstall — mirrored here for symmetry) or made stale by a
+                // CURRENT_TERMS_VERSION bump must agree before the login WebView appears.
+                // Agreeing leaves showWebView untouched, so the WebView opens right after.
+                // The Error-retry path (issue #149) is unaffected: shouldShowTermsGate
+                // deliberately never gates AuthState.Error, so a retry still re-opens the
+                // WebView instead of being swallowed by an unrelated terms prompt.
+                if (shouldShowTermsGate(authState, termsAcceptance)) {
+                    val uriHandler = LocalUriHandler.current
+                    TermsGateScreen(
+                        onOpenFullTerms = {
+                            uriHandler.openUri("https://torrey1028.github.io/FiberSocial/terms-of-use.html")
+                        },
+                        onAgree = {
+                            val updated = TermsAcceptance(version = CURRENT_TERMS_VERSION)
+                            termsVersion = updated.version
+                            termsScope.launch { termsStore.save(updated) }
+                        },
+                    )
+                } else if (showWebView) {
                     val authUrl = remember { authVm.buildAuthUrl() }
                     WebViewLoginScreen(
                         authUrl = authUrl,
@@ -155,18 +171,6 @@ class MainActivity : ComponentActivity() {
                             authVm.auth.failLogin(message)
                         },
                         onBack = { showWebView = false },
-                    )
-                } else if (shouldShowTermsGate(authState, termsAcceptance)) {
-                    val uriHandler = LocalUriHandler.current
-                    TermsGateScreen(
-                        onOpenFullTerms = {
-                            uriHandler.openUri("https://torrey1028.github.io/FiberSocial/terms-of-use.html")
-                        },
-                        onAgree = {
-                            val updated = TermsAcceptance(version = CURRENT_TERMS_VERSION)
-                            termsVersion = updated.version
-                            termsScope.launch { termsStore.save(updated) }
-                        },
                     )
                 } else {
                     when (authState) {
