@@ -28,7 +28,9 @@ import com.myhobbyislearning.fibersocial.auth.LoginNavigationDecision
 import com.myhobbyislearning.fibersocial.auth.authFailureMessage
 import com.myhobbyislearning.fibersocial.auth.loginNavigationDecision
 import com.myhobbyislearning.fibersocial.auth.parseAuthCallback
+import com.myhobbyislearning.fibersocial.debug.DebugLog
 import com.myhobbyislearning.fibersocial.debug.describeSessionCookie
+import com.myhobbyislearning.fibersocial.debug.describeUrlForLog
 
 @Composable
 actual fun WebViewLoginScreen(
@@ -88,19 +90,19 @@ actual fun WebViewLoginScreen(
                         request: WebResourceRequest,
                     ): Boolean {
                         val url = request.url.toString()
-                        println("FiberSocial: WebView navigating to ${url.take(120)}")
+                        DebugLog.log("WebView navigating to ${describeUrlForLog(url)}")
                         if (url.startsWith(RavelryAuthManager.REDIRECT_URI)) {
                             // Every branch below must call something. Returning true
                             // cancels the navigation, so a silent return strands the user
                             // on the authorize page with no way forward (issue #394).
                             val callback = parseAuthCallback(url)
                             if (callback is AuthCallback.Failure) {
-                                println("FiberSocial: OAuth failed: ${callback.error}")
+                                DebugLog.log("OAuth failed: ${callback.error} description=${callback.description}")
                                 onAuthError(authFailureMessage(callback))
                                 return true
                             }
                             if (callback !is AuthCallback.Success) {
-                                println("FiberSocial: OAuth redirect carried neither code nor error")
+                                DebugLog.log("OAuth redirect carried neither code nor error")
                                 onAuthError(MALFORMED_AUTH_CALLBACK_MESSAGE)
                                 return true
                             }
@@ -109,11 +111,11 @@ actual fun WebViewLoginScreen(
                             val cm = CookieManager.getInstance()
                             val wwwCookie = cm.getCookie("https://www.ravelry.com") ?: ""
                             val rootCookie = cm.getCookie("https://ravelry.com") ?: ""
-                            println("FiberSocial: OAuth complete")
+                            DebugLog.log("OAuth complete")
                             // Never interpolate a cookie directly — describeSessionCookie
                             // hides the value unless a debug build opted in (issue #395).
-                            println("FiberSocial: www.ravelry.com cookie ${describeSessionCookie(wwwCookie)}")
-                            println("FiberSocial: ravelry.com cookie ${describeSessionCookie(rootCookie)}")
+                            DebugLog.log("www.ravelry.com cookie ${describeSessionCookie(wwwCookie)}")
+                            DebugLog.log("ravelry.com cookie ${describeSessionCookie(rootCookie)}")
                             val cookie = wwwCookie.ifEmpty { rootCookie }
                             onAuthComplete(code, state, cookie)
                             return true
@@ -136,17 +138,17 @@ actual fun WebViewLoginScreen(
                         return when (loginNavigationDecision(url, userInitiated, flowRestarts)) {
                             LoginNavigationDecision.ALLOW -> false
                             LoginNavigationDecision.BLOCK -> {
-                                println("FiberSocial: WebView cancelled non-login navigation to ${url.take(120)}")
+                                DebugLog.log("WebView cancelled non-login navigation to ${describeUrlForLog(url)}")
                                 true
                             }
                             LoginNavigationDecision.RESTART_FLOW -> {
                                 flowRestarts++
-                                println("FiberSocial: login flow went off the rails (server redirect) — restart #$flowRestarts")
+                                DebugLog.log("login flow went off the rails (server redirect) — restart #$flowRestarts")
                                 view.loadUrl(buildAuthUrl())
                                 true
                             }
                             LoginNavigationDecision.FAIL_LOGIN -> {
-                                println("FiberSocial: login flow lost after $flowRestarts restarts — giving up")
+                                DebugLog.log("login flow lost after $flowRestarts restarts — giving up")
                                 onAuthError(LOGIN_FLOW_LOST_MESSAGE)
                                 true
                             }
@@ -158,15 +160,15 @@ actual fun WebViewLoginScreen(
                         request: WebResourceRequest,
                         error: WebResourceError,
                     ) {
-                        println("FiberSocial: WebView error ${error.errorCode} ${error.description} url=${request.url}")
+                        DebugLog.log("WebView error ${error.errorCode} ${error.description} url=${request.url}")
                     }
 
                     override fun onPageFinished(view: WebView, url: String) {
-                        println("FiberSocial: WebView page loaded: ${url.take(120)}")
+                        DebugLog.log("WebView page loaded: ${describeUrlForLog(url)}")
                     }
                 }
                 val authUrl = buildAuthUrl()
-                println("FiberSocial: WebView loading $authUrl")
+                DebugLog.log("WebView loading $authUrl")
                 loadUrl(authUrl)
                 webViewRef = this
             }

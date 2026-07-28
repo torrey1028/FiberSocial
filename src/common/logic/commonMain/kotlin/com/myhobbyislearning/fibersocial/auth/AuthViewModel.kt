@@ -1,5 +1,7 @@
 package com.myhobbyislearning.fibersocial.auth
 
+import com.myhobbyislearning.fibersocial.debug.DebugLog
+import com.myhobbyislearning.fibersocial.debug.describeException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -69,6 +71,9 @@ class AuthViewModel(
                     repository.login(authCode, codeVerifier, redirectUri, sessionCookie)
                 )
             } catch (e: Exception) {
+                // The screen only shows e.message; the class + cause chain are what
+                // distinguish a network drop from a server rejection, so log them.
+                DebugLog.log("Login token exchange failed: ${describeException(e)}")
                 AuthState.Error(e.message ?: "Login failed")
             }
         }
