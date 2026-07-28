@@ -213,6 +213,22 @@ class RavelryApiClient(
     private fun forbiddenMessage(response: HttpResponse): String =
         "Permission denied for ${response.request.url.encodedPath}"
 
+    /**
+     * Whether [response] is a redirect to Ravelry's login/account pages — how the website
+     * signals an expired session on its form POSTs. Ktor doesn't follow redirects for
+     * POST, so the 3xx surfaces directly, and the Location header is the only thing that
+     * distinguishes an expired session from a successful write's own redirect. Matched
+     * against the redirect's URL PATH, not a raw substring of the whole Location string —
+     * a real permalink containing "account"/"login" elsewhere (e.g. a group named
+     * "login-fanatics") must not false-positive as a session-expiry redirect.
+     */
+    private fun isLoginRedirect(response: HttpResponse): Boolean {
+        val redirectPath = response.headers[HttpHeaders.Location]
+            ?.let { runCatching { Url(it).encodedPath }.getOrDefault(it) }
+            .orEmpty()
+        return redirectPath.startsWith("/login") || redirectPath.startsWith("/account")
+    }
+
     private suspend fun tryRefresh(tokenUsedForRequest: String) {
         val doRefresh = refreshToken ?: throw SessionExpiredException("Session expired")
         refreshMutex.withLock {
@@ -440,10 +456,7 @@ class RavelryApiClient(
             header(HttpHeaders.Cookie, sessionCookie())
             setBody(FormDataContent(buildEventFormParameters(form, input)))
         }
-        val redirectPath = response.headers[HttpHeaders.Location]
-            ?.let { runCatching { Url(it).encodedPath }.getOrDefault(it) }
-            .orEmpty()
-        if (redirectPath.startsWith("/login") || redirectPath.startsWith("/account")) {
+        if (isLoginRedirect(response)) {
             throw SessionExpiredException("Event creation redirected to login")
         }
         if (response.status == HttpStatusCode.Forbidden) {
@@ -507,10 +520,7 @@ class RavelryApiClient(
             )
         }
         println("FiberSocial: setEventVenue($eventPermalink) -> ${response.status}")
-        val redirectPath = response.headers[HttpHeaders.Location]
-            ?.let { runCatching { Url(it).encodedPath }.getOrDefault(it) }
-            .orEmpty()
-        if (redirectPath.startsWith("/login") || redirectPath.startsWith("/account")) {
+        if (isLoginRedirect(response)) {
             throw SessionExpiredException("Venue step for event $eventPermalink redirected to login")
         }
         if (response.status == HttpStatusCode.Forbidden) {
@@ -753,14 +763,8 @@ class RavelryApiClient(
             header(HttpHeaders.Cookie, cookie)
         }
         println("FiberSocial: ${verb}Group($permalink) -> ${response.status}")
-        // Same redirect handling as deletePost: Ktor doesn't follow POST redirects, and an
-        // expired session bounces to the login page — matched on the redirect's path so a
-        // group permalink containing "login"/"account" can't false-positive.
-        val redirectPath = response.headers[HttpHeaders.Location]
-            ?.let { runCatching { Url(it).encodedPath }.getOrDefault(it) }
-            .orEmpty()
         when {
-            redirectPath.startsWith("/login") || redirectPath.startsWith("/account") -> {
+            isLoginRedirect(response) -> {
                 cachedAuthenticityToken = null
                 throw SessionExpiredException("$verb of group $permalink redirected to login")
             }
@@ -1066,19 +1070,12 @@ class RavelryApiClient(
             header(HttpHeaders.Cookie, cookie)
         }
         println("FiberSocial: deletePost($postId) -> ${response.status}")
-        // Ktor doesn't follow redirects for POST, so the 3xx surfaces here directly.
-        // A redirect is how BOTH outcomes look: success bounces back to the topic,
-        // an expired session bounces to the login page — the Location header is the
-        // only thing that tells them apart. Treating a login redirect as success
-        // would remove the post locally while it lives on at Ravelry. Matched against
-        // the redirect's URL PATH, not a raw substring of the whole Location string —
-        // a real topic permalink containing "account"/"login" elsewhere (e.g. a group
-        // named "login-fanatics") must not false-positive as a session-expiry redirect.
-        val redirectPath = response.headers[HttpHeaders.Location]
-            ?.let { runCatching { Url(it).encodedPath }.getOrDefault(it) }
-            .orEmpty()
+        // A redirect is how BOTH outcomes look: success bounces back to the topic, an
+        // expired session bounces to the login page (see isLoginRedirect). Treating a
+        // login redirect as success would remove the post locally while it lives on at
+        // Ravelry.
         when {
-            redirectPath.startsWith("/login") || redirectPath.startsWith("/account") -> {
+            isLoginRedirect(response) -> {
                 cachedAuthenticityToken = null
                 throw SessionExpiredException("Delete of post $postId redirected to login")
             }
@@ -1146,10 +1143,7 @@ class RavelryApiClient(
             header(HttpHeaders.Cookie, cookie)
         }
         println("FiberSocial: flagPost(postId=${form.postId}, reason=$reasonId, escalate=$escalate) -> ${response.status}")
-        val redirectPath = response.headers[HttpHeaders.Location]
-            ?.let { runCatching { Url(it).encodedPath }.getOrDefault(it) }
-            .orEmpty()
-        if (redirectPath.startsWith("/login") || redirectPath.startsWith("/account")) {
+        if (isLoginRedirect(response)) {
             throw SessionExpiredException("Flag of post ${form.postId} redirected to login")
         }
         if (response.status == HttpStatusCode.Forbidden) {

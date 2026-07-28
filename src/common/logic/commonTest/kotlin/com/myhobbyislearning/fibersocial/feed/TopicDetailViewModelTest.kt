@@ -1822,6 +1822,26 @@ class TopicDetailViewModelTest {
     }
 
     @Test
+    fun `a cancelled report-form fetch is not misreported as LoadError`() =
+        runTest(UnconfinedTestDispatcher()) {
+            // runPostOp must rethrow CancellationException rather than let the generic
+            // Exception catch turn a routine teardown into a bogus error state (#419).
+            val releaseForm = CompletableDeferred<Unit>()
+            val vm = TopicDetailViewModel(gatedReportClient(releaseForm = releaseForm), this)
+            val ownerJob = coroutineContext[Job]!!
+            val before = ownerJob.children.toList()
+            vm.openReportDialog(reportedPost)
+            assertIs<ReportState.LoadingForm>(vm.reportState.value)
+            val fetchJob = ownerJob.children.toList().first { it !in before }
+
+            fetchJob.cancel()
+            fetchJob.join()
+            // Unblock the parked MockEngine handler so nothing lingers after the test.
+            releaseForm.complete(Unit)
+            assertIs<ReportState.LoadingForm>(vm.reportState.value)
+        }
+
+    @Test
     fun `openReportDialog session expiry signals sessionExpired and resets to Idle`() =
         runTest(UnconfinedTestDispatcher()) {
             val vm = TopicDetailViewModel(sessionExpiredApiClient(), this)

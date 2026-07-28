@@ -34,12 +34,10 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -954,11 +952,10 @@ private fun EditBar(
 /** One-shot modal for a failed post operation; shows the real failure reason. */
 @Composable
 private fun PostActionErrorDialog(title: String, message: String, onDismiss: () -> Unit) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(title) },
-        text = { Text(message.ifBlank { "Check your connection and try again." }) },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("OK") } },
+    OneShotDialog(
+        title = title,
+        message = message.ifBlank { "Check your connection and try again." },
+        onDismiss = onDismiss,
     )
 }
 
