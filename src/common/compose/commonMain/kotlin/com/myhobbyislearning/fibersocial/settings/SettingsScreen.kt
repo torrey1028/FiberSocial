@@ -5,6 +5,8 @@ package com.myhobbyislearning.fibersocial.settings
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.backhandler.BackHandler
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -44,7 +46,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import com.myhobbyislearning.fibersocial.featureflags.FeatureFlags
 import com.myhobbyislearning.fibersocial.feed.models.RavelryUser
+import com.myhobbyislearning.fibersocial.moderation.BlockGlyph
 import com.myhobbyislearning.fibersocial.notifications.PollCadence
 import com.myhobbyislearning.fibersocial.notifications.pollCadenceLabel
 import com.myhobbyislearning.fibersocial.ui.UserAvatar
@@ -69,6 +73,7 @@ import com.myhobbyislearning.fibersocial.ui.UserAvatar
  * @param newMessagesEnabled Whether new private-message notifications are on (issue #376).
  * @param onNewMessagesEnabledChange Invoked with the new value when toggled.
  * @param onOpenAbout Opens the "About FiberSocial" disclosure screen (issue #289).
+ * @param onOpenBlockedUsers Opens the blocked-users manage/unblock list (issue #410).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -91,6 +96,7 @@ fun SettingsScreen(
     // Non-null on debug builds only: shows a "Debug panel" entry (issue #207).
     onOpenDebugPanel: (() -> Unit)? = null,
     onOpenAbout: () -> Unit = {},
+    onOpenBlockedUsers: () -> Unit = {},
 ) {
     // Sign out is the only other tappable row on this screen and fires on a single tap
     // with no undo (issue #262) — a fat-finger tap wipes the OAuth session and, via the
@@ -139,7 +145,10 @@ fun SettingsScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding),
+                .padding(padding)
+                // The Blocked users row (issue #410) pushed the bottom rows past a phone
+                // screen's height, and a non-scrolling Column just cuts them off.
+                .verticalScroll(rememberScrollState()),
         ) {
             Row(
                 modifier = Modifier
@@ -212,12 +221,17 @@ fun SettingsScreen(
                     checked = topicRepliesEnabled,
                     onCheckedChange = onTopicRepliesEnabledChange,
                 )
-                SwitchSettingRow(
-                    title = "New messages",
-                    subtitle = "When someone sends you a private message",
-                    checked = newMessagesEnabled,
-                    onCheckedChange = onNewMessagesEnabledChange,
-                )
+                // Messages is compile-time gated out of release builds (see FeatureFlags) —
+                // this toggle would otherwise control notifications for a destination the
+                // user has no way to open.
+                if (FeatureFlags.messagesEnabled) {
+                    SwitchSettingRow(
+                        title = "New messages",
+                        subtitle = "When someone sends you a private message",
+                        checked = newMessagesEnabled,
+                        onCheckedChange = onNewMessagesEnabledChange,
+                    )
+                }
                 HorizontalDivider()
             }
             onOpenDebugPanel?.let { openDebug ->
@@ -234,6 +248,18 @@ fun SettingsScreen(
                 }
                 HorizontalDivider()
             }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onOpenBlockedUsers, onClickLabel = "Blocked users", role = Role.Button)
+                    .padding(horizontal = 16.dp, vertical = 16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                BlockGlyph()
+                Spacer(Modifier.width(16.dp))
+                Text(text = "Blocked users", style = MaterialTheme.typography.bodyLarge)
+            }
+            HorizontalDivider()
             Row(
                 modifier = Modifier
                     .fillMaxWidth()

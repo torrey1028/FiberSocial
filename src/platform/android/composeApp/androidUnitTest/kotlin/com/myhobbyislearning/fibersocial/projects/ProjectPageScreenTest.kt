@@ -47,6 +47,7 @@ class ProjectPageScreenTest {
         onPostComment: (String) -> Unit = {},
         onPostErrorShown: () -> Unit = {},
         onDeleteComment: (ProjectComment) -> Unit = {},
+        blockedUsernames: Set<String> = emptySet(),
     ): @androidx.compose.runtime.Composable () -> Unit = {
         ProjectPageScreen(
             state = state,
@@ -59,6 +60,7 @@ class ProjectPageScreenTest {
             onPostComment = onPostComment,
             onPostErrorShown = onPostErrorShown,
             onDeleteComment = onDeleteComment,
+            blockedUsernames = blockedUsernames,
         )
     }
 
@@ -129,6 +131,23 @@ class ProjectPageScreenTest {
         compose.onNodeWithText("Add a comment…").performTextInput("nice!")
         compose.onNodeWithContentDescription("Post comment").performClick()
         compose.runOnIdle { assertEquals("nice!", posted) }
+    }
+
+    @Test
+    fun `a comment from a blocked author is fully hidden from the comments list`() {
+        val fromBlocked = ProjectComment(id = 1, commentHtml = "<p>lovely work</p>",
+            user = com.myhobbyislearning.fibersocial.feed.models.RavelryUser(username = "blocked-user"))
+        val fromOther = ProjectComment(id = 2, commentHtml = "<p>great socks</p>",
+            user = com.myhobbyislearning.fibersocial.feed.models.RavelryUser(username = "someone-else"))
+        compose.setContent {
+            screen(
+                ProjectPageState.Loaded(link, project),
+                commentsState = ProjectCommentsState.Loaded(listOf(fromBlocked, fromOther)),
+                blockedUsernames = setOf("blocked-user"),
+            )()
+        }
+        compose.onNodeWithText("lovely work").assertDoesNotExist()
+        compose.onNodeWithText("great socks").assertExists()
     }
 
     @Test

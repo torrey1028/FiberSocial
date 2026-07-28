@@ -121,6 +121,7 @@ import com.myhobbyislearning.fibersocial.events.EventDetailScreen
 import com.myhobbyislearning.fibersocial.events.EventsScreen
 import com.myhobbyislearning.fibersocial.events.EventsState
 import com.myhobbyislearning.fibersocial.events.NewEventScreen
+import com.myhobbyislearning.fibersocial.featureflags.FeatureFlags
 import com.myhobbyislearning.fibersocial.feed.models.FeedItem
 import com.myhobbyislearning.fibersocial.feed.models.Group
 import com.myhobbyislearning.fibersocial.feed.models.Post
@@ -134,11 +135,15 @@ import com.myhobbyislearning.fibersocial.feed.models.UserSearchResult
 import com.myhobbyislearning.fibersocial.feed.models.VoteType
 import com.myhobbyislearning.fibersocial.composeapp.resources.Res
 import com.myhobbyislearning.fibersocial.composeapp.resources.app_logo_content_description
+import com.myhobbyislearning.fibersocial.messages.MessageThread
 import com.myhobbyislearning.fibersocial.messages.MessageThreadScreen
 import com.myhobbyislearning.fibersocial.messages.MessagesScreen
+import com.myhobbyislearning.fibersocial.messages.MessagesState
 import com.myhobbyislearning.fibersocial.messages.NewMessageScreen
 import com.myhobbyislearning.fibersocial.messages.ReplyContext
 import com.myhobbyislearning.fibersocial.messages.replySubject
+import com.myhobbyislearning.fibersocial.moderation.BlockedUsersScreen
+import com.myhobbyislearning.fibersocial.moderation.BlockedUsersStore
 import com.myhobbyislearning.fibersocial.profile.UserProfileScreen
 import com.myhobbyislearning.fibersocial.profile.UserProfileState
 import com.myhobbyislearning.fibersocial.notifications.DeepLink
@@ -382,6 +387,10 @@ fun FeedScreen(
     // Where per-topic reply mutes are persisted (issue #338); read for the topic overflow
     // menu's mute state and written when the user toggles it.
     mutedTopicsStore: MutedTopicsStore? = null,
+    // Local blocked-users list (issue #410). Reactive: every surface that filters user
+    // content below collects blockedUsersStore.blockedUsernames directly (not a one-shot
+    // load()), so a block/unblock takes effect instantly everywhere without a refresh.
+    blockedUsersStore: BlockedUsersStore? = null,
     onPollCadenceChanged: (PollCadence) -> Unit = {},
     debugPanelEnabled: Boolean = false,
     onRunEventSync: () -> Unit = {},
@@ -392,6 +401,11 @@ fun FeedScreen(
     val eventsState by viewModel.events.state.collectAsState()
     val eventDetailState by viewModel.eventDetail.state.collectAsState()
     val messagesState by viewModel.messages.state.collectAsState()
+    // Blocked usernames (issue #410), collected directly from the store's StateFlow so a
+    // block/unblock anywhere below recomposes every filter that reads this immediately —
+    // no host wires blockedUsersStore in previews/tests, hence the empty fallback State.
+    val blockedUsernames by blockedUsersStore?.blockedUsernames?.collectAsState()
+        ?: remember { mutableStateOf(emptySet<String>()) }
     // THE conversation-detail nav flag (issue #371). Non-null means a thread is open, and
     // it is the ViewModel's own state rather than a screen-level `mutableStateOf` like the
     // other destinations here: the thread's content, its mark-read pass and the list row's
@@ -523,9 +537,16 @@ fun FeedScreen(
     // Same reasoning as settingsScope above, for the topic-detail mute toggle's early-return
     // block: hoisted here so tapping Back right after toggling mute doesn't cancel the write.
     val muteScope = rememberCoroutineScope()
+    // Same reasoning again, for block/unblock writes (issue #410): hoisted so navigating
+    // away from the post/profile that triggered the write (which the confirmation dialog
+    // dismisses immediately, before the suspend call above necessarily lands) can't cancel
+    // it mid-flight.
+    val blockScope = rememberCoroutineScope()
     // Opened from the Settings block below without clearing showSettings, so backing out
     // of About returns to the still-open Settings screen (issue #289).
     var showAbout by remember { mutableStateOf(false) }
+    // Opened from Settings, same nav shape as showAbout (issue #410).
+    var showBlockedUsers by remember { mutableStateOf(false) }
     var composingTopic by rememberSaveable { mutableStateOf(false) }
     // The message composer (issue #374), following composingTopic's shape exactly: a
     // rememberSaveable flag plus an early return, not a new navigation mechanism.
@@ -570,6 +591,7 @@ fun FeedScreen(
         selectedEventPermalink = null
         showSettings = false
         showAbout = false
+        showBlockedUsers = false
         showDebugPanel = false
         eventsGroup = null
         showingMessages = false
@@ -708,6 +730,14 @@ fun FeedScreen(
             // entirely and reads none of its state, so gating on the feed would strand the
             // tap whenever the feed happened to fail to load.
             is DeepLink.Message -> {
+                // Messages is compile-time gated out of release builds — see FeatureFlags.
+                // A stale notification or shared link tapped on a release build must not
+                // route here at all, since there's no drawer entry or FAB to land the user
+                // on afterward.
+                if (!FeatureFlags.messagesEnabled) {
+                    onDeepLinkConsumed()
+                    return@LaunchedEffect
+                }
                 clearNavigationForDeepLink()
                 showingMessages = true
                 // PARKED FOR #371. Selecting Messages is as far as this can route today —
@@ -724,6 +754,10 @@ fun FeedScreen(
             }
 
             DeepLink.Messages -> {
+                if (!FeatureFlags.messagesEnabled) {
+                    onDeepLinkConsumed()
+                    return@LaunchedEffect
+                }
                 clearNavigationForDeepLink()
                 showingMessages = true
                 onDeepLinkConsumed()
@@ -827,6 +861,7 @@ fun FeedScreen(
             onPostErrorShown = { viewModel.projectPage.acknowledgePostError() },
             onDeleteComment = { viewModel.projectPage.deleteComment(it) },
             onPostAcknowledged = { viewModel.projectPage.acknowledgePosted() },
+            blockedUsernames = blockedUsernames,
         )
         return
     }
@@ -836,6 +871,8 @@ fun FeedScreen(
     // backing out returns there untouched.
     val userProfileState by viewModel.userProfile.state.collectAsState()
     if (userProfileState !is UserProfileState.Hidden) {
+        val profileUriHandler = LocalUriHandler.current
+        val profileUsername = (userProfileState as? UserProfileState.Loaded)?.profile?.username
         UserProfileScreen(
             state = userProfileState,
             onBack = { viewModel.userProfile.dismiss() },
@@ -844,6 +881,29 @@ fun FeedScreen(
             onGroupClick = { group ->
                 viewModel.userProfile.dismiss()
                 viewModel.feed.selectGroup(group)
+            },
+            // Block a user (issue #410) from their own profile page. Stays open after
+            // blocking (unlike onSendMessage/onGroupClick, which dismiss to hand off to
+            // another screen) — blocking is complete in itself, and the header's action
+            // flips to "Unblock" immediately from the same reactive blockedUsernames read.
+            isBlocked = profileUsername != null &&
+                blockedUsernames.any { it.equals(profileUsername, ignoreCase = true) },
+            onBlockUser = { notifyDeveloper ->
+                if (profileUsername != null) {
+                    blockScope.launch {
+                        withContext(NonCancellable) { blockedUsersStore?.block(profileUsername) }
+                    }
+                    if (notifyDeveloper) {
+                        profileUriHandler.openUri(blockUserEmailUri(profileUsername))
+                    }
+                }
+            },
+            onUnblockUser = {
+                if (profileUsername != null) {
+                    blockScope.launch {
+                        withContext(NonCancellable) { blockedUsersStore?.unblock(profileUsername) }
+                    }
+                }
             },
             // Opens the composer addressed to this person (issue #373). The profile is
             // DISMISSED rather than left underneath because this early return sits above
@@ -923,6 +983,23 @@ fun FeedScreen(
         return
     }
 
+    // Rendered before settings, same shape as showAbout above (issue #410): "Blocked
+    // users" (opened from Settings) shows over it; backing out returns to Settings.
+    if (showBlockedUsers) {
+        BlockedUsersScreen(
+            // Sorted so the list has a stable, predictable order — a Set's iteration
+            // order isn't guaranteed, and re-sorting on every recomposition (as opposed
+            // to once when the set changes) would be wasted work for a list this small
+            // that's never in the reactive hot path.
+            blockedUsernames = remember(blockedUsernames) { blockedUsernames.sorted() },
+            onBack = { showBlockedUsers = false },
+            onUnblock = { username ->
+                blockScope.launch { withContext(NonCancellable) { blockedUsersStore?.unblock(username) } }
+            },
+        )
+        return
+    }
+
     if (showSettings) {
         // notificationSettings and its one-shot load are hoisted to FeedScreen's state block
         // (see #360 there) so the optimistic value survives leaving and re-entering Settings.
@@ -985,6 +1062,7 @@ fun FeedScreen(
                 null
             },
             onOpenAbout = { showAbout = true },
+            onOpenBlockedUsers = { showBlockedUsers = true },
         )
         return
     }
@@ -1169,6 +1247,23 @@ fun FeedScreen(
             // has to send themself. Never auto-sent.
             onReportToDeveloper = { post ->
                 uriHandler.openUri(reportPostEmailUri(topic, post, groupPermalink))
+            },
+            // Block a user (issue #410): the per-post overflow menu's second action.
+            // blockedUsernames drives the reply list's instant filtering; onBlockUser
+            // persists the block (and, if requested, opens the same drafts-only
+            // notify-the-developer mailto as onReportToDeveloper above) after the
+            // confirmation dialog TopicDetailScreen itself renders.
+            blockedUsernames = blockedUsernames,
+            onBlockUser = { post, notifyDeveloper ->
+                val username = post.user?.username
+                if (username != null) {
+                    blockScope.launch {
+                        withContext(NonCancellable) { blockedUsersStore?.block(username) }
+                    }
+                    if (notifyDeveloper) {
+                        uriHandler.openUri(blockUserEmailUri(username, topic, post, groupPermalink))
+                    }
+                }
             },
             attachment = replyAttachment,
             onImagePicked = { uri -> viewModel.attachReplyImage(uri) },
@@ -1441,8 +1536,21 @@ fun FeedScreen(
         ) { padding ->
             // Messages replaces the feed content while keeping the drawer and top bar, so the
             // user can navigate back out to Posts or a group (issue #370, epic #365).
+            // Blocked-user filtering (issue #410): a conversation whose counterpart is
+            // blocked is dropped entirely from the mailbox, reactively — see
+            // filterBlockedThreads. remember(..) avoids rebuilding the state (and its
+            // wrapped List) on every unrelated recomposition of this large composable.
+            val displayedMessagesState = remember(messagesState, blockedUsernames) {
+                val snapshot = messagesState
+                when (snapshot) {
+                    is MessagesState.Loaded -> snapshot.copy(
+                        threads = filterBlockedThreads(snapshot.threads, blockedUsernames),
+                    )
+                    else -> snapshot
+                }
+            }
             if (showingMessages) MessagesScreen(
-                state = messagesState,
+                state = displayedMessagesState,
                 onRefresh = { viewModel.messages.refresh() },
                 // NOT refresh(): retry has to work from the error state, where refresh has
                 // no loaded content to refresh and would no-op — that is exactly the open
@@ -1494,7 +1602,7 @@ fun FeedScreen(
                     onRefresh = { viewModel.feed.refresh() },
                     modifier = Modifier.padding(padding),
                 ) {
-                    val displayedItems = filterUnread(s.items, showUnreadOnly)
+                    val displayedItems = filterBlocked(filterUnread(s.items, showUnreadOnly), blockedUsernames)
                     if (showUnreadOnly && displayedItems.isEmpty()) {
                         UnreadFilterEmptyState(
                             hasMore = s.hasMore,
@@ -1542,7 +1650,7 @@ fun FeedScreen(
                     onRefresh = { viewModel.feed.refresh() },
                     modifier = Modifier.padding(padding),
                 ) {
-                    val displayedItems = filterUnread(s.stale.items, showUnreadOnly)
+                    val displayedItems = filterBlocked(filterUnread(s.stale.items, showUnreadOnly), blockedUsernames)
                     if (showUnreadOnly && displayedItems.isEmpty()) {
                         UnreadFilterEmptyState(
                             hasMore = s.stale.hasMore,
@@ -1626,6 +1734,8 @@ internal fun TopicDetailRoute(
     onDismissReport: () -> Unit = {},
     onReportSent: () -> Unit = {},
     onReportToDeveloper: (Post) -> Unit = {},
+    blockedUsernames: Set<String> = emptySet(),
+    onBlockUser: (post: Post, notifyDeveloper: Boolean) -> Unit = { _, _ -> },
     attachment: ImageAttachmentState = ImageAttachmentState.Idle,
     onImagePicked: (String) -> Unit = {},
     onAttachmentInserted: () -> Unit = {},
@@ -1672,6 +1782,8 @@ internal fun TopicDetailRoute(
         onDismissReport = onDismissReport,
         onReportSent = onReportSent,
         onReportToDeveloper = onReportToDeveloper,
+        blockedUsernames = blockedUsernames,
+        onBlockUser = onBlockUser,
         attachment = attachment,
         onImagePicked = onImagePicked,
         onAttachmentInserted = onAttachmentInserted,
@@ -1734,6 +1846,44 @@ internal fun reportPostEmailUri(topic: FeedItem, post: Post, groupPermalink: Str
         link?.let { "Topic link: $it" },
         "Post author: ${post.user?.username ?: "unknown"}",
         "Post ID: ${post.id}",
+    ).joinToString("\n").encodeURLParameter()
+    return "mailto:myhobbyislearning@gmail.com?subject=$subject&body=$body"
+}
+
+/**
+ * Builds the pre-addressed "notify the developer" mailto URI for blocking [username]
+ * (issue #410's developer-notification step — the same drafts-only mechanism as
+ * [reportPostEmailUri] and [com.myhobbyislearning.fibersocial.about.AboutScreen]'s
+ * child-safety report). Never auto-sent: this only builds the URI, the caller opens it,
+ * and the user still has to tap send themself, keeping the About screen's "nothing you do
+ * in FiberSocial is sent to the developer" statement true.
+ *
+ * @param topic The topic the block was initiated from, if any (null when blocked from the
+ *   profile screen rather than a post's overflow menu). Mirrors [reportPostEmailUri]'s
+ *   best-effort context: identifying details when known, a plain block notice otherwise.
+ * @param post The specific post that prompted the block, if any.
+ * @param groupPermalink Same best-effort permalink [reportPostEmailUri] resolves, for a
+ *   real topic link when [topic] is supplied and the group is known.
+ */
+internal fun blockUserEmailUri(
+    username: String,
+    topic: FeedItem? = null,
+    post: Post? = null,
+    groupPermalink: String? = null,
+): String {
+    val subject = "FiberSocial user block: $username".encodeURLParameter()
+    val link = if (topic != null && groupPermalink != null) {
+        "https://www.ravelry.com/discuss/$groupPermalink/${topic.id}"
+    } else {
+        null
+    }
+    val body = listOfNotNull(
+        "Please describe why you blocked this user, if you'd like to.",
+        "",
+        "Blocked user: @$username",
+        topic?.let { "Topic: ${it.title}" },
+        link?.let { "Topic link: $it" },
+        post?.let { "Post ID: ${it.id}" },
     ).joinToString("\n").encodeURLParameter()
     return "mailto:myhobbyislearning@gmail.com?subject=$subject&body=$body"
 }
@@ -2072,22 +2222,28 @@ internal fun GroupDrawer(
                 },
                 modifier = Modifier.padding(horizontal = 12.dp),
             )
-            Spacer(Modifier.height(8.dp))
-            HorizontalDivider(Modifier.testTag("DrawerNavDividerAboveMessages"))
-            Spacer(Modifier.height(8.dp))
-            // Direct messages (#369). A peer of "Posts" rather than a group-list entry, so it
-            // gets the same row treatment, including the unread-dot slot.
-            NavigationDrawerItem(
-                label = { Text("Messages") },
-                selected = messagesSelected,
-                onClick = { if (!reorderMode) onMessagesSelected() },
-                icon = {
-                    IconWithUnreadDot(hasUnread = messagesHasUnread) {
-                        Icon(Icons.Default.Email, contentDescription = null)
-                    }
-                },
-                modifier = Modifier.padding(horizontal = 12.dp),
-            )
+            // Messages is compile-time gated out of release builds (drawer entry, deep links,
+            // and new-message notifications all key off the same FeatureFlags.messagesEnabled)
+            // — hidden here rather than merely disabled so a release build never shows an
+            // entry point to a destination it can't reach.
+            if (FeatureFlags.messagesEnabled) {
+                Spacer(Modifier.height(8.dp))
+                HorizontalDivider(Modifier.testTag("DrawerNavDividerAboveMessages"))
+                Spacer(Modifier.height(8.dp))
+                // Direct messages (#369). A peer of "Posts" rather than a group-list entry, so
+                // it gets the same row treatment, including the unread-dot slot.
+                NavigationDrawerItem(
+                    label = { Text("Messages") },
+                    selected = messagesSelected,
+                    onClick = { if (!reorderMode) onMessagesSelected() },
+                    icon = {
+                        IconWithUnreadDot(hasUnread = messagesHasUnread) {
+                            Icon(Icons.Default.Email, contentDescription = null)
+                        }
+                    },
+                    modifier = Modifier.padding(horizontal = 12.dp),
+                )
+            }
             Spacer(Modifier.height(8.dp))
             HorizontalDivider(Modifier.testTag("DrawerNavDividerAboveGroups"))
             Spacer(Modifier.height(8.dp))
@@ -2470,6 +2626,38 @@ private fun GroupEventsBadge(count: Int, onClick: () -> Unit) {
  */
 internal fun filterUnread(items: List<FeedItem>, showUnreadOnly: Boolean): List<FeedItem> =
     if (showUnreadOnly) items.filter { it.unreadCount > 0 } else items
+
+/**
+ * Purely client-side block filter (issue #410), applied after [filterUnread] wherever the
+ * feed renders topic cards. A topic's card is attributed to its STARTER ([FeedItem.author]
+ * — see the class KDoc), so blocking hides topics that person opened; a reply from a
+ * blocked user deep inside someone else's topic is instead hidden at the post level (see
+ * `filterBlockedPosts` in `TopicDetailScreen.kt`), since the card itself carries no
+ * per-reply author to filter on. Compared case-insensitively, matching
+ * [com.myhobbyislearning.fibersocial.moderation.isBlocked].
+ */
+internal fun filterBlocked(items: List<FeedItem>, blockedUsernames: Set<String>): List<FeedItem> =
+    if (blockedUsernames.isEmpty()) {
+        items
+    } else {
+        items.filterNot { item -> blockedUsernames.any { it.equals(item.author.username, ignoreCase = true) } }
+    }
+
+/**
+ * Purely client-side block filter (issue #410) over the Messages conversation list: a
+ * thread whose [MessageThread.counterpart] is blocked is dropped entirely, so no message
+ * from (or to) that person shows in the mailbox. A thread with no resolvable counterpart
+ * (see `MessageThreads.kt`) is never filtered — there's no username to have blocked.
+ */
+internal fun filterBlockedThreads(threads: List<MessageThread>, blockedUsernames: Set<String>): List<MessageThread> =
+    if (blockedUsernames.isEmpty()) {
+        threads
+    } else {
+        threads.filterNot { thread ->
+            val username = thread.counterpart?.username ?: return@filterNot false
+            blockedUsernames.any { it.equals(username, ignoreCase = true) }
+        }
+    }
 
 /** Visible-item slack before the end of the list that triggers [onLoadMore]. */
 private const val LOAD_MORE_THRESHOLD = 5
