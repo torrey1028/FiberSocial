@@ -115,6 +115,12 @@ android {
     defaultConfig {
         minSdk = 26
     }
+    // For this module's own generated BuildConfig.DEBUG, which FeatureFlags.android.kt reads —
+    // this module's debug/release variant always matches :app's (Gradle resolves the matching
+    // build-type variant of a project dependency automatically), so no wiring from :app is needed.
+    buildFeatures {
+        buildConfig = true
+    }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17

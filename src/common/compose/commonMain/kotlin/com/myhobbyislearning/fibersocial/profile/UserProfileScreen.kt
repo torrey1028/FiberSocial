@@ -50,6 +50,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import com.myhobbyislearning.fibersocial.featureflags.FeatureFlags
 import com.myhobbyislearning.fibersocial.feed.PostBody
 import com.myhobbyislearning.fibersocial.feed.html.HtmlPostParser
 import com.myhobbyislearning.fibersocial.feed.models.Group
@@ -83,7 +84,9 @@ import com.myhobbyislearning.fibersocial.ui.GroupBadge
  * @param currentUsername The signed-in user's handle. `null` (the feed hasn't resolved the
  *   user yet) HIDES the action rather than showing it: offering "message yourself" is a
  *   worse failure than briefly omitting an affordance, and the profile is only reachable
- *   from screens the loaded feed already backs.
+ *   from screens the loaded feed already backs. Also hidden outright when
+ *   [FeatureFlags.messagesEnabled] is false — Messages is compile-time gated out of
+ *   release builds, and this is one of its entry points.
  * @param onSendMessage Invoked with the profile owner's username.
  * @param isBlocked Whether the profile owner is on the local blocked-users list (issue
  *   #410). Drives the header's Block/Unblock action; like [onSendMessage] this is gated
@@ -164,6 +167,7 @@ fun UserProfileScreen(
                 // casing the feed resolved for the signed-in user need not match the casing
                 // the profile fetch echoed back.
                 onSendMessage = if (
+                    FeatureFlags.messagesEnabled &&
                     currentUsername != null &&
                     !currentUsername.equals(state.profile.username, ignoreCase = true)
                 ) {

@@ -4,6 +4,7 @@ import com.myhobbyislearning.fibersocial.app.ravelryClientId
 import com.myhobbyislearning.fibersocial.app.ravelryClientSecret
 import com.myhobbyislearning.fibersocial.auth.KeyValueTokenStorage
 import com.myhobbyislearning.fibersocial.auth.SessionExpiredException
+import com.myhobbyislearning.fibersocial.featureflags.FeatureFlags
 import com.myhobbyislearning.fibersocial.net.ravelryApiClient
 import com.myhobbyislearning.fibersocial.net.ravelryAuthRepository
 import com.myhobbyislearning.fibersocial.net.ravelryHttpClient
@@ -108,9 +109,12 @@ object EventSync {
         val notifier = IosEventNotifier()
         plan.newEventNotifications.forEach { notifier.showNewEvent(it) }
         plan.newReplyNotifications.forEach { notifier.showNewReplies(it) }
+        // Messages is compile-time gated out of release builds (see FeatureFlags) — a
+        // notification that deep-links to a hidden destination would be a dead end.
+        //
         // Whole batch, not forEach: the messages notifier collapses several messages in one
         // conversation into a single banner (see IosEventNotifier.showNewMessages).
-        notifier.showNewMessages(plan.newMessageNotifications)
+        if (FeatureFlags.messagesEnabled) notifier.showNewMessages(plan.newMessageNotifications)
         plan.remindersToCancel.forEach { notifier.cancelReminder(it) }
         // Re-arm everything still in the future, not just the plan's diff — same
         // crash-safety reasoning as Android's EventSyncWorker: state persists before

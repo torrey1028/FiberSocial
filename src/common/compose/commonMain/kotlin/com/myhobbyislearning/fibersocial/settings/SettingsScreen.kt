@@ -46,6 +46,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import com.myhobbyislearning.fibersocial.featureflags.FeatureFlags
 import com.myhobbyislearning.fibersocial.feed.models.RavelryUser
 import com.myhobbyislearning.fibersocial.moderation.BlockGlyph
 import com.myhobbyislearning.fibersocial.notifications.PollCadence
@@ -220,12 +221,17 @@ fun SettingsScreen(
                     checked = topicRepliesEnabled,
                     onCheckedChange = onTopicRepliesEnabledChange,
                 )
-                SwitchSettingRow(
-                    title = "New messages",
-                    subtitle = "When someone sends you a private message",
-                    checked = newMessagesEnabled,
-                    onCheckedChange = onNewMessagesEnabledChange,
-                )
+                // Messages is compile-time gated out of release builds (see FeatureFlags) —
+                // this toggle would otherwise control notifications for a destination the
+                // user has no way to open.
+                if (FeatureFlags.messagesEnabled) {
+                    SwitchSettingRow(
+                        title = "New messages",
+                        subtitle = "When someone sends you a private message",
+                        checked = newMessagesEnabled,
+                        onCheckedChange = onNewMessagesEnabledChange,
+                    )
+                }
                 HorizontalDivider()
             }
             onOpenDebugPanel?.let { openDebug ->
