@@ -78,6 +78,10 @@ actual fun WebViewLoginScreen(
                 CookieManager.getInstance().setAcceptCookie(true)
                 CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
                 webViewClient = object : WebViewClient() {
+                    override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
+                        println("FiberSocial: WebView onPageStarted $url")
+                        super.onPageStarted(view, url, favicon)
+                    }
                     override fun shouldOverrideUrlLoading(
                         view: WebView,
                         request: WebResourceRequest,
