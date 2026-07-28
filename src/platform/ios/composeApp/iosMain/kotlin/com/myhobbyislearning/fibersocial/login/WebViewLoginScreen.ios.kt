@@ -19,6 +19,7 @@ import platform.Foundation.NSURL
 import platform.Foundation.NSURLRequest
 import platform.WebKit.WKNavigationAction
 import platform.WebKit.WKNavigationActionPolicy
+import platform.WebKit.WKNavigationTypeLinkActivated
 import platform.WebKit.WKNavigationDelegateProtocol
 import platform.UIKit.UIApplication
 import platform.WebKit.WKWebView
@@ -82,18 +83,26 @@ private class LoginNavigationDelegate(
         val url = decidePolicyForNavigationAction.request.URL?.absoluteString ?: ""
         println("FiberSocial: WebView navigating to ${url.take(120)}")
         if (!url.startsWith(RavelryAuthManager.REDIRECT_URI)) {
-            // Anything beyond the auth flow opens in Safari instead of being rendered
-            // in-app — the login WebView is not a Ravelry browser (issue #425; Apple
-            // browsed it to the web messages composer and crashed the app from its
-            // camera upload, the 2.1(a) rejection). Only main-frame navigations are
-            // policed; a null targetFrame means a new-window attempt, which is treated
-            // as main-frame. Subframe loads can't take the user anywhere, and
-            // cancelling them would just break allowed pages.
+            // Anything beyond the auth flow is cancelled — the login WebView is not
+            // a Ravelry browser (issue #425; Apple browsed it to the web messages
+            // composer and crashed the app from its camera upload, the 2.1(a)
+            // rejection). A link the user actually tapped opens in Safari; a
+            // server-driven redirect (e.g. Ravelry occasionally dropping the OAuth
+            // return-to after login and redirecting to the homepage) is cancelled
+            // silently so the WebView stays on the auth flow instead of
+            // surprise-launching Safari. Only main-frame navigations are policed; a
+            // null targetFrame means a new-window attempt, which is treated as
+            // main-frame. Subframe loads can't take the user anywhere, and cancelling
+            // them would just break allowed pages.
             val isMainFrame = decidePolicyForNavigationAction.targetFrame?.mainFrame ?: true
             if (isMainFrame && !isAllowedLoginNavigation(url)) {
-                println("FiberSocial: WebView blocked non-login navigation to ${url.take(120)}; opening externally")
-                decidePolicyForNavigationAction.request.URL?.let { blocked ->
-                    UIApplication.sharedApplication.openURL(blocked, emptyMap<Any?, Any>(), null)
+                if (decidePolicyForNavigationAction.navigationType == WKNavigationTypeLinkActivated) {
+                    println("FiberSocial: WebView blocked tapped non-login link ${url.take(120)}; opening externally")
+                    decidePolicyForNavigationAction.request.URL?.let { blocked ->
+                        UIApplication.sharedApplication.openURL(blocked, emptyMap<Any?, Any>(), null)
+                    }
+                } else {
+                    println("FiberSocial: WebView cancelled non-login redirect to ${url.take(120)}")
                 }
                 decisionHandler(WKNavigationActionPolicy.WKNavigationActionPolicyCancel)
                 return
