@@ -68,5 +68,11 @@ class KeyValueTermsAcceptanceStore(store: KeyValueStore) : TermsAcceptanceStore 
  * message with an unrelated "agree to terms" prompt on every failed re-login attempt,
  * hiding the retry information `AuthState.Error` exists to surface.
  */
-fun shouldShowTermsGate(authState: AuthState, acceptance: TermsAcceptance?): Boolean =
-    authState is AuthState.Unauthenticated && acceptance?.isCurrent == false
+fun shouldShowTermsGate(authState: AuthState, acceptance: TermsAcceptance?): Boolean {
+    val show = authState is AuthState.Unauthenticated && acceptance?.isCurrent == false
+    println(
+        "FiberSocial: shouldShowTermsGate authState=${authState::class.simpleName} " +
+            "acceptance=$acceptance -> $show",
+    )
+    return show
+}
