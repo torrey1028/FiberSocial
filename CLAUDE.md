@@ -17,6 +17,7 @@
 - **iOS release-candidate QA pipeline** (issue #265, iOS half only — Android's `release.yml` is still the pre-#265 immediate-publish flow, unchanged, pending a separate follow-up) needs two more pieces, neither of which exist yet — set these up manually before `release-ios.yml` can run end to end:
   - `IOS_TESTFLIGHT_QA_GROUP_NAME` (repo **variable**): the name of an External Testing group in App Store Connect that QA testers belong to. `release-ios.yml`'s `build-rc` job uses `fastlane pilot` (reusing the existing `IOS_ASC_*` secrets — no new iOS secret needed) to add each release candidate to this group automatically.
   - A new GitHub **Environment** (Settings → Environments) named `ios-release`, with "Required reviewers" turned on. This is the actual manual-QA gate — the `promote` job pauses until an approved reviewer signs off in the Actions UI, after running `docs/ios-device-checklist.md` against the release candidate. (Precedent for the `environment:` key already in this repo: `pages.yml`'s `github-pages` environment.)
+- `ios-debug-build.yml` (see `docs/ios-debug-builds.md`) needs one more secret beyond the above: `IOS_ADHOC_PROVISIONING_PROFILE_BASE64`, an **Ad Hoc** (not App Store) provisioning profile scoped to specific registered devices. It reuses the same `IOS_DIST_CERTIFICATE_*`/`APPLE_TEAM_ID`/Ravelry secrets as `release-ios.yml` — Ad Hoc profiles are signed with the same Distribution certificate, just device-limited, so no new certificate is needed, only a new profile.
 
 ## Building & running the Android app
 

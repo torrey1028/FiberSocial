@@ -38,6 +38,10 @@ The "Build ComposeApp framework" phase runs
 `./gradlew :composeApp:embedAndSignAppleFrameworkForXcode` in `src/platform/android`,
 so the Kotlin side rebuilds automatically on every Xcode build.
 
+**No Mac available?** `.github/workflows/ios-debug-build.yml` builds a Debug
+build on a GitHub Actions macOS runner and publishes an over-the-air install
+link for a registered iPhone — see `docs/ios-debug-builds.md`.
+
 ## TestFlight & signing
 
 **Tagged releases build a release candidate automatically** — pushing a
