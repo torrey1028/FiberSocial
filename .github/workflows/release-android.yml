@@ -8,6 +8,21 @@ name: Release Android
 on:
   push:
     tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+  # Lets the test/build/signing pipeline be dry-run tested without cutting a
+  # real version tag — mirrors release-ios.yml's workflow_dispatch, with one
+  # necessary difference: iOS can use a sentinel "0.0.0" marketing version
+  # because that's the one value scripts/release.sh rejects, so it can never
+  # collide with a real TestFlight build. Android has no equivalent safe
+  # sentinel — build.gradle.kts's own versionCode derivation also rejects
+  # "0.0.0" (it packs to versionCode 0, which Android disallows), and Play
+  # Console requires versionCode to strictly increase across the app's
+  # *entire* release history, not per-track, so there's no reserved value a
+  # dry run could safely reuse without either risking a real collision or
+  # widening build.gradle.kts's validated range. A dispatch run therefore
+  # skips the tag-only steps below (Play Console upload, GitHub Release
+  # create/promote) — it still exercises the tests and the signed release
+  # build itself, which is the fragile part.
+  workflow_dispatch:
 
 jobs:
   build-rc:
@@ -41,6 +56,7 @@ jobs:
       # run, so the APK's baked-in version could silently mismatch the release
       # it ships under. Assert both before spending a build.
       - name: Verify tag is on main and resolves unambiguously
+        if: github.event_name == 'push'
         run: |
           if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
             echo "::error::Tag $GITHUB_REF_NAME points at $GITHUB_SHA, which is not on origin/main. Cut release tags from main via scripts/release.sh."
@@ -151,6 +167,7 @@ jobs:
       # point of this job: this is a release *candidate*, not the released
       # build — the `promote` job below flips it in place once QA signs off.
       - name: Publish GitHub Release as a release candidate
+        if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -168,6 +185,7 @@ jobs:
       # release between tracks with this action — see that job's comment for
       # why this isn't a rebuild.
       - name: Upload AAB to Play Console testing track
+        if: github.event_name == 'push'
         uses: r0adkll/upload-google-play@v1
         with:
           serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
@@ -181,6 +199,7 @@ jobs:
       # below — this summary just tells the approving reviewer what to check
       # before they click Approve.
       - name: Write QA summary
+        if: github.event_name == 'push'
         env:
           # Same reasoning as "Verify release secrets are configured": route
           # through env rather than ${{ }} inside the script.
@@ -194,8 +213,26 @@ jobs:
             echo "- Once QA passes, approve the \`android-release\` environment on the \`promote\` job of this run to push to production and flip the GitHub Release live."
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # Dispatch runs stop here — see the on.workflow_dispatch comment for
+      # why the Play Console/GitHub Release steps above are push-only.
+      - name: Write dry-run summary
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          {
+            echo "## Dry run complete"
+            echo ""
+            echo "Tests passed and the release APK/AAB built and signed successfully."
+            echo "The Play Console upload, GitHub Release, and \`promote\` steps only run"
+            echo "on a real version-tag push — see the \`workflow_dispatch\` comment in"
+            echo "this workflow file for why."
+          } >> "$GITHUB_STEP_SUMMARY"
+
   promote:
     needs: build-rc
+    # Dispatch (dry-run) builds never reach this job: with no real tag there's
+    # no GitHub Release to promote and no guaranteed-safe versionCode to push
+    # to Play's production track — see the on.workflow_dispatch comment above.
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     # No concurrency group here (unlike build-rc): this job can sit paused for
     # however long manual QA/approval takes, and needs.build-rc.outputs already
