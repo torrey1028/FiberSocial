@@ -144,6 +144,7 @@ import com.myhobbyislearning.fibersocial.messages.ReplyContext
 import com.myhobbyislearning.fibersocial.messages.replySubject
 import com.myhobbyislearning.fibersocial.moderation.BlockedUsersScreen
 import com.myhobbyislearning.fibersocial.moderation.BlockedUsersStore
+import com.myhobbyislearning.fibersocial.moderation.containsUsername
 import com.myhobbyislearning.fibersocial.profile.UserProfileScreen
 import com.myhobbyislearning.fibersocial.profile.UserProfileState
 import com.myhobbyislearning.fibersocial.notifications.DeepLink
@@ -886,8 +887,7 @@ fun FeedScreen(
             // blocking (unlike onSendMessage/onGroupClick, which dismiss to hand off to
             // another screen) — blocking is complete in itself, and the header's action
             // flips to "Unblock" immediately from the same reactive blockedUsernames read.
-            isBlocked = profileUsername != null &&
-                blockedUsernames.any { it.equals(profileUsername, ignoreCase = true) },
+            isBlocked = blockedUsernames.containsUsername(profileUsername),
             onBlockUser = { notifyDeveloper ->
                 if (profileUsername != null) {
                     blockScope.launch {
@@ -2633,15 +2633,10 @@ internal fun filterUnread(items: List<FeedItem>, showUnreadOnly: Boolean): List<
  * — see the class KDoc), so blocking hides topics that person opened; a reply from a
  * blocked user deep inside someone else's topic is instead hidden at the post level (see
  * `filterBlockedPosts` in `TopicDetailScreen.kt`), since the card itself carries no
- * per-reply author to filter on. Compared case-insensitively, matching
- * [com.myhobbyislearning.fibersocial.moderation.isBlocked].
+ * per-reply author to filter on. Compared case-insensitively via [containsUsername].
  */
 internal fun filterBlocked(items: List<FeedItem>, blockedUsernames: Set<String>): List<FeedItem> =
-    if (blockedUsernames.isEmpty()) {
-        items
-    } else {
-        items.filterNot { item -> blockedUsernames.any { it.equals(item.author.username, ignoreCase = true) } }
-    }
+    items.filterNot { blockedUsernames.containsUsername(it.author.username) }
 
 /**
  * Purely client-side block filter (issue #410) over the Messages conversation list: a
@@ -2650,14 +2645,7 @@ internal fun filterBlocked(items: List<FeedItem>, blockedUsernames: Set<String>)
  * (see `MessageThreads.kt`) is never filtered — there's no username to have blocked.
  */
 internal fun filterBlockedThreads(threads: List<MessageThread>, blockedUsernames: Set<String>): List<MessageThread> =
-    if (blockedUsernames.isEmpty()) {
-        threads
-    } else {
-        threads.filterNot { thread ->
-            val username = thread.counterpart?.username ?: return@filterNot false
-            blockedUsernames.any { it.equals(username, ignoreCase = true) }
-        }
-    }
+    threads.filterNot { blockedUsernames.containsUsername(it.counterpart?.username) }
 
 /** Visible-item slack before the end of the list that triggers [onLoadMore]. */
 private const val LOAD_MORE_THRESHOLD = 5

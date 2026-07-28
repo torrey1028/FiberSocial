@@ -148,6 +148,33 @@ class BlockedUsersStoreIsBlockedTest {
     }
 }
 
+class ContainsUsernameTest {
+    @Test
+    fun `containsUsername is true for an exact match`() {
+        assertTrue(setOf("someone").containsUsername("someone"))
+    }
+
+    @Test
+    fun `containsUsername compares case-insensitively`() {
+        assertTrue(setOf("Someone").containsUsername("sOMEONE"))
+    }
+
+    @Test
+    fun `containsUsername is false for a null username`() {
+        assertFalse(setOf("someone").containsUsername(null))
+    }
+
+    @Test
+    fun `containsUsername is false for someone not on the list`() {
+        assertFalse(setOf("someone").containsUsername("someone-else"))
+    }
+
+    @Test
+    fun `containsUsername is false on an empty set`() {
+        assertFalse(emptySet<String>().containsUsername("someone"))
+    }
+}
+
 /** Wraps a [KeyValueStore], yielding before every call to force real interleaving in tests. */
 private class YieldingKeyValueStore(private val delegate: KeyValueStore) : KeyValueStore {
     override suspend fun getString(key: String): String? {
