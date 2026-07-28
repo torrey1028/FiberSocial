@@ -21,6 +21,12 @@ name: iOS Debug Build
 #     repo secret.
 on:
   workflow_dispatch:
+  # TEMPORARY, for pre-merge testing only — workflow_dispatch can't target a
+  # workflow file that doesn't exist on the default branch yet, so there's no
+  # way to manually dispatch this from a PR branch before it merges. Reverted
+  # before merge; see the PR discussion.
+  push:
+    branches: ["feat/ios-debug-ota"]
 
 # Shares release.yml's ios-release job's macOS toolchain setup pattern, but
 # is otherwise independent — no test suites, no App Store Connect upload, no
