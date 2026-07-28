@@ -25,7 +25,9 @@ import com.myhobbyislearning.fibersocial.auth.MALFORMED_AUTH_CALLBACK_MESSAGE
 import com.myhobbyislearning.fibersocial.auth.RavelryAuthManager
 import com.myhobbyislearning.fibersocial.auth.authFailureMessage
 import com.myhobbyislearning.fibersocial.auth.parseAuthCallback
+import com.myhobbyislearning.fibersocial.debug.DebugLog
 import com.myhobbyislearning.fibersocial.debug.describeSessionCookie
+import com.myhobbyislearning.fibersocial.debug.describeUrlForLog
 
 @Composable
 actual fun WebViewLoginScreen(
@@ -34,7 +36,7 @@ actual fun WebViewLoginScreen(
     onAuthError: (message: String) -> Unit,
     onBack: () -> Unit,
 ) {
-    println("FiberSocial: WebViewLoginScreen authUrl=$authUrl")
+    DebugLog.log("WebViewLoginScreen authUrl=$authUrl")
     // Holds the created WebView so BackHandler below can check/drive its own history —
     // AndroidView's factory runs once the underlying view exists, which BackHandler
     // (evaluated on every composition) can't reach any other way.
@@ -83,19 +85,19 @@ actual fun WebViewLoginScreen(
                         request: WebResourceRequest,
                     ): Boolean {
                         val url = request.url.toString()
-                        println("FiberSocial: WebView navigating to ${url.take(120)}")
+                        DebugLog.log("WebView navigating to ${describeUrlForLog(url)}")
                         if (url.startsWith(RavelryAuthManager.REDIRECT_URI)) {
                             // Every branch below must call something. Returning true
                             // cancels the navigation, so a silent return strands the user
                             // on the authorize page with no way forward (issue #394).
                             val callback = parseAuthCallback(url)
                             if (callback is AuthCallback.Failure) {
-                                println("FiberSocial: OAuth failed: ${callback.error}")
+                                DebugLog.log("OAuth failed: ${callback.error} description=${callback.description}")
                                 onAuthError(authFailureMessage(callback))
                                 return true
                             }
                             if (callback !is AuthCallback.Success) {
-                                println("FiberSocial: OAuth redirect carried neither code nor error")
+                                DebugLog.log("OAuth redirect carried neither code nor error")
                                 onAuthError(MALFORMED_AUTH_CALLBACK_MESSAGE)
                                 return true
                             }
@@ -104,11 +106,11 @@ actual fun WebViewLoginScreen(
                             val cm = CookieManager.getInstance()
                             val wwwCookie = cm.getCookie("https://www.ravelry.com") ?: ""
                             val rootCookie = cm.getCookie("https://ravelry.com") ?: ""
-                            println("FiberSocial: OAuth complete")
+                            DebugLog.log("OAuth complete")
                             // Never interpolate a cookie directly — describeSessionCookie
                             // hides the value unless a debug build opted in (issue #395).
-                            println("FiberSocial: www.ravelry.com cookie ${describeSessionCookie(wwwCookie)}")
-                            println("FiberSocial: ravelry.com cookie ${describeSessionCookie(rootCookie)}")
+                            DebugLog.log("www.ravelry.com cookie ${describeSessionCookie(wwwCookie)}")
+                            DebugLog.log("ravelry.com cookie ${describeSessionCookie(rootCookie)}")
                             val cookie = wwwCookie.ifEmpty { rootCookie }
                             onAuthComplete(code, state, cookie)
                             return true
@@ -121,14 +123,14 @@ actual fun WebViewLoginScreen(
                         request: WebResourceRequest,
                         error: WebResourceError,
                     ) {
-                        println("FiberSocial: WebView error ${error.errorCode} ${error.description} url=${request.url}")
+                        DebugLog.log("WebView error ${error.errorCode} ${error.description} url=${request.url}")
                     }
 
                     override fun onPageFinished(view: WebView, url: String) {
-                        println("FiberSocial: WebView page loaded: ${url.take(120)}")
+                        DebugLog.log("WebView page loaded: ${describeUrlForLog(url)}")
                     }
                 }
-                println("FiberSocial: WebView loading $authUrl")
+                DebugLog.log("WebView loading $authUrl")
                 loadUrl(authUrl)
                 webViewRef = this
             }

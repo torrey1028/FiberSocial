@@ -7,6 +7,7 @@ import com.myhobbyislearning.fibersocial.BuildConfig
 import com.myhobbyislearning.fibersocial.auth.AuthViewModel
 import com.myhobbyislearning.fibersocial.auth.KeyValueTokenStorage
 import com.myhobbyislearning.fibersocial.auth.RavelryAuthManager
+import com.myhobbyislearning.fibersocial.debug.DebugLog
 import com.myhobbyislearning.fibersocial.net.ravelryAuthRepository
 import com.myhobbyislearning.fibersocial.net.ravelryHttpClient
 import com.myhobbyislearning.fibersocial.storage.AUTH_PREFS_NAME
@@ -51,7 +52,7 @@ class AuthAndroidViewModel(app: Application) : AndroidViewModel(app) {
         // Reject a redirect whose state doesn't match the one we issued before exchanging
         // the code — login-CSRF defense (issue #149).
         if (!authManager.validateState(state)) {
-            println("FiberSocial: OAuth state mismatch — rejecting login (possible CSRF)")
+            DebugLog.log("OAuth state mismatch — rejecting login (possible CSRF)")
             auth.failLogin("Login could not be verified. Please try again.")
             return
         }

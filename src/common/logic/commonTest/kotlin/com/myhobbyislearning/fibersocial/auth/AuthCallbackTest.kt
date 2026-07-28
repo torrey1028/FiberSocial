@@ -90,12 +90,14 @@ class AuthCallbackTest {
     }
 
     @Test
-    fun `other failures prefer the server's own description`() {
+    fun `other failures prefer the server's own description and append the code`() {
+        // The code rides along because descriptions can be generic boilerplate ("The
+        // error is unrecognizable") that identifies nothing on its own in a bug report.
         val message = authFailureMessage(
             AuthCallback.Failure("invalid_scope", "The requested scope is invalid"),
         )
 
-        assertEquals("The requested scope is invalid", message)
+        assertEquals("The requested scope is invalid (invalid_scope)", message)
     }
 
     @Test

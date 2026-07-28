@@ -10,12 +10,16 @@ import com.myhobbyislearning.fibersocial.auth.MALFORMED_AUTH_CALLBACK_MESSAGE
 import com.myhobbyislearning.fibersocial.auth.RavelryAuthManager
 import com.myhobbyislearning.fibersocial.auth.authFailureMessage
 import com.myhobbyislearning.fibersocial.auth.parseAuthCallback
+import com.myhobbyislearning.fibersocial.debug.DebugLog
 import com.myhobbyislearning.fibersocial.debug.describeSessionCookie
+import com.myhobbyislearning.fibersocial.debug.describeUrlForLog
 import kotlinx.cinterop.ExperimentalForeignApi
 import platform.CoreGraphics.CGRectMake
+import platform.Foundation.NSError
 import platform.Foundation.NSHTTPCookie
 import platform.Foundation.NSURL
 import platform.Foundation.NSURLRequest
+import platform.WebKit.WKNavigation
 import platform.WebKit.WKNavigationAction
 import platform.WebKit.WKNavigationActionPolicy
 import platform.WebKit.WKNavigationDelegateProtocol
@@ -39,7 +43,7 @@ actual fun WebViewLoginScreen(
     onAuthError: (message: String) -> Unit,
     onBack: () -> Unit,
 ) {
-    println("FiberSocial: WebViewLoginScreen authUrl=$authUrl")
+    DebugLog.log("WebViewLoginScreen authUrl=$authUrl")
     // remember: WKWebView.navigationDelegate is weak; the composition must hold the
     // strong reference or the delegate is collected mid-login.
     val delegate = remember { LoginNavigationDelegate(onAuthComplete, onAuthError) }
@@ -47,6 +51,11 @@ actual fun WebViewLoginScreen(
         factory = {
             val configuration = WKWebViewConfiguration().apply {
                 websiteDataStore = WKWebsiteDataStore.nonPersistentDataStore()
+                // On iPhone this defaults to false, which forces ANY <video> on the page
+                // into the fullscreen native player — Ravelry's login page has an animated
+                // video that would otherwise take over the screen the moment a tap on the
+                // form gives it a user gesture to start playing.
+                allowsInlineMediaPlayback = true
             }
             WKWebView(frame = CGRectMake(0.0, 0.0, 0.0, 0.0), configuration = configuration).apply {
                 navigationDelegate = delegate
@@ -58,7 +67,7 @@ actual fun WebViewLoginScreen(
                 // Android's onBack, there's no natural trigger to wire it to here yet;
                 // [onBack] exists for signature parity with the common `expect`.
                 allowsBackForwardNavigationGestures = true
-                println("FiberSocial: WebView loading $authUrl")
+                DebugLog.log("WebView loading $authUrl")
                 loadRequest(NSURLRequest(uRL = NSURL(string = authUrl)!!))
             }
         },
@@ -77,7 +86,7 @@ private class LoginNavigationDelegate(
         decisionHandler: (WKNavigationActionPolicy) -> Unit,
     ) {
         val url = decidePolicyForNavigationAction.request.URL?.absoluteString ?: ""
-        println("FiberSocial: WebView navigating to ${url.take(120)}")
+        DebugLog.log("WebView navigating to ${describeUrlForLog(url)}")
         if (!url.startsWith(RavelryAuthManager.REDIRECT_URI)) {
             decisionHandler(WKNavigationActionPolicy.WKNavigationActionPolicyAllow)
             return
@@ -87,12 +96,12 @@ private class LoginNavigationDelegate(
         // a silent return strands the user on the authorize page (issue #394).
         val callback = parseAuthCallback(url)
         if (callback is AuthCallback.Failure) {
-            println("FiberSocial: OAuth failed: ${callback.error}")
+            DebugLog.log("OAuth failed: ${callback.error} description=${callback.description}")
             onAuthError(authFailureMessage(callback))
             return
         }
         if (callback !is AuthCallback.Success) {
-            println("FiberSocial: OAuth redirect carried neither code nor error")
+            DebugLog.log("OAuth redirect carried neither code nor error")
             onAuthError(MALFORMED_AUTH_CALLBACK_MESSAGE)
             return
         }
@@ -104,13 +113,42 @@ private class LoginNavigationDelegate(
             // bare ravelry.com origin.
             val wwwCookie = cookieHeader(all, host = "www.ravelry.com")
             val rootCookie = cookieHeader(all, host = "ravelry.com")
-            println("FiberSocial: OAuth complete")
+            DebugLog.log("OAuth complete")
             // Never interpolate a cookie directly — describeSessionCookie hides the value
             // unless a debug build opted in (issue #395).
-            println("FiberSocial: www.ravelry.com cookie ${describeSessionCookie(wwwCookie)}")
-            println("FiberSocial: ravelry.com cookie ${describeSessionCookie(rootCookie)}")
+            DebugLog.log("www.ravelry.com cookie ${describeSessionCookie(wwwCookie)}")
+            DebugLog.log("ravelry.com cookie ${describeSessionCookie(rootCookie)}")
             onAuthComplete(code, state, wwwCookie.ifEmpty { rootCookie })
         }
+    }
+
+    // The iOS analog of Android's onPageFinished logging: with it, the exported trace
+    // distinguishes "requested but never loaded" from "loaded and then went wrong".
+    override fun webView(webView: WKWebView, didFinishNavigation: WKNavigation?) {
+        DebugLog.log("WebView page loaded: ${describeUrlForLog(webView.URL?.absoluteString ?: "")}")
+    }
+
+    // The iOS analog of Android's onReceivedError logging. Provisional failures are
+    // where network-level errors (offline, DNS, TLS, cancelled loads) surface.
+    override fun webView(
+        webView: WKWebView,
+        didFailProvisionalNavigation: WKNavigation?,
+        withError: NSError,
+    ) {
+        DebugLog.log(
+            "WebView load failed: ${withError.domain} ${withError.code} " +
+                withError.localizedDescription,
+        )
+    }
+
+    // iOS reclaims WKWebView's content process under memory pressure — typically while
+    // the user is off in a password manager mid-login. The default behavior is a dead
+    // blank page; reload recovers it. Suspected trigger for the login flow losing its
+    // place (a reloaded authorize page carries a stale one-time challenge), so the log
+    // line is the evidence either way.
+    override fun webViewWebContentProcessDidTerminate(webView: WKWebView) {
+        DebugLog.log("WebView content process terminated — reloading ${describeUrlForLog(webView.URL?.absoluteString ?: "")}")
+        webView.reload()
     }
 
     /** RFC 6265 Cookie header line for the cookies applicable to [host]. */

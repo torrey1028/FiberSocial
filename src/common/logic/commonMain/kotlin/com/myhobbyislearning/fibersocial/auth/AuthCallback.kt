@@ -62,11 +62,13 @@ fun parseAuthCallback(url: String): AuthCallback {
  * means the user tapped Deny, which is a choice they made, not a fault. Everything else
  * prefers the server's own `error_description`, which is usually more specific than
  * anything we could infer from the code alone, and falls back to the raw code so a
- * failure is never reported as an empty or generic message.
+ * failure is never reported as an empty or generic message. The machine-readable code
+ * is appended even when a description exists: descriptions can be generic boilerplate
+ * ("The error is unrecognizable") and the code is then the only lead in a bug report.
  */
 fun authFailureMessage(failure: AuthCallback.Failure): String = when (failure.error) {
     "access_denied" -> "Sign-in was cancelled."
-    else -> failure.description
+    else -> failure.description?.let { "$it (${failure.error})" }
         ?: "Ravelry couldn't complete sign-in (${failure.error})."
 }
 

@@ -3,6 +3,7 @@ package com.myhobbyislearning.fibersocial.app
 import com.myhobbyislearning.fibersocial.auth.AuthViewModel
 import com.myhobbyislearning.fibersocial.auth.KeyValueTokenStorage
 import com.myhobbyislearning.fibersocial.auth.RavelryAuthManager
+import com.myhobbyislearning.fibersocial.debug.DebugLog
 import com.myhobbyislearning.fibersocial.events.EventDetailViewModel
 import com.myhobbyislearning.fibersocial.events.EventsViewModel
 import com.myhobbyislearning.fibersocial.events.NewEventViewModel
@@ -79,7 +80,7 @@ class IosAuthModel(scope: CoroutineScope) {
         // Reject a redirect whose state doesn't match the one we issued before exchanging
         // the code — login-CSRF defense (issue #149), same as Android.
         if (!authManager.validateState(state)) {
-            println("FiberSocial: OAuth state mismatch — rejecting login (possible CSRF)")
+            DebugLog.log("OAuth state mismatch — rejecting login (possible CSRF)")
             auth.failLogin("Login could not be verified. Please try again.")
             return
         }
