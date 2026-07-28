@@ -5,6 +5,8 @@ package com.myhobbyislearning.fibersocial.settings
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.backhandler.BackHandler
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -142,7 +144,10 @@ fun SettingsScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding),
+                .padding(padding)
+                // The Blocked users row (issue #410) pushed the bottom rows past a phone
+                // screen's height, and a non-scrolling Column just cuts them off.
+                .verticalScroll(rememberScrollState()),
         ) {
             Row(
                 modifier = Modifier
