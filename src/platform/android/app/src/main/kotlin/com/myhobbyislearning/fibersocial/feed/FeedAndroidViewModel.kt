@@ -63,6 +63,10 @@ class FeedAndroidViewModel(app: Application) : AndroidViewModel(app), FeedScreen
     // In-app user profile for tapped usernames (issue #194).
     override val userProfile = UserProfileViewModel(apiClient, viewModelScope)
     override val feedback = FeedbackViewModel(apiClient, viewModelScope)
+
+    // Screenshot uploads for the feedback composer (issue #429); its own instance for
+    // the same one-flow-per-composer reason as newTopicImage/replyImage.
+    override val feedbackImage = ImageAttachmentViewModel(apiClient, viewModelScope)
     override val events = EventsViewModel(apiClient, viewModelScope)
 
     // Private-message conversation list (issue #370, epic #365).
@@ -94,6 +98,7 @@ class FeedAndroidViewModel(app: Application) : AndroidViewModel(app), FeedScreen
         projectPage.sessionExpired,
         userProfile.sessionExpired,
         feedback.sessionExpired,
+        feedbackImage.sessionExpired,
         events.sessionExpired,
         eventDetail.sessionExpired,
         newEvent.sessionExpired,
@@ -117,6 +122,10 @@ class FeedAndroidViewModel(app: Application) : AndroidViewModel(app), FeedScreen
     /** Reads the picked image behind [uri] and uploads it for the reply composer. */
     override fun attachReplyImage(uri: String) =
         replyImage.attach { readImageForUpload(getApplication(), Uri.parse(uri)) }
+
+    /** Reads the picked image behind [uri] and uploads it for the feedback composer. */
+    override fun attachFeedbackImage(uri: String) =
+        feedbackImage.attach { readImageForUpload(getApplication(), Uri.parse(uri)) }
 
     fun load() = feed.load()
 

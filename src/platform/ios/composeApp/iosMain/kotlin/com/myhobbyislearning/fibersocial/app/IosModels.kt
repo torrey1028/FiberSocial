@@ -133,6 +133,10 @@ class IosFeedModel(scope: CoroutineScope) : FeedScreenModel {
     // In-app user profile for tapped usernames (issue #194).
     override val userProfile = UserProfileViewModel(apiClient, scope)
     override val feedback = FeedbackViewModel(apiClient, scope)
+
+    // Screenshot uploads for the feedback composer (issue #429); its own instance for
+    // the same one-flow-per-composer reason as newTopicImage/replyImage.
+    override val feedbackImage = ImageAttachmentViewModel(apiClient, scope)
     override val events = EventsViewModel(apiClient, scope)
 
     // Private-message conversation list (issue #370, epic #365).
@@ -164,6 +168,7 @@ class IosFeedModel(scope: CoroutineScope) : FeedScreenModel {
         projectPage.sessionExpired,
         userProfile.sessionExpired,
         feedback.sessionExpired,
+        feedbackImage.sessionExpired,
         events.sessionExpired,
         eventDetail.sessionExpired,
         newEvent.sessionExpired,
@@ -188,6 +193,10 @@ class IosFeedModel(scope: CoroutineScope) : FeedScreenModel {
     /** Reads the picked image behind [uri] and uploads it for the reply composer. */
     override fun attachReplyImage(uri: String) =
         replyImage.attach { readPickedImage(uri) }
+
+    /** Reads the picked image behind [uri] and uploads it for the feedback composer. */
+    override fun attachFeedbackImage(uri: String) =
+        feedbackImage.attach { readPickedImage(uri) }
 
     fun load() = feed.load()
 
