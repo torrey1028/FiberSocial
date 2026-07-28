@@ -2117,12 +2117,6 @@ internal fun GroupDrawer(
     // immediately from the handle, or via long-press anywhere on the row.
     var reorderMode by remember { mutableStateOf(false) }
 
-    // Folds the "Groups" section (list + "Find groups") behind its header pill.
-    // Session-scoped like the feed's pinnedCollapsed: a standing preference, not
-    // persisted. Toggling is locked during reorder mode — collapsing mid-drag would
-    // tear the rows being dragged out of composition.
-    var groupsCollapsed by remember { mutableStateOf(false) }
-
     // Rows move live in a local working copy so the list follows the finger; the new
     // order is committed upstream (and persisted) once at drop. One state object for
     // the drawer's lifetime — NOT remember(groups) — because the per-row pointerInput
@@ -2248,39 +2242,16 @@ internal fun GroupDrawer(
             HorizontalDivider(Modifier.testTag("DrawerNavDividerAboveGroups"))
             Spacer(Modifier.height(8.dp))
             // The section header is a NavigationDrawerItem so its pill matches the "Posts"
-            // row above, and it folds the group list like the feed's pinned section: same
-            // rotating disclosure chevron (right = folded, down = open). While open the
-            // badge slot holds the reorder Edit/Done button; folded it shows the hidden
-            // group count, and the pill highlights when the active feed is one of them.
-            val chevronRotation by animateFloatAsState(
-                disclosureChevronRotation(groupsCollapsed, LocalLayoutDirection.current),
-            )
+            // row above. It is a plain label — the collapse toggle it used to carry was
+            // removed as visual clutter (issue #364), so the group list is always visible.
+            // The badge slot holds the reorder Edit/Done button.
             NavigationDrawerItem(
                 label = { Text("Groups") },
-                selected = groupsCollapsed && selectedGroup != null,
-                onClick = { if (!reorderMode) groupsCollapsed = !groupsCollapsed },
-                icon = {
-                    Icon(
-                        Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                        contentDescription = if (groupsCollapsed) {
-                            "Expand your groups"
-                        } else {
-                            "Collapse your groups"
-                        },
-                        modifier = Modifier.rotate(chevronRotation),
-                    )
-                },
+                selected = false,
+                onClick = {},
                 badge = {
-                    if (groupsCollapsed) {
-                        Text(
-                            text = groups.size.toString(),
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    } else {
-                        TextButton(onClick = { reorderMode = !reorderMode }) {
-                            Text(if (reorderMode) "Done" else "Edit")
-                        }
+                    TextButton(onClick = { reorderMode = !reorderMode }) {
+                        Text(if (reorderMode) "Done" else "Edit")
                     }
                 },
                 modifier = Modifier.padding(horizontal = 12.dp),
@@ -2308,7 +2279,6 @@ internal fun GroupDrawer(
                     state = listState,
                     modifier = Modifier.fillMaxSize().testTag("GroupList"),
                 ) {
-                    if (!groupsCollapsed) {
                     items(localGroups, key = { it.id }) { group ->
                     val eventCount = eventCounts[group.id] ?: 0
                     val dragging = draggingId == group.id
@@ -2424,7 +2394,6 @@ internal fun GroupDrawer(
                         modifier = Modifier.padding(horizontal = 12.dp),
                     )
                 }
-                } // end of the collapsible "Groups" section (groupsCollapsed)
                 item(key = "drawer-footer-spacer") { Spacer(Modifier.height(16.dp)) }
                 }
                 GroupListScrollbar(state = listState, modifier = Modifier.align(Alignment.CenterEnd))

@@ -190,7 +190,9 @@ class GroupDrawerTest {
     }
 
     @Test
-    fun `collapsing Groups hides the group rows but keeps Posts and Messages`() {
+    fun `Groups header is a plain label - clicking it leaves the group rows visible`() {
+        // Issue #364: the collapse toggle the header used to carry was removed as visual
+        // clutter, so tapping "Groups" must not fold the list (and no chevron renders).
         compose.setContent {
             GroupDrawer(
                 groups = twoGroups,
@@ -203,42 +205,14 @@ class GroupDrawerTest {
             )
         }
 
-        compose.onNodeWithText("Groups").performClick()
-
-        compose.onNodeWithText(twoGroups[0].name).assertDoesNotExist()
-        compose.onNodeWithText(twoGroups[1].name).assertDoesNotExist()
-        compose.onNodeWithText("Find groups").assertDoesNotExist()
-        // Folding Groups hides its own children only — the two peer destinations above it are
-        // pinned nav rows and must survive (issue #369 added Messages to that set).
-        compose.onNodeWithText("Posts").assertIsDisplayed()
-        compose.onNodeWithText("Messages").assertIsDisplayed()
-        // Folded: the Edit affordance yields to the hidden-group count.
-        compose.onNodeWithText("Edit").assertDoesNotExist()
-        compose.onNodeWithText("2").assertIsDisplayed()
-        compose.onNodeWithContentDescription("Expand your groups").assertIsDisplayed()
-    }
-
-    @Test
-    fun `expanding Groups restores the group rows`() {
-        compose.setContent {
-            GroupDrawer(
-                groups = twoGroups,
-                selectedGroup = twoGroups.first(),
-                eventCounts = emptyMap(),
-                user = user,
-                onGroupSelected = {},
-                onGroupEventsClick = {},
-                onSettingsClick = {},
-            )
-        }
-
-        compose.onNodeWithText("Groups").performClick()
         compose.onNodeWithText("Groups").performClick()
 
         compose.onNodeWithText(twoGroups[0].name).assertIsDisplayed()
+        compose.onNodeWithText(twoGroups[1].name).assertIsDisplayed()
         compose.onNodeWithText("Find groups").assertIsDisplayed()
         compose.onNodeWithText("Edit").assertIsDisplayed()
-        compose.onNodeWithContentDescription("Collapse your groups").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Collapse your groups").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Expand your groups").assertDoesNotExist()
     }
 
     @Test
