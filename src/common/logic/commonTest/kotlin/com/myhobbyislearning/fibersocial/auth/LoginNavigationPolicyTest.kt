@@ -46,6 +46,20 @@ class LoginNavigationPolicyTest {
         assertTrue(isAllowedLoginNavigation("about:blank"))
     }
 
+    // --- The login page's auth-adjacent detours stay usable in-app ---
+
+    @Test
+    fun `allows the forgot password page and its query variants`() {
+        assertTrue(isAllowedLoginNavigation("https://www.ravelry.com/account/forgot"))
+        assertTrue(isAllowedLoginNavigation("https://www.ravelry.com/account/forgot?forgot=username"))
+    }
+
+    @Test
+    fun `allows the invitations sign-up flow and its sub-steps`() {
+        assertTrue(isAllowedLoginNavigation("https://www.ravelry.com/invitations"))
+        assertTrue(isAllowedLoginNavigation("https://www.ravelry.com/invitations/ask"))
+    }
+
     // --- The rest of the Ravelry site is not ---
 
     @Test
@@ -62,6 +76,13 @@ class LoginNavigationPolicyTest {
     fun `blocks patterns and other site sections`() {
         assertFalse(isAllowedLoginNavigation("https://www.ravelry.com/patterns"))
         assertFalse(isAllowedLoginNavigation("https://www.ravelry.com/account/settings"))
+    }
+
+    @Test
+    fun `blocks the site links the detour pages render in their footer`() {
+        assertFalse(isAllowedLoginNavigation("https://www.ravelry.com/about"))
+        assertFalse(isAllowedLoginNavigation("https://www.ravelry.com/groups/ravelry-api"))
+        assertFalse(isAllowedLoginNavigation("https://www.ravelry.com/discuss/search"))
     }
 
     @Test

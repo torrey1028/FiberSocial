@@ -13,16 +13,20 @@ import io.ktor.http.Url
  * (rejection 2.1(a)): they browsed to the web messages inbox, opened the composer's
  * image upload, and the file-input sheet's "Take Photo or Video" option crashed the
  * app. Confining the WebView to the auth flow removes that entire class of problem;
- * blocked destinations open in the external browser instead (so "forgot password" /
- * "sign up" detours from the login page still work, just outside the app — this
- * supersedes issue #308's in-WebView sign-up detour).
+ * blocked navigations are silently cancelled by the platform handlers (bouncing
+ * them to the external browser was tried first and felt broken mid-login).
  *
  * The allowlist is empirical, taken from a logged navigation trace of a real
  * sign-out/sign-in on 2026-07-28 (issue #425): the OAuth entry point
  * (`/oauth2/auth`), the account-login form (`/account/login`), and the authorize
  * page (`/consent?consent=<uuid>`), plus the app's own OAuth redirect (which the
  * platform navigation handlers intercept before this policy runs, but is allowed
- * here too so correctness doesn't depend on their check ordering).
+ * here too so correctness doesn't depend on their check ordering). The login
+ * page's two auth-adjacent detours also stay usable in-app — password reset
+ * (`/account/forgot`, query variants share the path) and Ravelry's
+ * invitation-based sign-up (`/invitations` and its sub-steps) — because a dead
+ * "forgot your password?" link strands people who need it most. Those detour
+ * pages render the site's full footer, but its links are blocked like any other.
  *
  * Host and path are compared on a parsed URL, not by string prefix, so lookalike
  * hosts (`www.ravelry.com.evil.com`) don't pass.
@@ -41,5 +45,10 @@ fun isAllowedLoginNavigation(url: String): Boolean {
     if (parsed.protocol != URLProtocol.HTTPS) return false
     if (parsed.host != "www.ravelry.com" && parsed.host != "ravelry.com") return false
     val path = parsed.encodedPath
-    return path.startsWith("/oauth2/") || path == "/account/login" || path == "/consent"
+    return path.startsWith("/oauth2/") ||
+        path == "/account/login" ||
+        path == "/account/forgot" ||
+        path == "/consent" ||
+        path == "/invitations" ||
+        path.startsWith("/invitations/")
 }
