@@ -142,23 +142,37 @@ private fun IosApp(authModel: IosAuthModel, feedModel: IosFeedModel) {
         var showWebView by remember { mutableStateOf(false) }
 
         // Terms-of-use gate (issue #408, Apple Guideline 1.2) — same shape as MainActivity.
-        // null while loading; the auth-state check below (not this store) decides what
-        // renders during that gap, so an already-authenticated user is never blocked on it.
+        // Since issue #424 it also gates an authenticated user whose acceptance is wiped
+        // (the iOS uninstall/reinstall case: the Keychain token survives, the
+        // NSUserDefaults acceptance doesn't) or stale. null while loading; the null-hold
+        // branch below keeps EVERYTHING back for that gap.
         val termsStore = remember {
             KeyValueTermsAcceptanceStore(NsUserDefaultsKeyValueStore(TERMS_ACCEPTANCE_STORE_NAME))
         }
         var termsAcceptance by remember { mutableStateOf<TermsAcceptance?>(null) }
-        LaunchedEffect(Unit) { if (termsAcceptance == null) termsAcceptance = termsStore.load() }
+        LaunchedEffect(Unit) {
+            if (termsAcceptance == null) {
+                // Fail CLOSED: an unreadable store gates rather than leaving the hold
+                // branch below blank forever — same as MainActivity.
+                termsAcceptance = runCatching { termsStore.load() }.getOrElse { TermsAcceptance() }
+            }
+        }
         val termsScope = rememberCoroutineScope()
 
-        // The gate is checked ahead of showWebView (issue #424) — same as MainActivity:
-        // the session-expiry collector below opens the WebView directly, and on iOS the
-        // Keychain token survives an uninstall/reinstall while the NSUserDefaults
-        // acceptance is wiped, so that relaunch-then-expiry path must pass through the
-        // gate before the login WebView appears. Agreeing leaves showWebView untouched,
-        // so the WebView opens right after. The Error-retry path (issue #149) is
-        // unaffected: shouldShowTermsGate deliberately never gates AuthState.Error.
-        if (shouldShowTermsGate(authState, termsAcceptance)) {
+        // Branch order is load-bearing (issue #424) — same reasoning as MainActivity:
+        // 1. While the acceptance store is still loading (null), hold everything — a
+        //    brief blank frame. Rendering the normal branches in that gap showed feed
+        //    content, fired its network load, and popped the notification-permission
+        //    prompt for the first frames of a launch that then turned out to need the
+        //    gate (the exact reinstall cohort this fix exists for) — content before
+        //    agreement, the exact thing Guideline 1.2 forbids.
+        // 2. The gate outranks showWebView: agreeing leaves showWebView untouched, so a
+        //    login WebView pending behind the gate opens right after.
+        // 3. The Error-retry path (issue #149) is unaffected: shouldShowTermsGate
+        //    deliberately never gates AuthState.Error.
+        if (termsAcceptance == null) {
+            Box(Modifier.fillMaxSize())
+        } else if (shouldShowTermsGate(authState, termsAcceptance)) {
             val uriHandler = LocalUriHandler.current
             TermsGateScreen(
                 onOpenFullTerms = {

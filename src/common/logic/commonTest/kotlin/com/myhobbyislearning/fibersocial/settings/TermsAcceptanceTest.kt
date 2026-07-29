@@ -61,11 +61,24 @@ class ShouldShowTermsGateTest {
     }
 
     @Test
-    fun `gates an authenticated user whose accepted version is stale`() {
+    fun `gates an authenticated user whose accepted version is stale but nonzero`() {
         // A CURRENT_TERMS_VERSION bump must reach logged-in users (issue #424), not
-        // only users who happen to log out.
+        // only users who happen to log out. The required version is injected because
+        // with the real constant still at 1, "stale" (constant - 1 = 0) is
+        // indistinguishable from the never-agreed default — this pins the actual
+        // agreed-once-but-outdated row of the matrix.
         val authenticated = AuthState.Authenticated(AuthToken("access", "refresh", Long.MAX_VALUE))
-        assertTrue(shouldShowTermsGate(authenticated, TermsAcceptance(version = CURRENT_TERMS_VERSION - 1)))
+        assertTrue(
+            shouldShowTermsGate(authenticated, TermsAcceptance(version = 1), currentVersion = 2),
+        )
+    }
+
+    @Test
+    fun `a version-bump gates while the previously accepted version stays satisfied for itself`() {
+        // Pins the comparison direction of isCurrentFor: 1 satisfies 1, not 2.
+        assertTrue(TermsAcceptance(version = 1).isCurrentFor(1))
+        assertFalse(TermsAcceptance(version = 1).isCurrentFor(2))
+        assertTrue(TermsAcceptance(version = 3).isCurrentFor(2))
     }
 
     @Test
@@ -83,14 +96,17 @@ class ShouldShowTermsGateTest {
     }
 
     @Test
-    fun `gates the session-expiry logout transition when acceptance is stale`() {
+    fun `gates both sides of the session-expiry logout transition with a stale nonzero acceptance`() {
         // The session-expiry collector opens the login WebView and logs out
-        // (Authenticated -> Unauthenticated). With wiped/stale acceptance the gate
-        // must hold on both sides of that transition, so the platform UI (which checks
-        // the gate ahead of its WebView flag) shows the gate before the WebView.
+        // (Authenticated -> Unauthenticated). With a stale acceptance the gate must
+        // hold on BOTH sides of that transition — using an injected required version
+        // so this covers the agreed-once cohort, not just the wiped default the
+        // other tests already pin.
         val authenticated = AuthState.Authenticated(AuthToken("access", "refresh", Long.MAX_VALUE))
-        assertTrue(shouldShowTermsGate(authenticated, TermsAcceptance()))
-        assertTrue(shouldShowTermsGate(AuthState.Unauthenticated, TermsAcceptance()))
+        assertTrue(shouldShowTermsGate(authenticated, TermsAcceptance(version = 1), currentVersion = 2))
+        assertTrue(
+            shouldShowTermsGate(AuthState.Unauthenticated, TermsAcceptance(version = 1), currentVersion = 2),
+        )
     }
 
     @Test

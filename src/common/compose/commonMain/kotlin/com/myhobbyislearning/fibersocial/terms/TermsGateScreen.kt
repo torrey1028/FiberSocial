@@ -19,17 +19,21 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 
 /**
- * Pre-login terms-of-use gate (issue #408, Apple Guideline 1.2). Shown instead of
- * [com.myhobbyislearning.fibersocial.login.LoginScreen] whenever the signed-out user hasn't
- * agreed to the current terms version — see [com.myhobbyislearning.fibersocial.settings.TermsAcceptance] —
- * so "Log in with Ravelry" is unreachable until they agree here. Never shown to an
- * already-authenticated user, and never reappears for the same version once agreed.
+ * Terms-of-use gate (issue #408, Apple Guideline 1.2). Shown ahead of every content
+ * screen whenever the stored acceptance isn't current — see
+ * [com.myhobbyislearning.fibersocial.settings.TermsAcceptance]. Pre-login it replaces
+ * `LoginScreen`, so "Log in with Ravelry" is unreachable until the user agrees; since
+ * issue #424 it also covers an *authenticated* user's feed when their acceptance was
+ * wiped (iOS reinstall: the Keychain token survives, the NSUserDefaults record doesn't)
+ * or made stale by a `CURRENT_TERMS_VERSION` bump. Never reappears for the same version
+ * once agreed.
  *
  * Same background trap as `LoginScreen`: `FiberSocialTheme` sets colors but no background,
  * and this renders before the feed's `Scaffold`, so it needs its own themed [Surface].
  *
  * @param onOpenFullTerms Open the hosted `legal/terms-of-use.html` in the platform browser.
- * @param onAgree Persist acceptance of the current terms version and reveal the login screen.
+ * @param onAgree Persist acceptance of the current terms version and reveal whatever the
+ *   auth state calls for (the login screen, or the feed for a gated logged-in user).
  */
 @Composable
 fun TermsGateScreen(onOpenFullTerms: () -> Unit, onAgree: () -> Unit) {

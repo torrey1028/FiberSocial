@@ -116,9 +116,10 @@ class MainActivity : ComponentActivity() {
                 var showWebView by remember { mutableStateOf(false) }
 
                 // Terms-of-use gate (issue #408, Apple Guideline 1.2): must appear before
-                // "Log in with Ravelry" can be used. null while loading — during that gap
-                // the auth-state check below (not this store) decides what renders, so an
-                // already-authenticated user is never blocked on it.
+                // "Log in with Ravelry" can be used, and — since issue #424 — before an
+                // authenticated user's feed when their acceptance is wiped or stale.
+                // null while loading; the null-hold branch below keeps EVERYTHING back
+                // for that gap.
                 //
                 // rememberSaveable, not remember (same reasoning as themeMode above): on a
                 // config change the accepted version is restored from instance state rather
@@ -130,18 +131,35 @@ class MainActivity : ComponentActivity() {
                 }
                 var termsVersion by rememberSaveable { mutableStateOf<Int?>(null) }
                 val termsAcceptance = termsVersion?.let { TermsAcceptance(version = it) }
-                LaunchedEffect(Unit) { if (termsVersion == null) termsVersion = termsStore.load().version }
+                LaunchedEffect(Unit) {
+                    if (termsVersion == null) {
+                        // Fail CLOSED: an unreadable store gates (and the gate re-saves on
+                        // Agree) rather than leaving termsVersion null forever, which the
+                        // hold branch below would render as a permanent blank screen.
+                        termsVersion =
+                            runCatching { termsStore.load() }.getOrElse { TermsAcceptance() }.version
+                    }
+                }
                 val termsScope = rememberCoroutineScope()
 
-                // The gate is checked ahead of showWebView (issue #424): the session-expiry
-                // collector below opens the WebView directly, so a user whose acceptance was
-                // wiped (e.g. iOS reinstall — mirrored here for symmetry) or made stale by a
-                // CURRENT_TERMS_VERSION bump must agree before the login WebView appears.
-                // Agreeing leaves showWebView untouched, so the WebView opens right after.
-                // The Error-retry path (issue #149) is unaffected: shouldShowTermsGate
-                // deliberately never gates AuthState.Error, so a retry still re-opens the
-                // WebView instead of being swallowed by an unrelated terms prompt.
-                if (shouldShowTermsGate(authState, termsAcceptance)) {
+                // Branch order is load-bearing (issue #424):
+                // 1. While the acceptance store is still loading (null), hold everything —
+                //    a brief blank frame. Rendering the normal branches in that gap showed
+                //    feed content, fired its network load, and (on iOS) popped the
+                //    notification-permission prompt for the first frames of a launch that
+                //    then turned out to need the gate — content before agreement, the exact
+                //    thing Guideline 1.2 forbids — then tore it down and re-loaded after
+                //    Agree. It also let a login WebView start mid-gap only to be replaced.
+                // 2. The gate outranks showWebView: agreeing leaves showWebView untouched,
+                //    so a login WebView pending behind the gate opens right after. (With
+                //    the hold branch, the only way that state arises is a session expiry
+                //    racing the store read.)
+                // 3. The Error-retry path (issue #149) is unaffected: shouldShowTermsGate
+                //    deliberately never gates AuthState.Error, so a retry still re-opens
+                //    the WebView instead of being swallowed by an unrelated terms prompt.
+                if (termsAcceptance == null) {
+                    Box(Modifier.fillMaxSize())
+                } else if (shouldShowTermsGate(authState, termsAcceptance)) {
                     val uriHandler = LocalUriHandler.current
                     TermsGateScreen(
                         onOpenFullTerms = {
