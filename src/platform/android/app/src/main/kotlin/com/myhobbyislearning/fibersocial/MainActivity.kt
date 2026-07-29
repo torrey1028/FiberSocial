@@ -22,6 +22,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalUriHandler
 import com.myhobbyislearning.fibersocial.app.ForegroundActivations
 import com.myhobbyislearning.fibersocial.auth.AuthState
 import com.myhobbyislearning.fibersocial.debug.DebugFlags
@@ -38,15 +39,23 @@ import com.myhobbyislearning.fibersocial.notifications.DeepLink
 import com.myhobbyislearning.fibersocial.notifications.EventNotifier
 import com.myhobbyislearning.fibersocial.notifications.toDeepLink
 import com.myhobbyislearning.fibersocial.notifications.EventSyncWorker
+import com.myhobbyislearning.fibersocial.moderation.KeyValueBlockedUsersStore
 import com.myhobbyislearning.fibersocial.notifications.KeyValueMutedTopicsStore
 import com.myhobbyislearning.fibersocial.notifications.KeyValueNotificationSettingsStore
+import com.myhobbyislearning.fibersocial.settings.CURRENT_TERMS_VERSION
+import com.myhobbyislearning.fibersocial.settings.KeyValueTermsAcceptanceStore
 import com.myhobbyislearning.fibersocial.settings.KeyValueThemeSettingsStore
+import com.myhobbyislearning.fibersocial.settings.TermsAcceptance
 import com.myhobbyislearning.fibersocial.settings.ThemeMode
 import com.myhobbyislearning.fibersocial.settings.ThemeSettings
+import com.myhobbyislearning.fibersocial.settings.shouldShowTermsGate
+import com.myhobbyislearning.fibersocial.storage.BLOCKED_USERS_PREFS_NAME
 import com.myhobbyislearning.fibersocial.storage.NOTIFICATION_SETTINGS_PREFS_NAME
 import com.myhobbyislearning.fibersocial.storage.NOTIFICATION_STATE_PREFS_NAME
+import com.myhobbyislearning.fibersocial.storage.TERMS_ACCEPTANCE_PREFS_NAME
 import com.myhobbyislearning.fibersocial.storage.THEME_SETTINGS_PREFS_NAME
 import com.myhobbyislearning.fibersocial.storage.plainKeyValueStore
+import com.myhobbyislearning.fibersocial.terms.TermsGateScreen
 import com.myhobbyislearning.fibersocial.ui.FiberSocialTheme
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
@@ -106,14 +115,34 @@ class MainActivity : ComponentActivity() {
                 val authState by authVm.auth.state.collectAsState()
                 var showWebView by remember { mutableStateOf(false) }
 
+                // Terms-of-use gate (issue #408, Apple Guideline 1.2): must appear before
+                // "Log in with Ravelry" can be used. null while loading — during that gap
+                // the auth-state check below (not this store) decides what renders, so an
+                // already-authenticated user is never blocked on it.
+                //
+                // rememberSaveable, not remember (same reasoning as themeMode above): on a
+                // config change the accepted version is restored from instance state rather
+                // than resetting to null and re-reading SharedPreferences. Stores just the
+                // Int version — TermsAcceptance's only field — since the default Bundle
+                // Saver doesn't handle a Kotlin data class.
+                val termsStore = remember {
+                    KeyValueTermsAcceptanceStore(plainKeyValueStore(this, TERMS_ACCEPTANCE_PREFS_NAME))
+                }
+                var termsVersion by rememberSaveable { mutableStateOf<Int?>(null) }
+                val termsAcceptance = termsVersion?.let { TermsAcceptance(version = it) }
+                LaunchedEffect(Unit) { if (termsVersion == null) termsVersion = termsStore.load().version }
+                val termsScope = rememberCoroutineScope()
+
                 // Checked ahead of the AuthState when-branch below so a retry from
                 // AuthState.Error (e.g. a rejected OAuth state, issue #149) re-opens the
                 // WebView instead of being silently swallowed by the Error branch, which
                 // has no showWebView check of its own.
                 if (showWebView) {
-                    val authUrl = remember { authVm.buildAuthUrl() }
                     WebViewLoginScreen(
-                        authUrl = authUrl,
+                        // A supplier, not a pre-built URL: the WebView mints a fresh
+                        // authorize URL when the server derails the flow (stale
+                        // challenge) and it needs to restart.
+                        buildAuthUrl = { authVm.buildAuthUrl() },
                         onAuthComplete = { code, state, cookie ->
                             showWebView = false
                             authVm.handleAuthCode(code, state, cookie)
@@ -128,6 +157,18 @@ class MainActivity : ComponentActivity() {
                             authVm.auth.failLogin(message)
                         },
                         onBack = { showWebView = false },
+                    )
+                } else if (shouldShowTermsGate(authState, termsAcceptance)) {
+                    val uriHandler = LocalUriHandler.current
+                    TermsGateScreen(
+                        onOpenFullTerms = {
+                            uriHandler.openUri("https://torrey1028.github.io/FiberSocial/terms-of-use.html")
+                        },
+                        onAgree = {
+                            val updated = TermsAcceptance(version = CURRENT_TERMS_VERSION)
+                            termsVersion = updated.version
+                            termsScope.launch { termsStore.save(updated) }
+                        },
                     )
                 } else {
                     when (authState) {
@@ -153,6 +194,17 @@ class MainActivity : ComponentActivity() {
                                     plainKeyValueStore(this@MainActivity, NOTIFICATION_STATE_PREFS_NAME),
                                 )
                             }
+                            // Local blocked-users list (issue #410). remember, not
+                            // rememberSaveable — the store is a plain object wrapping a
+                            // SharedPreferences handle, not serializable state; its own
+                            // backing prefs file is what survives process death, and load()
+                            // below repopulates blockedUsernames from it on the fresh instance
+                            // a recreation produces.
+                            val blockedUsersStore = remember {
+                                KeyValueBlockedUsersStore(
+                                    plainKeyValueStore(this@MainActivity, BLOCKED_USERS_PREFS_NAME),
+                                )
+                            }
                             LaunchedEffect(Unit) {
                                 feedVm.load()
                                 EventSyncWorker.schedulePeriodic(
@@ -160,6 +212,7 @@ class MainActivity : ComponentActivity() {
                                     notificationSettingsStore.load().effectivePollCadence,
                                 )
                             }
+                            LaunchedEffect(blockedUsersStore) { blockedUsersStore.load() }
                             // On session expiry: show WebView login before clearing auth so there's no
                             // LoginScreen flash between the state change and the WebView appearing.
                             LaunchedEffect(feedVm) {
@@ -196,6 +249,7 @@ class MainActivity : ComponentActivity() {
                                 },
                                 notificationSettingsStore = notificationSettingsStore,
                                 mutedTopicsStore = mutedTopicsStore,
+                                blockedUsersStore = blockedUsersStore,
                                 // UPDATE policy re-registers the periodic sync at the new cadence.
                                 onPollCadenceChanged = { cadence ->
                                     EventSyncWorker.schedulePeriodic(this@MainActivity, cadence)

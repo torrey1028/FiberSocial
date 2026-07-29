@@ -14,6 +14,7 @@ import com.myhobbyislearning.fibersocial.BuildConfig
 import kotlinx.coroutines.CancellationException
 import com.myhobbyislearning.fibersocial.auth.KeyValueTokenStorage
 import com.myhobbyislearning.fibersocial.auth.SessionExpiredException
+import com.myhobbyislearning.fibersocial.featureflags.FeatureFlags
 import com.myhobbyislearning.fibersocial.net.ravelryApiClient
 import com.myhobbyislearning.fibersocial.net.ravelryAuthRepository
 import com.myhobbyislearning.fibersocial.net.ravelryHttpClient
@@ -81,7 +82,9 @@ class EventSyncWorker(
         val notifier = EventNotifier(applicationContext).apply { ensureChannels() }
         plan.newEventNotifications.forEach { notifier.showNewEvent(it) }
         notifier.showNewReplies(plan.newReplyNotifications)
-        notifier.showNewMessages(plan.newMessageNotifications)
+        // Messages is compile-time gated out of release builds (see FeatureFlags) — a
+        // notification that deep-links to a hidden destination would be a dead end.
+        if (FeatureFlags.messagesEnabled) notifier.showNewMessages(plan.newMessageNotifications)
         val scheduler = ReminderScheduler(applicationContext)
         plan.remindersToCancel.forEach { scheduler.cancel(it) }
         // Re-arm everything still in the future, not just the plan's diff: state is

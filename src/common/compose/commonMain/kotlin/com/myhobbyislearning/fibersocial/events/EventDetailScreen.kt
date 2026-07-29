@@ -246,7 +246,7 @@ private fun VenueCard(venue: EventVenue) {
             .let { base ->
                 if (mapsUrl != null) {
                     base.clickable(
-                        onClickLabel = "Open in Google Maps",
+                        onClickLabel = "Open in Maps",
                         role = Role.Button,
                     ) {
                         // A device with no browser/Maps handler throws instead of
@@ -281,7 +281,7 @@ private fun VenueCard(venue: EventVenue) {
                 )
                 Spacer(Modifier.width(4.dp))
                 Text(
-                    text = "Open in Google Maps",
+                    text = "Open in Maps",
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.primary,
                 )
