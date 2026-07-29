@@ -20,8 +20,12 @@ import androidx.compose.ui.viewinterop.UIKitView
 import com.myhobbyislearning.fibersocial.auth.AuthCallback
 import com.myhobbyislearning.fibersocial.auth.MALFORMED_AUTH_CALLBACK_MESSAGE
 import com.myhobbyislearning.fibersocial.auth.RavelryAuthManager
+import com.myhobbyislearning.fibersocial.auth.LOGIN_FLOW_LOST_MESSAGE
+import com.myhobbyislearning.fibersocial.auth.LoginNavigationDecision
 import com.myhobbyislearning.fibersocial.auth.authFailureMessage
 import com.myhobbyislearning.fibersocial.auth.describeAuthFailureForLog
+import com.myhobbyislearning.fibersocial.auth.isAuthRedirect
+import com.myhobbyislearning.fibersocial.auth.loginNavigationDecision
 import com.myhobbyislearning.fibersocial.auth.parseAuthCallback
 import com.myhobbyislearning.fibersocial.debug.DebugFlags
 import com.myhobbyislearning.fibersocial.debug.DebugLog
@@ -39,6 +43,10 @@ import platform.Foundation.NSURLRequest
 import platform.WebKit.WKNavigation
 import platform.WebKit.WKNavigationAction
 import platform.WebKit.WKNavigationActionPolicy
+import platform.WebKit.WKNavigationTypeBackForward
+import platform.WebKit.WKNavigationTypeFormSubmitted
+import platform.WebKit.WKNavigationTypeLinkActivated
+import platform.WebKit.WKNavigationTypeReload
 import platform.WebKit.WKNavigationDelegateProtocol
 import platform.WebKit.WKWebView
 import platform.WebKit.WKWebViewConfiguration
@@ -55,15 +63,14 @@ import platform.darwin.NSObject
 @OptIn(ExperimentalForeignApi::class)
 @Composable
 actual fun WebViewLoginScreen(
-    authUrl: String,
+    buildAuthUrl: () -> String,
     onAuthComplete: (code: String, state: String?, sessionCookie: String) -> Unit,
     onAuthError: (message: String) -> Unit,
     onBack: () -> Unit,
 ) {
-    DebugLog.log("WebViewLoginScreen authUrl=${describeUrlForLog(authUrl)}")
     // remember: WKWebView.navigationDelegate is weak; the composition must hold the
     // strong reference or the delegate is collected mid-login.
-    val delegate = remember { LoginNavigationDelegate(onAuthComplete, onAuthError) }
+    val delegate = remember { LoginNavigationDelegate(buildAuthUrl, onAuthComplete, onAuthError) }
     Column(Modifier.fillMaxSize()) {
         // Debug builds only: a login failure can strand the flow INSIDE the web view
         // (e.g. dumped onto ravelry.com's home page), and iOS has no system back to
@@ -73,7 +80,7 @@ actual fun WebViewLoginScreen(
         if (DebugFlags.debugToolsAvailable) {
             DebugLoginToolbar(onBack)
         }
-        LoginWebView(authUrl, delegate)
+        LoginWebView(buildAuthUrl, delegate)
     }
 }
 
@@ -97,7 +104,7 @@ private fun DebugLoginToolbar(onBack: () -> Unit) {
 
 @OptIn(ExperimentalForeignApi::class)
 @Composable
-private fun LoginWebView(authUrl: String, delegate: LoginNavigationDelegate) {
+private fun LoginWebView(buildAuthUrl: () -> String, delegate: LoginNavigationDelegate) {
     UIKitView(
         factory = {
             val configuration = WKWebViewConfiguration().apply {
@@ -111,13 +118,15 @@ private fun LoginWebView(authUrl: String, delegate: LoginNavigationDelegate) {
             WKWebView(frame = CGRectMake(0.0, 0.0, 0.0, 0.0), configuration = configuration).apply {
                 navigationDelegate = delegate
                 // Lets the standard edge-swipe gesture navigate the web flow's own
-                // history — e.g. back out of a "sign up for an account" detour taken
-                // from the login page (issue #308) — mirroring Android's system-back
-                // handling of the same case. iOS has no system-level back button/gesture
-                // equivalent to fall back to once history is exhausted, so in release
-                // builds nothing triggers onBack here; debug builds wire it to the
-                // toolbar's "Exit login" (see WebViewLoginScreen above).
+                // history within the allowed auth pages — e.g. back out of a sign-up or
+                // forgot-password detour taken from the login page (issue #308) —
+                // mirroring Android's system-back handling of the same case. iOS has no
+                // system-level back button/gesture equivalent to fall back to once
+                // history is exhausted, so in release builds nothing triggers onBack
+                // here; debug builds wire it to the toolbar's "Exit login" (see
+                // WebViewLoginScreen above).
                 allowsBackForwardNavigationGestures = true
+                val authUrl = buildAuthUrl()
                 DebugLog.log("WebView loading ${describeUrlForLog(authUrl)}")
                 loadRequest(NSURLRequest(uRL = NSURL(string = authUrl)!!))
             }
@@ -130,9 +139,13 @@ private fun LoginWebView(authUrl: String, delegate: LoginNavigationDelegate) {
 private const val MAX_CONTENT_PROCESS_RELOADS = 2
 
 private class LoginNavigationDelegate(
+    private val buildAuthUrl: () -> String,
     private val onAuthComplete: (code: String, state: String?, sessionCookie: String) -> Unit,
     private val onAuthError: (message: String) -> Unit,
 ) : NSObject(), WKNavigationDelegateProtocol {
+
+    // Restarts performed by this screen; caps the recovery loop.
+    private var flowRestarts = 0
 
     override fun webView(
         webView: WKWebView,
@@ -141,8 +154,50 @@ private class LoginNavigationDelegate(
     ) {
         val url = decidePolicyForNavigationAction.request.URL?.absoluteString ?: ""
         DebugLog.log("WebView navigating to ${describeUrlForLog(url)}")
-        if (!url.startsWith(RavelryAuthManager.REDIRECT_URI)) {
-            decisionHandler(WKNavigationActionPolicy.WKNavigationActionPolicyAllow)
+        if (!isAuthRedirect(url)) {
+            // Off-flow navigations: a user tap is a browse attempt and is silently
+            // cancelled — the login WebView is not a Ravelry browser (issue #425;
+            // Apple browsed it to the web messages composer and crashed the app from
+            // its camera upload, the 2.1(a) rejection; bouncing taps out to Safari
+            // was tried and felt broken mid-login). A SERVER-driven move off the flow
+            // is different: the flow state behind the current page is dead (observed:
+            // a stale authorize challenge bouncing through /account/login?prompt=1 to
+            // the home page), so staying parked would strand the user — restart with
+            // a fresh authorize URL instead, then give up loudly once the restart
+            // budget is spent. Only main-frame navigations are policed; a null
+            // targetFrame means a new-window attempt, which is treated as main-frame.
+            // Subframe loads can't take the user anywhere, and cancelling them would
+            // just break allowed pages.
+            val isMainFrame = decidePolicyForNavigationAction.targetFrame?.mainFrame ?: true
+            if (!isMainFrame) {
+                decisionHandler(WKNavigationActionPolicy.WKNavigationActionPolicyAllow)
+                return
+            }
+            val userInitiated = when (decidePolicyForNavigationAction.navigationType) {
+                WKNavigationTypeLinkActivated, WKNavigationTypeFormSubmitted,
+                WKNavigationTypeBackForward, WKNavigationTypeReload,
+                -> true
+                else -> false
+            }
+            when (loginNavigationDecision(url, userInitiated, flowRestarts)) {
+                LoginNavigationDecision.ALLOW ->
+                    decisionHandler(WKNavigationActionPolicy.WKNavigationActionPolicyAllow)
+                LoginNavigationDecision.BLOCK -> {
+                    DebugLog.log("WebView cancelled non-login navigation to ${describeUrlForLog(url)}")
+                    decisionHandler(WKNavigationActionPolicy.WKNavigationActionPolicyCancel)
+                }
+                LoginNavigationDecision.RESTART_FLOW -> {
+                    flowRestarts++
+                    DebugLog.log("login flow went off the rails (server redirect) — restart #$flowRestarts")
+                    decisionHandler(WKNavigationActionPolicy.WKNavigationActionPolicyCancel)
+                    webView.loadRequest(NSURLRequest(uRL = NSURL(string = buildAuthUrl())!!))
+                }
+                LoginNavigationDecision.FAIL_LOGIN -> {
+                    DebugLog.log("login flow lost after $flowRestarts restarts — giving up")
+                    decisionHandler(WKNavigationActionPolicy.WKNavigationActionPolicyCancel)
+                    onAuthError(LOGIN_FLOW_LOST_MESSAGE)
+                }
+            }
             return
         }
         decisionHandler(WKNavigationActionPolicy.WKNavigationActionPolicyCancel)
