@@ -154,9 +154,11 @@ class MainActivity : ComponentActivity() {
                         },
                     )
                 } else if (showWebView) {
-                    val authUrl = remember { authVm.buildAuthUrl() }
                     WebViewLoginScreen(
-                        authUrl = authUrl,
+                        // A supplier, not a pre-built URL: the WebView mints a fresh
+                        // authorize URL when the server derails the flow (stale
+                        // challenge) and it needs to restart.
+                        buildAuthUrl = { authVm.buildAuthUrl() },
                         onAuthComplete = { code, state, cookie ->
                             showWebView = false
                             authVm.handleAuthCode(code, state, cookie)

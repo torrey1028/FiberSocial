@@ -171,9 +171,11 @@ private fun IosApp(authModel: IosAuthModel, feedModel: IosFeedModel) {
                 },
             )
         } else if (showWebView) {
-            val authUrl = remember { authModel.buildAuthUrl() }
             WebViewLoginScreen(
-                authUrl = authUrl,
+                // A supplier, not a pre-built URL: the WebView mints a fresh authorize
+                // URL when the server derails the flow (stale challenge) and it needs
+                // to restart — same as MainActivity.
+                buildAuthUrl = { authModel.buildAuthUrl() },
                 onAuthComplete = { code, state, cookie ->
                     showWebView = false
                     authModel.handleAuthCode(code, state, cookie)
