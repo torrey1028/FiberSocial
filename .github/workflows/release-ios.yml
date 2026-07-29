@@ -262,6 +262,11 @@ jobs:
       # `distribute_only` skips re-uploading (the build is already there from
       # the export step above) and just manages the beta-group relationship.
       # `fastlane run pilot` needs no Fastfile for a one-off CLI invocation.
+      # `app_platform` is required in non-interactive CI: without it, pilot's
+      # build-processing check tries to prompt "enter the app's platform
+      # (appletvos, ios, osx, xros)" on stdin and crashes with
+      # FastlaneCrash: "Could not retrieve response as fastlane runs in
+      # non-interactive mode" instead of just using the one obvious answer.
       - name: Install fastlane
         run: gem install fastlane --no-document
 
@@ -289,6 +294,7 @@ jobs:
           fastlane run pilot \
             api_key_path:"$RUNNER_TEMP/asc_api_key.json" \
             app_identifier:"com.myhobbyislearning.fibersocial" \
+            app_platform:"ios" \
             distribute_only:true \
             distribute_external:true \
             groups:"$IOS_TESTFLIGHT_QA_GROUP_NAME" \
