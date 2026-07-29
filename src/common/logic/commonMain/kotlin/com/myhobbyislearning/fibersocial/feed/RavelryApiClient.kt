@@ -662,6 +662,14 @@ class RavelryApiClient(
                 ),
             )
         }
+        // An expired session 302s this POST to the login page; without the check the
+        // login page's body fed parseStateOptions and rendered as "this country has
+        // no states" — a silent dead-end in a form the user has already typed into.
+        // (NewEventViewModel.loadStates currently softens any failure to an empty
+        // list, but the client must still tell the truth about why.)
+        if (isLoginRedirect(response)) {
+            throw SessionExpiredException("States lookup for country $countryId redirected to login")
+        }
         val rawBody = response.bodyAsText()
         println("FiberSocial: getStatesForCountry($countryId) raw (${response.status}); Location=${response.headers[HttpHeaders.Location]}; final url=${response.request.url}; body: ${rawBody.take(800)}")
         val states = parseStateOptions(rawBody)
@@ -759,6 +767,15 @@ class RavelryApiClient(
             setBody(FormDataContent(Parameters.build { append("authenticity_token", csrfToken) }))
         }
         println("FiberSocial: setEventAttendance($eventPermalink, attending=$attending) -> ${response.status}")
+        // Same expired-session shape as the other cookie-authed POSTs (deletePost,
+        // membershipAction, …): without this, an expired cookie read as a plain
+        // `false` and the caller's SessionExpiredException branch was dead code —
+        // the RSVP toggle just snapped back with no re-login prompt, forever.
+        if (isLoginRedirect(response)) {
+            throw SessionExpiredException(
+                "Attendance change for event $eventPermalink redirected to login",
+            )
+        }
         return response.status == HttpStatusCode.OK
     }
 
