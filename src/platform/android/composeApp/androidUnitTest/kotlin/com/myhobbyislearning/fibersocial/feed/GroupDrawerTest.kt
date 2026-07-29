@@ -210,7 +210,10 @@ class GroupDrawerTest {
         compose.onNodeWithText(twoGroups[0].name).assertIsDisplayed()
         compose.onNodeWithText(twoGroups[1].name).assertIsDisplayed()
         compose.onNodeWithText("Find groups").assertIsDisplayed()
+        // Still "Edit", not "Done": the header tap must not have toggled reorder mode
+        // either — the only live control in the header row is the badge's own button.
         compose.onNodeWithText("Edit").assertIsDisplayed()
+        compose.onNodeWithText("Done").assertDoesNotExist()
         compose.onNodeWithContentDescription("Collapse your groups").assertDoesNotExist()
         compose.onNodeWithContentDescription("Expand your groups").assertDoesNotExist()
     }
