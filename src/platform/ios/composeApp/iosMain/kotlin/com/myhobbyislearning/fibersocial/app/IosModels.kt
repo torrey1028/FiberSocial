@@ -64,8 +64,10 @@ class IosAuthModel(scope: CoroutineScope) {
             "RAVELRY_CLIENT_SECRET".takeIf { ravelryClientSecret().isBlank() },
         )
         if (missing.isNotEmpty()) {
-            println(
-                "FiberSocial: WARNING — ${missing.joinToString(" and ")} " +
+            // Through DebugLog, not bare println: on an OTA build this warning names the
+            // actual cause of the token-exchange failure the tester will export.
+            DebugLog.log(
+                "WARNING — ${missing.joinToString(" and ")} " +
                     "${if (missing.size == 1) "is" else "are"} blank. OAuth login will " +
                     "fail with invalid_client. Set them in Config.local.xcconfig " +
                     "(see src/platform/ios/README.md) and rebuild."

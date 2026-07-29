@@ -24,6 +24,7 @@ import com.myhobbyislearning.fibersocial.auth.AuthCallback
 import com.myhobbyislearning.fibersocial.auth.MALFORMED_AUTH_CALLBACK_MESSAGE
 import com.myhobbyislearning.fibersocial.auth.RavelryAuthManager
 import com.myhobbyislearning.fibersocial.auth.authFailureMessage
+import com.myhobbyislearning.fibersocial.auth.describeAuthFailureForLog
 import com.myhobbyislearning.fibersocial.auth.parseAuthCallback
 import com.myhobbyislearning.fibersocial.debug.DebugLog
 import com.myhobbyislearning.fibersocial.debug.describeSessionCookie
@@ -36,7 +37,7 @@ actual fun WebViewLoginScreen(
     onAuthError: (message: String) -> Unit,
     onBack: () -> Unit,
 ) {
-    DebugLog.log("WebViewLoginScreen authUrl=$authUrl")
+    DebugLog.log("WebViewLoginScreen authUrl=${describeUrlForLog(authUrl)}")
     // Holds the created WebView so BackHandler below can check/drive its own history —
     // AndroidView's factory runs once the underlying view exists, which BackHandler
     // (evaluated on every composition) can't reach any other way.
@@ -92,7 +93,7 @@ actual fun WebViewLoginScreen(
                             // on the authorize page with no way forward (issue #394).
                             val callback = parseAuthCallback(url)
                             if (callback is AuthCallback.Failure) {
-                                DebugLog.log("OAuth failed: ${callback.error} description=${callback.description}")
+                                DebugLog.log(describeAuthFailureForLog(callback))
                                 onAuthError(authFailureMessage(callback))
                                 return true
                             }
@@ -123,14 +124,17 @@ actual fun WebViewLoginScreen(
                         request: WebResourceRequest,
                         error: WebResourceError,
                     ) {
-                        DebugLog.log("WebView error ${error.errorCode} ${error.description} url=${request.url}")
+                        DebugLog.log(
+                            "WebView error ${error.errorCode} ${error.description} " +
+                                "url=${describeUrlForLog(request.url.toString())}",
+                        )
                     }
 
                     override fun onPageFinished(view: WebView, url: String) {
                         DebugLog.log("WebView page loaded: ${describeUrlForLog(url)}")
                     }
                 }
-                DebugLog.log("WebView loading $authUrl")
+                DebugLog.log("WebView loading ${describeUrlForLog(authUrl)}")
                 loadUrl(authUrl)
                 webViewRef = this
             }

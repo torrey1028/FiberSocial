@@ -72,6 +72,17 @@ fun authFailureMessage(failure: AuthCallback.Failure): String = when (failure.er
         ?: "Ravelry couldn't complete sign-in (${failure.error})."
 }
 
+/**
+ * Log rendering of a failed authorization, shared by both platforms' WebView handlers
+ * so the format can't drift per-platform (the KDoc above documents how that path
+ * drifted into the same bug twice before parsing was hoisted here). The description is
+ * a server-supplied, redirect-reflected string with no length guarantee — capped so a
+ * crafted or pathological redirect can't flood release logcat or evict the rest of the
+ * in-memory debug buffer with one line.
+ */
+fun describeAuthFailureForLog(failure: AuthCallback.Failure): String =
+    "OAuth failed: ${failure.error} description=${failure.description?.take(300)}"
+
 /** Copy for a redirect that carried neither a code nor an error. */
 const val MALFORMED_AUTH_CALLBACK_MESSAGE: String =
     "Ravelry's sign-in response couldn't be read. Please try again."

@@ -4,6 +4,7 @@ import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class DebugLogTest {
@@ -85,6 +86,27 @@ class DebugLogTest {
             "RuntimeException: wrapper ← IllegalStateException: root cause",
             describeException(wrapper),
         )
+    }
+
+    @Test
+    fun `an exception message embedding a response body is stripped at the JSON input marker`() {
+        // kotlinx-serialization decode errors append "JSON input: <minified body>"; for
+        // the token endpoint that body IS the token JSON, which must never reach a log.
+        val e = RuntimeException(
+            "Illegal input: Field 'access_token' is required\n" +
+                """JSON input: {"access_token":"tok-secret","refresh_token":"ref-secret"}""",
+        )
+
+        val rendered = describeException(e)
+        assertTrue(rendered.contains("Field 'access_token' is required"), rendered)
+        assertFalse(rendered.contains("tok-secret"), rendered)
+        assertFalse(rendered.contains("ref-secret"), rendered)
+    }
+
+    @Test
+    fun `an oversized exception message is capped per link`() {
+        val rendered = describeException(RuntimeException("x".repeat(500)))
+        assertTrue(rendered.length < 300, "capped: ${rendered.length}")
     }
 
     @Test

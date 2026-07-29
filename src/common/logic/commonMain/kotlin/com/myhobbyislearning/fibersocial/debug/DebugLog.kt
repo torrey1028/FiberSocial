@@ -44,9 +44,24 @@ object DebugLog {
         }
     }
 
-    /** The buffered lines, oldest first, one per line — the text handed to the share sheet. */
-    fun dump(): String = entries.load().joinToString("\n")
+    // Keeps the Android share Intent (EXTRA_TEXT crosses Binder, whose transaction
+    // budget is ~1MB shared with everything else in flight) comfortably clear of
+    // TransactionTooLargeException even with 400 debug-length URL lines buffered.
+    private const val MAX_DUMP_CHARS = 120_000
 
+    /**
+     * The buffered lines, oldest first, one per line — the text handed to the share
+     * sheet. Capped at [MAX_DUMP_CHARS] keeping the newest text (the first line may be
+     * cut mid-way when the cap bites).
+     */
+    fun dump(): String = entries.load().joinToString("\n").takeLast(MAX_DUMP_CHARS)
+
+    /**
+     * Empties the buffer. Called on logout (a later user of the same process must not
+     * export the previous account's login trace) and when cookie-value logging is
+     * switched off (see [DebugFlags.setSessionCookieLogging] — lines already buffered
+     * while it was on contain the live credential).
+     */
     fun clear() {
         entries.store(emptyList())
     }
@@ -75,4 +90,15 @@ fun describeUrlForLog(url: String): String =
 fun describeException(t: Throwable): String =
     generateSequence<Throwable>(t) { it.cause.takeIf { cause -> cause !== it } }
         .take(5)
-        .joinToString(" ← ") { "${it::class.simpleName}: ${it.message}" }
+        .joinToString(" ← ") { "${it::class.simpleName}: ${sanitizedExceptionMessage(it)}" }
+
+/**
+ * An exception message safe to buffer and print: kotlinx-serialization decode errors
+ * append `JSON input: <minified document>` — a window of the raw response body. For the
+ * token endpoint that body IS the token JSON (access + refresh token), so it must never
+ * reach a log line; the class name and the message's diagnostic prefix carry everything
+ * needed to tell a network drop from a serialization failure from a server rejection.
+ * The cap bounds any other library's body-embedding habit the same way.
+ */
+private fun sanitizedExceptionMessage(t: Throwable): String =
+    (t.message ?: "").substringBefore("JSON input:").trim().take(200)

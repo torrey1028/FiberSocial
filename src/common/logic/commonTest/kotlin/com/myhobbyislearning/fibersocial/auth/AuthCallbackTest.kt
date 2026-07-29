@@ -108,6 +108,18 @@ class AuthCallbackTest {
     }
 
     @Test
+    fun `the failure log line caps a server-supplied description`() {
+        // error_description is redirect-reflected with no length guarantee; uncapped it
+        // could flood release logcat or evict the whole in-memory debug buffer.
+        val line = describeAuthFailureForLog(
+            AuthCallback.Failure("server_error", "d".repeat(1000)),
+        )
+
+        assertTrue(line.startsWith("OAuth failed: server_error"), line)
+        assertTrue(line.length < 400, "capped, got ${line.length}")
+    }
+
+    @Test
     fun `no failure message leaks a status code the session-expiry UI matches on`() {
         // Parts of the UI pattern-match "401"/"403" to detect an expired session; a login
         // failure carrying those digits would misroute (see RavelryApiClient's

@@ -21,6 +21,7 @@ import com.myhobbyislearning.fibersocial.auth.AuthCallback
 import com.myhobbyislearning.fibersocial.auth.MALFORMED_AUTH_CALLBACK_MESSAGE
 import com.myhobbyislearning.fibersocial.auth.RavelryAuthManager
 import com.myhobbyislearning.fibersocial.auth.authFailureMessage
+import com.myhobbyislearning.fibersocial.auth.describeAuthFailureForLog
 import com.myhobbyislearning.fibersocial.auth.parseAuthCallback
 import com.myhobbyislearning.fibersocial.debug.DebugFlags
 import com.myhobbyislearning.fibersocial.debug.DebugLog
@@ -32,6 +33,8 @@ import platform.CoreGraphics.CGRectMake
 import platform.Foundation.NSError
 import platform.Foundation.NSHTTPCookie
 import platform.Foundation.NSURL
+import platform.Foundation.NSURLErrorCancelled
+import platform.Foundation.NSURLErrorDomain
 import platform.Foundation.NSURLRequest
 import platform.WebKit.WKNavigation
 import platform.WebKit.WKNavigationAction
@@ -57,7 +60,7 @@ actual fun WebViewLoginScreen(
     onAuthError: (message: String) -> Unit,
     onBack: () -> Unit,
 ) {
-    DebugLog.log("WebViewLoginScreen authUrl=$authUrl")
+    DebugLog.log("WebViewLoginScreen authUrl=${describeUrlForLog(authUrl)}")
     // remember: WKWebView.navigationDelegate is weak; the composition must hold the
     // strong reference or the delegate is collected mid-login.
     val delegate = remember { LoginNavigationDelegate(onAuthComplete, onAuthError) }
@@ -115,13 +118,16 @@ private fun LoginWebView(authUrl: String, delegate: LoginNavigationDelegate) {
                 // builds nothing triggers onBack here; debug builds wire it to the
                 // toolbar's "Exit login" (see WebViewLoginScreen above).
                 allowsBackForwardNavigationGestures = true
-                DebugLog.log("WebView loading $authUrl")
+                DebugLog.log("WebView loading ${describeUrlForLog(authUrl)}")
                 loadRequest(NSURLRequest(uRL = NSURL(string = authUrl)!!))
             }
         },
         modifier = Modifier.fillMaxSize(),
     )
 }
+
+/** See `contentProcessReloads` in [LoginNavigationDelegate]. */
+private const val MAX_CONTENT_PROCESS_RELOADS = 2
 
 private class LoginNavigationDelegate(
     private val onAuthComplete: (code: String, state: String?, sessionCookie: String) -> Unit,
@@ -144,7 +150,7 @@ private class LoginNavigationDelegate(
         // a silent return strands the user on the authorize page (issue #394).
         val callback = parseAuthCallback(url)
         if (callback is AuthCallback.Failure) {
-            DebugLog.log("OAuth failed: ${callback.error} description=${callback.description}")
+            DebugLog.log(describeAuthFailureForLog(callback))
             onAuthError(authFailureMessage(callback))
             return
         }
@@ -177,17 +183,32 @@ private class LoginNavigationDelegate(
     }
 
     // The iOS analog of Android's onReceivedError logging. Provisional failures are
-    // where network-level errors (offline, DNS, TLS, cancelled loads) surface.
+    // where network-level errors (offline, DNS, TLS) surface.
     override fun webView(
         webView: WKWebView,
         didFailProvisionalNavigation: WKNavigation?,
         withError: NSError,
     ) {
+        // Two "failures" that fire on every SUCCESSFUL login and would plant a phantom
+        // network error in every exported trace: NSURLErrorCancelled (-999) whenever an
+        // in-flight load is superseded (Ravelry's login page redirects client-side),
+        // and WebKit's 102 "Frame load interrupted" when our own decisionHandler
+        // cancels the redirect-URI navigation above.
+        if (withError.domain == NSURLErrorDomain && withError.code == NSURLErrorCancelled) return
+        if (withError.domain == "WebKitErrorDomain" && withError.code == 102L) return
         DebugLog.log(
             "WebView load failed: ${withError.domain} ${withError.code} " +
                 withError.localizedDescription,
         )
     }
+
+    // Guards the terminate-reload below: a page that OOMs the content process on every
+    // load (or any other repeating kill) must not reload forever — each cycle logs 2-3
+    // lines, so an unbounded loop floods the 400-line buffer and evicts the login trace
+    // this file exists to capture, while heating the device. One reload is the fix for
+    // the observed one-off reclaim (password-manager app switch); the second is margin,
+    // matching the login flow's restart-budget philosophy.
+    private var contentProcessReloads = 0
 
     // iOS reclaims WKWebView's content process under memory pressure — typically while
     // the user is off in a password manager mid-login. The default behavior is a dead
@@ -195,8 +216,23 @@ private class LoginNavigationDelegate(
     // place (a reloaded authorize page carries a stale one-time challenge), so the log
     // line is the evidence either way.
     override fun webViewWebContentProcessDidTerminate(webView: WKWebView) {
-        DebugLog.log("WebView content process terminated — reloading ${describeUrlForLog(webView.URL?.absoluteString ?: "")}")
-        webView.reload()
+        val current = webView.URL?.absoluteString
+        when {
+            // reload() re-requests the current back-forward item; with nothing committed
+            // there is no item and it silently no-ops — log the truth instead of
+            // claiming a recovery that cannot happen.
+            current == null ->
+                DebugLog.log("WebView content process terminated before any page committed — nothing to reload")
+            contentProcessReloads >= MAX_CONTENT_PROCESS_RELOADS ->
+                DebugLog.log("WebView content process terminated again — reload budget spent, leaving the page dead")
+            else -> {
+                contentProcessReloads++
+                DebugLog.log(
+                    "WebView content process terminated — reload #$contentProcessReloads of ${describeUrlForLog(current)}",
+                )
+                webView.reload()
+            }
+        }
     }
 
     /** RFC 6265 Cookie header line for the cookies applicable to [host]. */

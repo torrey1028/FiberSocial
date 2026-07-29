@@ -2,6 +2,7 @@ package com.myhobbyislearning.fibersocial.auth
 
 import com.myhobbyislearning.fibersocial.debug.DebugLog
 import com.myhobbyislearning.fibersocial.debug.describeException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -70,6 +71,10 @@ class AuthViewModel(
                 AuthState.Authenticated(
                     repository.login(authCode, codeVerifier, redirectUri, sessionCookie)
                 )
+            } catch (e: CancellationException) {
+                // Backing out of login mid-exchange is not a failure — don't buffer a
+                // line that reads like one, and let cancellation propagate normally.
+                throw e
             } catch (e: Exception) {
                 // The screen only shows e.message; the class + cause chain are what
                 // distinguish a network drop from a server rejection, so log them.
@@ -91,7 +96,12 @@ class AuthViewModel(
             _state.value = try {
                 val token = repository.getStoredToken()
                 if (token != null) AuthState.Authenticated(token) else AuthState.Unauthenticated
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
+                // Without this line a corrupted token store produces an endless
+                // "login doesn't stick" loop with zero evidence in the exported log.
+                DebugLog.log("Stored-auth check failed: ${describeException(e)}")
                 AuthState.Unauthenticated
             }
         }
@@ -110,6 +120,10 @@ class AuthViewModel(
     fun logout() {
         scope.launch {
             repository.logout()
+            // The buffer holds the outgoing user's login trace (URLs, timestamps,
+            // possibly an opted-in cookie value); the next account on this process
+            // must not be able to export it.
+            DebugLog.clear()
             _state.value = AuthState.Unauthenticated
         }
     }

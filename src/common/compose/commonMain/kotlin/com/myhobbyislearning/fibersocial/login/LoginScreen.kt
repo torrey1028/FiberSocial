@@ -49,6 +49,7 @@ fun LoginScreen(onLoginClick: () -> Unit, errorMessage: String? = null) {
                 modifier = if (DebugFlags.debugToolsAvailable) {
                     Modifier.combinedClickable(
                         onClick = {},
+                        onLongClickLabel = "Share debug log",
                         onLongClick = { shareText(DebugLog.dump()) },
                     )
                 } else {

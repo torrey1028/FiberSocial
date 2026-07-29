@@ -36,8 +36,10 @@ class AuthAndroidViewModel(app: Application) : AndroidViewModel(app) {
             "RAVELRY_CLIENT_SECRET".takeIf { BuildConfig.RAVELRY_CLIENT_SECRET.isBlank() },
         )
         if (missing.isNotEmpty()) {
-            println(
-                "FiberSocial: WARNING — ${missing.joinToString(" and ")} " +
+            // Through DebugLog, not bare println, so the exported log names the cause of
+            // the token-exchange failure it will otherwise only show the symptom of.
+            DebugLog.log(
+                "WARNING — ${missing.joinToString(" and ")} " +
                     "${if (missing.size == 1) "is" else "are"} blank. OAuth login will " +
                     "fail with invalid_client. Set ravelry.client_id/ravelry.client_secret " +
                     "in local.properties (or CI secrets) and rebuild with ./gradlew clean."
