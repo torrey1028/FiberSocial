@@ -86,7 +86,7 @@ class KeyValueBlockedUsersStore(store: KeyValueStore) : BlockedUsersStore {
     // than delegate to plain Set +/-, or unblock() from a differently-cased call site
     // would silently no-op instead of removing the stored entry.
     override suspend fun block(username: String) = mutate { current ->
-        if (current.any { it.equals(username, ignoreCase = true) }) current else current + username
+        if (current.containsUsername(username)) current else current + username
     }
 
     override suspend fun unblock(username: String) = mutate { current ->
