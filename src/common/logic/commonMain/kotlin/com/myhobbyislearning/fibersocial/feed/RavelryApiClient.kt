@@ -158,10 +158,11 @@ private val TRAILING_DISAMBIGUATOR_REGEX = Regex("""-\d+$""")
  * @param httpClient Ktor client with JSON content negotiation configured.
  * @param tokenStorage Source of the Bearer token and session cookie.
  * @param refreshToken Suspend callback that refreshes the access token and saves the
- *   new token to [tokenStorage]. Called on 401 responses and proactively when
- *   the token is within 60 seconds of expiry. Pass `null` to disable auto-refresh.
- *   403 responses are never treated as an expired session — a valid token without
- *   permission surfaces as [ForbiddenException] instead.
+ *   new token to [tokenStorage]. Called on 401 responses, on a 403 whose body identifies
+ *   an invalid/expired/revoked OAuth token (see [isInvalidOAuthTokenBody]), and proactively
+ *   when the token is within 60 seconds of expiry. Pass `null` to disable auto-refresh.
+ *   Any other 403 is a valid token without permission, which refreshing cannot fix, and
+ *   surfaces as [ForbiddenException] instead.
  */
 class RavelryApiClient(
     private val httpClient: HttpClient,
@@ -184,34 +185,79 @@ class RavelryApiClient(
         }
 
         val response = block()
-        // 403 means the token is valid but lacks permission (e.g. missing OAuth scope,
-        // moderator-only action). Refreshing or re-logging-in cannot fix it, so it must
-        // not be classified as session expiry (issue #82).
         if (response.status == HttpStatusCode.Forbidden) {
-            throw ForbiddenException(forbiddenMessage(response))
+            val bodyText = response.bodyAsText()
+            // Logged unconditionally (both branches below) so a future 403 that doesn't
+            // match isInvalidOAuthTokenBody's known phrasing is diagnosable straight from
+            // device logcat instead of needing a fresh live API probe like the one that
+            // root-caused this (see isInvalidOAuthTokenBody's doc). Bodies here are Ravelry
+            // server error text, never request/response auth headers, so this is safe to log.
+            println("FiberSocial: 403 for ${response.request.url.encodedPath}: ${bodyText.take(200)}")
+            // Most 403s mean the token is valid but lacks permission (e.g. missing OAuth
+            // scope, moderator-only action) — refreshing or re-logging-in cannot fix that,
+            // so it must not be classified as session expiry (issue #82). But Ravelry's
+            // OAuth gateway itself also answers an invalid/expired/revoked Bearer token
+            // with a 403 (not the 401 the OAuth spec would suggest), distinguishable by a
+            // plain-text "OAuth 2 token is not valid" body instead of the JSON `errors` body
+            // a genuine in-app permission 403 returns. That flavor of 403 is exactly a
+            // session expiry, so it's routed through the same refresh-and-retry path as 401.
+            if (!isInvalidOAuthTokenBody(bodyText)) {
+                throw ForbiddenException(forbiddenMessage(response))
+            }
+            return retryAfterAuthFailure(response, block)
         }
         if (response.status == HttpStatusCode.Unauthorized) {
-            val tokenUsedForFailedRequest = response.request.headers[HttpHeaders.Authorization]
-                ?.removePrefix("Bearer ")
-                ?.takeIf { it.isNotBlank() }
-                ?: (tokenStorage.load()?.accessToken ?: throw SessionExpiredException("Session expired"))
-            tryRefresh(tokenUsedForFailedRequest)
-            val retried = block()
-            if (retried.status == HttpStatusCode.Unauthorized) {
-                throw SessionExpiredException("Session expired")
-            }
-            if (retried.status == HttpStatusCode.Forbidden) {
-                throw ForbiddenException(forbiddenMessage(retried))
-            }
-            return retried.bodyAsText()
+            return retryAfterAuthFailure(response, block)
         }
         return response.bodyAsText()
+    }
+
+    private suspend fun retryAfterAuthFailure(
+        response: HttpResponse,
+        block: suspend () -> HttpResponse,
+    ): String {
+        val tokenUsedForFailedRequest = response.request.headers[HttpHeaders.Authorization]
+            ?.removePrefix("Bearer ")
+            ?.takeIf { it.isNotBlank() }
+            ?: (tokenStorage.load()?.accessToken ?: throw SessionExpiredException("Session expired"))
+        tryRefresh(tokenUsedForFailedRequest)
+        val retried = block()
+        if (retried.status == HttpStatusCode.Unauthorized) {
+            throw SessionExpiredException("Session expired")
+        }
+        if (retried.status == HttpStatusCode.Forbidden) {
+            val retriedBody = retried.bodyAsText()
+            println("FiberSocial: 403 on retry for ${retried.request.url.encodedPath}: ${retriedBody.take(200)}")
+            if (isInvalidOAuthTokenBody(retriedBody)) {
+                throw SessionExpiredException("Session expired")
+            }
+            throw ForbiddenException(forbiddenMessage(retried))
+        }
+        return retried.bodyAsText()
     }
 
     // Deliberately avoids the literal status code: parts of the UI pattern-match
     // "401"/"403" in error messages to detect expired sessions.
     private fun forbiddenMessage(response: HttpResponse): String =
         "Permission denied for ${response.request.url.encodedPath}"
+
+    // Confirmed against the live API: a request with a garbage Bearer token comes back
+    // as `403` with this exact plain-text body (content-type text/html), issued by
+    // Ravelry's OAuth gateway before the request ever reaches the JSON API layer — unlike
+    // a genuine in-app permission 403, which returns a JSON `errors` body instead.
+    //
+    // Matches the full "oauth 2 token is not valid" phrase, not just "oauth 2 token":
+    // a genuine permission 403 for a stale token *scope* (issue #367's
+    // withMessagingForbiddenMessage cause (b) — a token minted before message-write was
+    // added to SCOPE) is exactly the kind of body that could plausibly also mention
+    // "OAuth 2 token" (e.g. "this OAuth 2 token doesn't have the required scope") without
+    // being the gateway's invalid-token case. Refreshing can't fix a scope problem, so
+    // misclassifying that as session expiry would route it into the full forced-logout
+    // flow instead of withMessagingForbiddenMessage's friendly in-context message. The
+    // narrower phrase is what the live-confirmed gateway body actually contains, so it
+    // stays a precise match rather than a broader, riskier one.
+    private fun isInvalidOAuthTokenBody(bodyText: String): Boolean =
+        bodyText.contains("oauth 2 token is not valid", ignoreCase = true)
 
     private suspend fun tryRefresh(tokenUsedForRequest: String) {
         val doRefresh = refreshToken ?: throw SessionExpiredException("Session expired")
