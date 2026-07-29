@@ -8,7 +8,11 @@ import androidx.compose.ui.viewinterop.UIKitView
 import com.myhobbyislearning.fibersocial.auth.AuthCallback
 import com.myhobbyislearning.fibersocial.auth.MALFORMED_AUTH_CALLBACK_MESSAGE
 import com.myhobbyislearning.fibersocial.auth.RavelryAuthManager
+import com.myhobbyislearning.fibersocial.auth.LOGIN_FLOW_LOST_MESSAGE
+import com.myhobbyislearning.fibersocial.auth.LoginNavigationDecision
 import com.myhobbyislearning.fibersocial.auth.authFailureMessage
+import com.myhobbyislearning.fibersocial.auth.isAuthRedirect
+import com.myhobbyislearning.fibersocial.auth.loginNavigationDecision
 import com.myhobbyislearning.fibersocial.auth.parseAuthCallback
 import com.myhobbyislearning.fibersocial.debug.describeSessionCookie
 import kotlinx.cinterop.ExperimentalForeignApi
@@ -18,6 +22,10 @@ import platform.Foundation.NSURL
 import platform.Foundation.NSURLRequest
 import platform.WebKit.WKNavigationAction
 import platform.WebKit.WKNavigationActionPolicy
+import platform.WebKit.WKNavigationTypeBackForward
+import platform.WebKit.WKNavigationTypeFormSubmitted
+import platform.WebKit.WKNavigationTypeLinkActivated
+import platform.WebKit.WKNavigationTypeReload
 import platform.WebKit.WKNavigationDelegateProtocol
 import platform.WebKit.WKWebView
 import platform.WebKit.WKWebViewConfiguration
@@ -34,15 +42,14 @@ import platform.darwin.NSObject
 @OptIn(ExperimentalForeignApi::class)
 @Composable
 actual fun WebViewLoginScreen(
-    authUrl: String,
+    buildAuthUrl: () -> String,
     onAuthComplete: (code: String, state: String?, sessionCookie: String) -> Unit,
     onAuthError: (message: String) -> Unit,
     onBack: () -> Unit,
 ) {
-    println("FiberSocial: WebViewLoginScreen authUrl=$authUrl")
     // remember: WKWebView.navigationDelegate is weak; the composition must hold the
     // strong reference or the delegate is collected mid-login.
-    val delegate = remember { LoginNavigationDelegate(onAuthComplete, onAuthError) }
+    val delegate = remember { LoginNavigationDelegate(buildAuthUrl, onAuthComplete, onAuthError) }
     UIKitView(
         factory = {
             val configuration = WKWebViewConfiguration().apply {
@@ -51,13 +58,14 @@ actual fun WebViewLoginScreen(
             WKWebView(frame = CGRectMake(0.0, 0.0, 0.0, 0.0), configuration = configuration).apply {
                 navigationDelegate = delegate
                 // Lets the standard edge-swipe gesture navigate the web flow's own
-                // history — e.g. back out of a "sign up for an account" detour taken
-                // from the login page (issue #308) — mirroring Android's system-back
-                // handling of the same case. iOS has no system-level back button/gesture
+                // history within the allowed auth pages — e.g. back out of a sign-up or
+                // forgot-password detour taken from the login page (issue #308) —
+                // mirroring Android's system-back handling of the same case. iOS has no system-level back button/gesture
                 // equivalent to fall back to once history is exhausted, so unlike
                 // Android's onBack, there's no natural trigger to wire it to here yet;
                 // [onBack] exists for signature parity with the common `expect`.
                 allowsBackForwardNavigationGestures = true
+                val authUrl = buildAuthUrl()
                 println("FiberSocial: WebView loading $authUrl")
                 loadRequest(NSURLRequest(uRL = NSURL(string = authUrl)!!))
             }
@@ -67,9 +75,13 @@ actual fun WebViewLoginScreen(
 }
 
 private class LoginNavigationDelegate(
+    private val buildAuthUrl: () -> String,
     private val onAuthComplete: (code: String, state: String?, sessionCookie: String) -> Unit,
     private val onAuthError: (message: String) -> Unit,
 ) : NSObject(), WKNavigationDelegateProtocol {
+
+    // Restarts performed by this screen; caps the recovery loop.
+    private var flowRestarts = 0
 
     override fun webView(
         webView: WKWebView,
@@ -78,8 +90,50 @@ private class LoginNavigationDelegate(
     ) {
         val url = decidePolicyForNavigationAction.request.URL?.absoluteString ?: ""
         println("FiberSocial: WebView navigating to ${url.take(120)}")
-        if (!url.startsWith(RavelryAuthManager.REDIRECT_URI)) {
-            decisionHandler(WKNavigationActionPolicy.WKNavigationActionPolicyAllow)
+        if (!isAuthRedirect(url)) {
+            // Off-flow navigations: a user tap is a browse attempt and is silently
+            // cancelled — the login WebView is not a Ravelry browser (issue #425;
+            // Apple browsed it to the web messages composer and crashed the app from
+            // its camera upload, the 2.1(a) rejection; bouncing taps out to Safari
+            // was tried and felt broken mid-login). A SERVER-driven move off the flow
+            // is different: the flow state behind the current page is dead (observed:
+            // a stale authorize challenge bouncing through /account/login?prompt=1 to
+            // the home page), so staying parked would strand the user — restart with
+            // a fresh authorize URL instead, then give up loudly once the restart
+            // budget is spent. Only main-frame navigations are policed; a null
+            // targetFrame means a new-window attempt, which is treated as main-frame.
+            // Subframe loads can't take the user anywhere, and cancelling them would
+            // just break allowed pages.
+            val isMainFrame = decidePolicyForNavigationAction.targetFrame?.mainFrame ?: true
+            if (!isMainFrame) {
+                decisionHandler(WKNavigationActionPolicy.WKNavigationActionPolicyAllow)
+                return
+            }
+            val userInitiated = when (decidePolicyForNavigationAction.navigationType) {
+                WKNavigationTypeLinkActivated, WKNavigationTypeFormSubmitted,
+                WKNavigationTypeBackForward, WKNavigationTypeReload,
+                -> true
+                else -> false
+            }
+            when (loginNavigationDecision(url, userInitiated, flowRestarts)) {
+                LoginNavigationDecision.ALLOW ->
+                    decisionHandler(WKNavigationActionPolicy.WKNavigationActionPolicyAllow)
+                LoginNavigationDecision.BLOCK -> {
+                    println("FiberSocial: WebView cancelled non-login navigation to ${url.take(120)}")
+                    decisionHandler(WKNavigationActionPolicy.WKNavigationActionPolicyCancel)
+                }
+                LoginNavigationDecision.RESTART_FLOW -> {
+                    flowRestarts++
+                    println("FiberSocial: login flow went off the rails (server redirect) — restart #$flowRestarts")
+                    decisionHandler(WKNavigationActionPolicy.WKNavigationActionPolicyCancel)
+                    webView.loadRequest(NSURLRequest(uRL = NSURL(string = buildAuthUrl())!!))
+                }
+                LoginNavigationDecision.FAIL_LOGIN -> {
+                    println("FiberSocial: login flow lost after $flowRestarts restarts — giving up")
+                    decisionHandler(WKNavigationActionPolicy.WKNavigationActionPolicyCancel)
+                    onAuthError(LOGIN_FLOW_LOST_MESSAGE)
+                }
+            }
             return
         }
         decisionHandler(WKNavigationActionPolicy.WKNavigationActionPolicyCancel)
