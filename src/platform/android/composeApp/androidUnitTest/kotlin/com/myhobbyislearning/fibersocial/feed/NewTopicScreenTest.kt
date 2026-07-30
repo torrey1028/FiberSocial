@@ -4,6 +4,7 @@ import androidx.activity.ComponentActivity
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
@@ -13,6 +14,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.unit.dp
 import com.myhobbyislearning.fibersocial.feed.models.Group
 import com.myhobbyislearning.fibersocial.feed.models.Topic
 import org.junit.Rule
@@ -120,11 +122,32 @@ class NewTopicScreenTest {
         compose.runOnIdle { state = NewTopicState.Error("boom") }
         compose.waitForIdle()
 
-        // The form is scrollable (issue #432) and typing auto-scrolled the body field into
-        // view, so scroll each assert target back into view first.
-        compose.onNodeWithText("boom").performScrollTo().assertIsDisplayed()
+        // The form is scrollable (issue #432) and typing auto-scrolled the body field
+        // into view — but the error's arrival scrolls back to the top, so it must be
+        // displayed with NO manual scrolling: a failed post must never look like the
+        // Post button did nothing. The drafts may legitimately sit below the fold.
+        compose.onNodeWithText("boom").assertIsDisplayed()
         compose.onNodeWithText("my precious title").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("my precious draft").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun `the body field keeps its floor inside the scrollable form`() {
+        compose.setContent {
+            NewTopicScreen(
+                groups = listOf(kalHub),
+                initialGroup = kalHub,
+                state = NewTopicState.Idle,
+                onBack = {},
+                onPost = { _, _, _, _ -> },
+                onCreated = { _, _ -> },
+            )
+        }
+
+        // 200.dp mirrors BODY_MIN_HEIGHT (issue #432): inside the scrollable column an
+        // empty field would otherwise collapse to one-line intrinsic height and the
+        // attach row would ride up under Summary — the original bug, on every screen.
+        compose.onNodeWithText("Your post").assertHeightIsAtLeast(200.dp)
     }
 
     @Test

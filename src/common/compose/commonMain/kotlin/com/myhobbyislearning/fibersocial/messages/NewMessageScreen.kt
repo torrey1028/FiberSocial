@@ -61,6 +61,13 @@ import com.myhobbyislearning.fibersocial.ui.UserAvatar
 private val RESULTS_MAX_HEIGHT = 260.dp
 
 /**
+ * Floor for the message body field inside the scrollable form (issue #432) — same
+ * role as [com.myhobbyislearning.fibersocial.feed.NewTopicScreen]'s body floor; keep
+ * the two composers' floors in step.
+ */
+private val BODY_MIN_HEIGHT = 200.dp
+
+/**
  * What turns this screen from "new message" into "reply", supplied by the caller when the
  * composer is opened from an open conversation (issue #374).
  *
@@ -227,12 +234,20 @@ fun NewMessageScreen(
         // up on a small screen, a non-scrollable column starved the weighted body field to
         // zero height. The results list is already max-height-bounded, so nesting it inside
         // this scroll is safe.
+        val scrollState = rememberScrollState()
+        // The error renders at the top of the scrollable form, but typing auto-scrolls
+        // down to the body cursor — without this a failed send (including the carefully
+        // worded messaging-disabled copy) can surface entirely above the fold, looking
+        // like the Send button did nothing.
+        LaunchedEffect(sendState) {
+            if (sendState is SendMessageState.Error) scrollState.animateScrollTo(0)
+        }
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
                 .imePadding()
-                .verticalScroll(rememberScrollState())
+                .verticalScroll(scrollState)
                 .padding(horizontal = 16.dp, vertical = 8.dp),
         ) {
             if (sendState is SendMessageState.Error) {
@@ -292,10 +307,12 @@ fun NewMessageScreen(
                 // Minimum height instead of weight(1f): weight is illegal inside a
                 // scrollable column, and the floor keeps the field usable with the
                 // keyboard open. The field grows with its text.
+                // padding before heightIn so the floor bounds the field itself, not
+                // field-plus-padding (the other order silently shaves 8.dp off it).
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(min = 200.dp)
                     .padding(top = 8.dp)
+                    .heightIn(min = BODY_MIN_HEIGHT)
                     .testTag("MessageBodyField"),
             )
 
