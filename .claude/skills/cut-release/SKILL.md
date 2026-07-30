@@ -5,7 +5,12 @@ description: Cut a signed public FiberSocial release by tagging main, and unders
 
 # Cut a release
 
-Releases are **manual per-version tags**, not per-commit. Pick a `MAJOR.MINOR.PATCH`, tag `main`, push the tag — CI builds the signed APK and publishes the GitHub Release.
+Releases are **manual per-version tags**, not per-commit. Pick a `MAJOR.MINOR.PATCH`, tag `main`, push the tag — CI takes over from there, but Android and iOS now behave differently:
+
+- **Android** (`release.yml`) still builds the signed APK/AAB and publishes them **immediately** as the latest GitHub Release — the pre-#265 flow, unchanged for now. A follow-up PR is expected to bring Android onto the same RC/QA-gated flow iOS has below, once the Play Console service-account/track setup it needs is ready.
+- **iOS** (`release-ios.yml`) builds a signed **release candidate**, runs the automated test suites against it, and pushes it to a TestFlight QA group. It does **not** go live yet — a human still has to run manual QA and approve a GitHub Environment gate before it's ready for App Store submission (which itself stays a manual App Store Connect step regardless).
+
+See root `CLAUDE.md`'s "Versioning & cutting a release" for the full detail on both.
 
 ## Fast path
 
@@ -15,7 +20,7 @@ From the repo root (`/home/betorr/FiberSocial`), on a clean `main` up to date wi
 scripts/release.sh 1.4.0      # the leading "v" is optional; "v1.4.0" also works
 ```
 
-That tags the current commit `v1.4.0`, pushes the tag, and prints the release + download URLs. Pushing a `v*.*.*` tag triggers `.github/workflows/release.yml`, which runs `./gradlew assembleRelease` and `gh release create --generate-notes --latest`.
+That tags the current commit `v1.4.0`, pushes the tag, and prints both workflows' URLs. Pushing a `v*.*.*` tag triggers `.github/workflows/release.yml` and `.github/workflows/release-ios.yml` independently — one platform's runner speed doesn't block the other. Android's GitHub Release is live as soon as that job finishes; iOS's release candidate needs a reviewer to run manual QA (`docs/ios-device-checklist.md`) and approve the `ios-release` GitHub Environment on that run's `promote` job before App Store submission is appropriate — and even then, that submission is still a manual App Store Connect step (Apple review isn't API-triggerable).
 
 ### Preconditions `scripts/release.sh` enforces (it aborts otherwise)
 
@@ -73,4 +78,4 @@ GitHub resolves `releases/latest` to whichever release was most recently marked 
 
 ## After tagging
 
-`scripts/release.sh` pushes the tag and then hands off to CI — it does **not** wait for the build. Hand the two printed URLs (the `releases/tag/v<version>` page and the `latest/download` link) to the user; the GitHub Release appears once `release.yml` finishes. Do not merge or manually publish anything yourself.
+`scripts/release.sh` pushes the tag and then hands off to CI — it does **not** wait for either build. Hand the printed URLs to the user: Android's GitHub Release appears once `release.yml` finishes, with no further action needed. For iOS, add a reminder that `release-ios.yml` only builds a release candidate — someone still needs to run manual QA against the TestFlight build and approve the `ios-release` environment gate on that run's `promote` job before App Store submission is appropriate, and that submission itself stays a manual App Store Connect step. Do not merge, approve that environment gate, or manually publish anything yourself.
