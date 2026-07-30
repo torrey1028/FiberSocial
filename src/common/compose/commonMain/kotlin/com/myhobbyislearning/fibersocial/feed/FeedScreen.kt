@@ -1503,8 +1503,11 @@ fun FeedScreen(
                     onToggleUnreadOnly = { showUnreadOnly = !showUnreadOnly },
                     // The unread filter acts on the topic feed, which isn't what's on screen
                     // while Messages is up — leaving it there would offer a control that
-                    // silently does nothing.
-                    showFilter = !showingMessages,
+                    // silently does nothing. Same while the no-groups onboarding is up:
+                    // there are no topics to filter yet, and the onboarding deliberately
+                    // wins over the filter's empty state below.
+                    showFilter = !showingMessages &&
+                        !(loaded != null && groups.isEmpty() && !showingMyPosts),
                 )
             },
             floatingActionButton = {
@@ -1611,8 +1614,9 @@ fun FeedScreen(
                     // blank page (issue #431) — welcome them and point at the same
                     // Ravelry group-search link-out the drawer offers. Checked before the
                     // unread filter so toggling the filter can't replace the onboarding
-                    // with a misleading "No unread topics". Group feed only: My Posts and
-                    // Messages keep their own presentation.
+                    // with a misleading "No unread topics". Group feed only: Messages has
+                    // its own empty presentation; My Posts renders a bare empty list for
+                    // a zero-groups user — a known gap tracked as issue #456.
                     if (s.groups.isEmpty() && !s.myPosts) {
                         NoGroupsOnboarding(onFindGroups = onFindGroups)
                     } else if (showUnreadOnly && displayedItems.isEmpty()) {

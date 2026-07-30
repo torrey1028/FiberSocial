@@ -2,6 +2,7 @@ package com.myhobbyislearning.fibersocial.feed
 
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -29,6 +30,14 @@ class NoGroupsOnboardingTest {
         compose.onNodeWithText(
             "Groups you join appear in the menu — pull down to refresh here when you're done.",
         ).assertIsDisplayed()
+    }
+
+    @Test
+    fun `onboarding column is scrollable so pull-to-refresh can engage`() {
+        // The verticalScroll modifier is load-bearing, not cosmetic: PullToRefreshBox
+        // needs a nested-scrolling child for the pull gesture the copy advertises.
+        compose.setContent { NoGroupsOnboarding(onFindGroups = {}) }
+        compose.onNode(hasScrollAction()).assertExists()
     }
 
     @Test

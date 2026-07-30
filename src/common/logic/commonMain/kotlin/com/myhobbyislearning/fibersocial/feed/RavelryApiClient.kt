@@ -313,12 +313,19 @@ class RavelryApiClient(
      *
      * @param username Ravelry username whose memberships to fetch.
      * @return Groups the user belongs to. Groups not found via search are silently omitted.
+     * @throws ForbiddenException on 403 — valid session, but no permission for this page.
+     * @throws SessionExpiredException per [scrapeHtml]. This must throw rather than return
+     *   an empty list for a dead session cookie: `Loaded.groups.isEmpty()` is what the feed
+     *   trusts to mean "this user belongs to no groups" (it drives the no-groups
+     *   onboarding, issue #431), and before this guard an expired cookie's login-page
+     *   redirect scraped as zero permalinks and reported a long-time member as group-less.
      */
     suspend fun getUserGroups(username: String): List<Group> = coroutineScope {
-        val html = httpClient.get("https://www.ravelry.com/people/$username/groups/memberships") {
-            header(HttpHeaders.Cookie, sessionCookie())
-            header(HttpHeaders.Accept, "text/html")
-        }.bodyAsText()
+        val html = scrapeHtml(
+            "https://www.ravelry.com/people/$username/groups/memberships",
+            "/people/",
+            "Group memberships for $username",
+        )
 
         val permalinks = GROUP_PERMALINK_REGEX.findAll(html)
             .map { it.groupValues[1] }

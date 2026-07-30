@@ -110,6 +110,35 @@ class RavelryApiClientTest {
     }
 
     @Test
+    fun `getUserGroups throws SessionExpiredException when redirected to the login page`() = runTest {
+        // An expired session cookie doesn't 401 on www.ravelry.com — it 302s to the login
+        // page, which Ktor follows to a 200 with zero group links. Returning emptyList()
+        // here would report a long-time member as group-less, and the feed trusts
+        // groups.isEmpty() to mean exactly that (it shows the no-groups onboarding, #431).
+        val client = htmlApiClient(MockEngine { request ->
+            if (request.url.encodedPath.startsWith("/people/")) {
+                respond("", HttpStatusCode.Found,
+                    headersOf(HttpHeaders.Location, "https://www.ravelry.com/account/login"))
+            } else {
+                respond("<html><body>please log in</body></html>", HttpStatusCode.OK,
+                    headersOf("Content-Type", ContentType.Text.Html.toString()))
+            }
+        })
+        assertFailsWith<SessionExpiredException> { client.getUserGroups("yarnie") }
+    }
+
+    @Test
+    fun `getUserGroups throws ForbiddenException on 403 rather than bouncing to login`() = runTest {
+        val client = htmlApiClient(MockEngine { _ ->
+            respond("", HttpStatusCode.Forbidden)
+        })
+        val e = assertFailsWith<ForbiddenException> { client.getUserGroups("yarnie") }
+        val message = e.message ?: ""
+        assertFalse(message.contains("403"))
+        assertFalse(message.contains("401"))
+    }
+
+    @Test
     fun `getUserGroups returns empty list when memberships page has no group links`() = runTest {
         val client = routingApiClient { path ->
             when {
