@@ -11,6 +11,7 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import com.myhobbyislearning.fibersocial.feed.models.Group
 import com.myhobbyislearning.fibersocial.feed.models.Topic
@@ -119,9 +120,11 @@ class NewTopicScreenTest {
         compose.runOnIdle { state = NewTopicState.Error("boom") }
         compose.waitForIdle()
 
-        compose.onNodeWithText("boom").assertIsDisplayed()
-        compose.onNodeWithText("my precious title").assertIsDisplayed()
-        compose.onNodeWithText("my precious draft").assertIsDisplayed()
+        // The form is scrollable (issue #432) and typing auto-scrolled the body field into
+        // view, so scroll each assert target back into view first.
+        compose.onNodeWithText("boom").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("my precious title").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("my precious draft").performScrollTo().assertIsDisplayed()
     }
 
     @Test
@@ -265,7 +268,10 @@ class NewTopicScreenTest {
             attachment = ImageAttachmentState.Error(ImageAttachmentViewModel.EXTRAS_REQUIRED_MESSAGE)
         }
         compose.waitForIdle()
-        compose.onNodeWithText(ImageAttachmentViewModel.EXTRAS_REQUIRED_MESSAGE).assertIsDisplayed()
-        compose.onNodeWithText("my precious draft").assertIsDisplayed()
+        // Scrollable form (issue #432): the attach row can sit below the fold, so bring
+        // each assert target into view first.
+        compose.onNodeWithText(ImageAttachmentViewModel.EXTRAS_REQUIRED_MESSAGE)
+            .performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("my precious draft").performScrollTo().assertIsDisplayed()
     }
 }
