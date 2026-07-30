@@ -50,13 +50,22 @@ interface BlockedUsersStore {
 }
 
 /**
- * True if [username] is currently blocked, per this store's latest known state. Compared
- * case-insensitively — Ravelry usernames are case-preserving but not case-distinct (the
- * same convention `MessageThreads.kt` documents for sender/recipient identity). `null`
- * (e.g. a post whose author Ravelry omitted) is never blocked.
+ * True if this set of blocked usernames contains [username]. Compared case-insensitively —
+ * Ravelry usernames are case-preserving but not case-distinct (the same convention
+ * `MessageThreads.kt` documents for sender/recipient identity). `null` (e.g. a post whose
+ * author Ravelry omitted) is never contained. The single shared implementation of the
+ * blocked-username check — every surface that filters blocked content (feed cards, topic
+ * replies, project comments, messages) goes through this, not its own `any { equals }`.
+ */
+fun Set<String>.containsUsername(username: String?): Boolean =
+    username != null && any { it.equals(username, ignoreCase = true) }
+
+/**
+ * True if [username] is currently blocked, per this store's latest known state. See
+ * [containsUsername] for the comparison rules.
  */
 fun BlockedUsersStore.isBlocked(username: String?): Boolean =
-    username != null && blockedUsernames.value.any { it.equals(username, ignoreCase = true) }
+    blockedUsernames.value.containsUsername(username)
 
 /** [BlockedUsersStore] backed by a [KeyValueStore]. */
 class KeyValueBlockedUsersStore(store: KeyValueStore) : BlockedUsersStore {
@@ -77,7 +86,7 @@ class KeyValueBlockedUsersStore(store: KeyValueStore) : BlockedUsersStore {
     // than delegate to plain Set +/-, or unblock() from a differently-cased call site
     // would silently no-op instead of removing the stored entry.
     override suspend fun block(username: String) = mutate { current ->
-        if (current.any { it.equals(username, ignoreCase = true) }) current else current + username
+        if (current.containsUsername(username)) current else current + username
     }
 
     override suspend fun unblock(username: String) = mutate { current ->
