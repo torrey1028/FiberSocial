@@ -273,6 +273,14 @@ jobs:
       # (appletvos, ios, osx, xros)" on stdin and crashes with
       # FastlaneCrash: "Could not retrieve response as fastlane runs in
       # non-interactive mode" instead of just using the one obvious answer.
+      # `submit_beta_review:false` is required too, separately from
+      # `distribute_external:false`: pilot's build_manager.rb calls
+      # `post_beta_app_review_submission` whenever `submit_beta_review`
+      # (default true) is set AND *either* `distribute_external` OR `groups`
+      # is present -- since `groups` is always passed here, leaving
+      # `submit_beta_review` at its default still triggered the same "Beta
+      # App Description is missing" review-submission failure even with
+      # `distribute_external:false`.
       - name: Install fastlane
         run: gem install fastlane --no-document
 
@@ -303,6 +311,7 @@ jobs:
             app_platform:"ios" \
             distribute_only:true \
             distribute_external:false \
+            submit_beta_review:false \
             groups:"$IOS_TESTFLIGHT_QA_GROUP_NAME" \
             build_number:"$BUILD_NUMBER"
 
