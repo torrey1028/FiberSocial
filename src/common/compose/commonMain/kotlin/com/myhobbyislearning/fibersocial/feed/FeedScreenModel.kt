@@ -24,6 +24,7 @@ interface FeedScreenModel {
     val projectPage: ProjectPageViewModel
     val userProfile: UserProfileViewModel
     val feedback: FeedbackViewModel
+    val feedbackImage: ImageAttachmentViewModel
     val events: EventsViewModel
     val eventDetail: EventDetailViewModel
     val newEvent: NewEventViewModel
@@ -34,6 +35,9 @@ interface FeedScreenModel {
 
     /** Reads the picked image behind [uri] and uploads it for the reply composer. */
     fun attachReplyImage(uri: String)
+
+    /** Reads the picked image behind [uri] and uploads it for the feedback composer (issue #429). */
+    fun attachFeedbackImage(uri: String)
 
     fun debugForceSessionExpiry()
 
