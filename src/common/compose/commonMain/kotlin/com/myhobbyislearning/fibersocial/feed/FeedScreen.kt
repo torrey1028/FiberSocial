@@ -1414,6 +1414,10 @@ fun FeedScreen(
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     val uriHandler = LocalUriHandler.current
+    // Shared by the drawer's "Find groups" row and the no-groups onboarding state
+    // (issue #431), so both link out to the same Ravelry search page — the app
+    // deliberately doesn't rebuild group search in-app (issue #232).
+    val onFindGroups = { uriHandler.openUri("https://www.ravelry.com/groups/search") }
 
     CloseDrawerOnBack(drawerState)
 
@@ -1464,7 +1468,7 @@ fun FeedScreen(
                     viewModel.feed.selectGroup(group)
                 },
                 onReorder = { viewModel.feed.reorderGroups(it) },
-                onFindGroups = { uriHandler.openUri("https://www.ravelry.com/groups/search") },
+                onFindGroups = onFindGroups,
                 isRefreshing = state is FeedState.Refreshing,
                 onRefresh = {
                     viewModel.feed.refresh()
@@ -1499,8 +1503,11 @@ fun FeedScreen(
                     onToggleUnreadOnly = { showUnreadOnly = !showUnreadOnly },
                     // The unread filter acts on the topic feed, which isn't what's on screen
                     // while Messages is up — leaving it there would offer a control that
-                    // silently does nothing.
-                    showFilter = !showingMessages,
+                    // silently does nothing. Same while the no-groups onboarding is up:
+                    // there are no topics to filter yet, and the onboarding deliberately
+                    // wins over the filter's empty state below.
+                    showFilter = !showingMessages &&
+                        !(loaded != null && groups.isEmpty() && !showingMyPosts),
                 )
             },
             floatingActionButton = {
@@ -1603,7 +1610,16 @@ fun FeedScreen(
                     modifier = Modifier.padding(padding),
                 ) {
                     val displayedItems = filterBlocked(filterUnread(s.items, showUnreadOnly), blockedUsernames)
-                    if (showUnreadOnly && displayedItems.isEmpty()) {
+                    // A brand-new Ravelry user with no groups would otherwise land on a
+                    // blank page (issue #431) — welcome them and point at the same
+                    // Ravelry group-search link-out the drawer offers. Checked before the
+                    // unread filter so toggling the filter can't replace the onboarding
+                    // with a misleading "No unread topics". Group feed only: Messages has
+                    // its own empty presentation; My Posts renders a bare empty list for
+                    // a zero-groups user — a known gap tracked as issue #456.
+                    if (s.groups.isEmpty() && !s.myPosts) {
+                        NoGroupsOnboarding(onFindGroups = onFindGroups)
+                    } else if (showUnreadOnly && displayedItems.isEmpty()) {
                         UnreadFilterEmptyState(
                             hasMore = s.hasMore,
                             loadingMore = s.loadingMore,
@@ -2032,6 +2048,58 @@ internal fun UnreadFilterEmptyState(
                 TextButton(onClick = onLoadMore) { Text("Check more topics") }
             }
         }
+    }
+}
+
+/**
+ * Onboarding empty state shown in place of the topic list when the user belongs to no
+ * groups at all (issue #431) — a brand-new Ravelry account would otherwise see a blank
+ * page with no hint of what the app is for or what to do next.
+ *
+ * [onFindGroups] must be the same Ravelry group-search link-out as the drawer's "Find
+ * groups" row: the app deliberately links out instead of rebuilding group search in-app
+ * (issue #232). Scrollable (like [FeedErrorState]) so the surrounding [PullToRefreshBox]
+ * still has a nested-scrolling child — pull-to-refresh is exactly how the user picks up
+ * a group joined on the website, which is why the copy mentions it.
+ */
+@Composable
+internal fun NoGroupsOnboarding(
+    onFindGroups: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState()),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Text(
+            text = "Welcome to FiberSocial",
+            style = MaterialTheme.typography.titleLarge,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(horizontal = 32.dp),
+        )
+        Spacer(Modifier.height(12.dp))
+        Text(
+            text = "FiberSocial shows the discussions from your Ravelry groups, " +
+                "and you aren't in any groups yet. Join a group or two on Ravelry " +
+                "to get started.",
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(horizontal = 32.dp),
+        )
+        Spacer(Modifier.height(16.dp))
+        Button(onClick = onFindGroups) { Text("Find groups on Ravelry") }
+        Spacer(Modifier.height(12.dp))
+        Text(
+            text = "Groups you join appear in the menu — pull down to refresh here when you're done.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(horizontal = 32.dp),
+        )
     }
 }
 
