@@ -56,4 +56,6 @@
 ## Logging
 
 - Use `println("FiberSocial: ...")` for debug logging in common module code (visible in logcat as `System.out` tag).
+- **Login-flow diagnostics go through `DebugLog.log(...)` instead** (it tees to the same `println` prefix AND an in-memory buffer a debug build can export via a share sheet — the only way to get evidence off an OTA-installed iPhone). A login-adjacent line written with bare `println` appears in logcat but is silently missing from the exported device trace.
+- Never interpolate a session cookie into any log call — route it through `describeSessionCookie` (issue #395); URLs in login-flow lines go through `describeUrlForLog`.
 - Rely on logcat for debugging — do not use screenshots as a substitute.

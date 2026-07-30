@@ -55,9 +55,18 @@ object DebugFlags {
     val sessionCookieLoggingEnabled: Boolean
         get() = debugBuild && sessionCookieLogging
 
-    /** Turns cookie-value logging on or off. Ignored outside a debug build. */
+    /**
+     * Turns cookie-value logging on or off. Ignored outside a debug build.
+     *
+     * Turning it OFF also scrubs [DebugLog]'s buffer: lines buffered while the flag was
+     * on contain the raw session cookie, and the debug panel promises that switching the
+     * flag off contains the exposure — without the scrub, a later "share log" would still
+     * export the credential captured earlier in the session.
+     */
     fun setSessionCookieLogging(enabled: Boolean) {
+        val wasOn = sessionCookieLogging
         sessionCookieLogging = debugBuild && enabled
+        if (wasOn && !sessionCookieLogging) DebugLog.clear()
     }
 
     /** Test-only reset so cases can't leak state into each other. */
