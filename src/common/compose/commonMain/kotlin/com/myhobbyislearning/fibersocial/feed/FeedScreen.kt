@@ -2181,12 +2181,6 @@ internal fun GroupDrawer(
     // immediately from the handle, or via long-press anywhere on the row.
     var reorderMode by remember { mutableStateOf(false) }
 
-    // Folds the "Groups" section (list + "Find groups") behind its header pill.
-    // Session-scoped like the feed's pinnedCollapsed: a standing preference, not
-    // persisted. Toggling is locked during reorder mode — collapsing mid-drag would
-    // tear the rows being dragged out of composition.
-    var groupsCollapsed by remember { mutableStateOf(false) }
-
     // Rows move live in a local working copy so the list follows the finger; the new
     // order is committed upstream (and persisted) once at drop. One state object for
     // the drawer's lifetime — NOT remember(groups) — because the per-row pointerInput
@@ -2312,39 +2306,20 @@ internal fun GroupDrawer(
             HorizontalDivider(Modifier.testTag("DrawerNavDividerAboveGroups"))
             Spacer(Modifier.height(8.dp))
             // The section header is a NavigationDrawerItem so its pill matches the "Posts"
-            // row above, and it folds the group list like the feed's pinned section: same
-            // rotating disclosure chevron (right = folded, down = open). While open the
-            // badge slot holds the reorder Edit/Done button; folded it shows the hidden
-            // group count, and the pill highlights when the active feed is one of them.
-            val chevronRotation by animateFloatAsState(
-                disclosureChevronRotation(groupsCollapsed, LocalLayoutDirection.current),
-            )
+            // row above. It is a plain label — the collapse toggle it used to carry was
+            // removed as visual clutter (issue #364), so the group list is always visible.
+            // The badge slot holds the reorder Edit/Done button. The invisible icon-slot
+            // spacer keeps the label's start aligned with every other row: M3 omits the
+            // icon slot AND its spacing entirely when icon is null, which would outdent
+            // "Groups" ~36dp left of "Posts"/"Messages" and the group rows below.
             NavigationDrawerItem(
                 label = { Text("Groups") },
-                selected = groupsCollapsed && selectedGroup != null,
-                onClick = { if (!reorderMode) groupsCollapsed = !groupsCollapsed },
-                icon = {
-                    Icon(
-                        Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                        contentDescription = if (groupsCollapsed) {
-                            "Expand your groups"
-                        } else {
-                            "Collapse your groups"
-                        },
-                        modifier = Modifier.rotate(chevronRotation),
-                    )
-                },
+                selected = false,
+                onClick = {},
+                icon = { Spacer(Modifier.size(24.dp)) },
                 badge = {
-                    if (groupsCollapsed) {
-                        Text(
-                            text = groups.size.toString(),
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    } else {
-                        TextButton(onClick = { reorderMode = !reorderMode }) {
-                            Text(if (reorderMode) "Done" else "Edit")
-                        }
+                    TextButton(onClick = { reorderMode = !reorderMode }) {
+                        Text(if (reorderMode) "Done" else "Edit")
                     }
                 },
                 modifier = Modifier.padding(horizontal = 12.dp),
@@ -2372,30 +2347,98 @@ internal fun GroupDrawer(
                     state = listState,
                     modifier = Modifier.fillMaxSize().testTag("GroupList"),
                 ) {
-                    if (!groupsCollapsed) {
                     items(localGroups, key = { it.id }) { group ->
-                    val eventCount = eventCounts[group.id] ?: 0
-                    val dragging = draggingId == group.id
-                    NavigationDrawerItem(
-                        label = { Text(group.name) },
-                        selected = selectedGroup?.id == group.id,
-                        // While reordering, taps must not navigate away mid-arrangement.
-                        onClick = { if (!reorderMode) onGroupSelected(group) },
-                        // The badge image yields to the drag handle in reorder mode —
-                        // both compete for the leading slot, and mid-reorder the handle
-                        // is the one doing work.
-                        icon = if (!reorderMode) {
-                            {
-                                IconWithUnreadDot(hasUnread = group.forumId in unreadGroupForumIds) {
-                                    GroupBadge(group = group, size = 28.dp)
+                        val eventCount = eventCounts[group.id] ?: 0
+                        val dragging = draggingId == group.id
+                        NavigationDrawerItem(
+                            label = { Text(group.name) },
+                            selected = selectedGroup?.id == group.id,
+                            // While reordering, taps must not navigate away mid-arrangement.
+                            onClick = { if (!reorderMode) onGroupSelected(group) },
+                            // The badge image yields to the drag handle in reorder mode —
+                            // both compete for the leading slot, and mid-reorder the handle
+                            // is the one doing work.
+                            icon = if (!reorderMode) {
+                                {
+                                    IconWithUnreadDot(hasUnread = group.forumId in unreadGroupForumIds) {
+                                        GroupBadge(group = group, size = 28.dp)
+                                    }
                                 }
-                            }
-                        } else {
-                            {
-                                DragHandle(
-                                    contentDescription = "Reorder ${group.name}",
-                                    modifier = Modifier.pointerInput(group.id) {
-                                        detectDragGestures(
+                            } else {
+                                {
+                                    DragHandle(
+                                        contentDescription = "Reorder ${group.name}",
+                                        modifier = Modifier.pointerInput(group.id) {
+                                            detectDragGestures(
+                                                onDragStart = { startDrag(group.id) },
+                                                onDrag = { change, amount ->
+                                                    change.consume()
+                                                    dragBy(group.id, amount.y)
+                                                },
+                                                onDragEnd = ::endDrag,
+                                                onDragCancel = ::cancelDrag,
+                                            )
+                                        },
+                                    )
+                                }
+                            },
+                            badge = when {
+                                // In edit mode the trailing slot offers "leave this group" (#231)
+                                // in place of the event badge.
+                                reorderMode -> {
+                                    {
+                                        IconButton(
+                                            onClick = {
+                                                // Clears any leaveError left over from a
+                                                // previous group's dialog that got dismissed
+                                                // without going through Cancel/onDismissRequest
+                                                // (e.g. a deep link tearing the drawer down
+                                                // while an error was showing) — otherwise this
+                                                // fresh dialog for a DIFFERENT group would open
+                                                // already showing that stale error/Retry.
+                                                onAcknowledgeLeaveError()
+                                                pendingLeave = group
+                                            },
+                                        ) {
+                                            Icon(
+                                                Icons.Default.Delete,
+                                                contentDescription = "Leave ${group.name}",
+                                                tint = MaterialTheme.colorScheme.error,
+                                            )
+                                        }
+                                    }
+                                }
+                                eventCount > 0 -> {
+                                    {
+                                        GroupEventsBadge(
+                                            count = eventCount,
+                                            // Same reasoning as the row's own onClick above: a
+                                            // rearrange can't be allowed to navigate away.
+                                            onClick = { if (!reorderMode) onGroupEventsClick(group) },
+                                        )
+                                    }
+                                }
+                                else -> null
+                            },
+                            modifier = Modifier
+                                .padding(horizontal = 12.dp)
+                                // Displaced rows slide to their new slot so the reorder is
+                                // visible; the dragged row itself must not animate — it is
+                                // positioned by the finger (translationY below), and a
+                                // placement animation would fight the swap compensation.
+                                .then(if (dragging) Modifier else Modifier.animateItem(fadeInSpec = null, fadeOutSpec = null))
+                                .zIndex(if (dragging) 1f else 0f)
+                                .graphicsLayer {
+                                    translationY = if (dragging) dragOffset else 0f
+                                    shadowElevation = if (dragging) 8.dp.toPx() else 0f
+                                    // Match the pill shape of the drawer item's highlight so
+                                    // the drag shadow isn't a bare rectangle behind it.
+                                    shape = CircleShape
+                                }
+                                .then(
+                                    if (!reorderMode) Modifier
+                                    else Modifier.pointerInput(group.id) {
+                                        detectDragGesturesAfterLongPress(
                                             onDragStart = { startDrag(group.id) },
                                             onDrag = { change, amount ->
                                                 change.consume()
@@ -2405,91 +2448,21 @@ internal fun GroupDrawer(
                                             onDragCancel = ::cancelDrag,
                                         )
                                     },
-                                )
-                            }
-                        },
-                        badge = when {
-                            // In edit mode the trailing slot offers "leave this group" (#231)
-                            // in place of the event badge.
-                            reorderMode -> {
-                                {
-                                    IconButton(
-                                        onClick = {
-                                            // Clears any leaveError left over from a
-                                            // previous group's dialog that got dismissed
-                                            // without going through Cancel/onDismissRequest
-                                            // (e.g. a deep link tearing the drawer down
-                                            // while an error was showing) — otherwise this
-                                            // fresh dialog for a DIFFERENT group would open
-                                            // already showing that stale error/Retry.
-                                            onAcknowledgeLeaveError()
-                                            pendingLeave = group
-                                        },
-                                    ) {
-                                        Icon(
-                                            Icons.Default.Delete,
-                                            contentDescription = "Leave ${group.name}",
-                                            tint = MaterialTheme.colorScheme.error,
-                                        )
-                                    }
-                                }
-                            }
-                            eventCount > 0 -> {
-                                {
-                                    GroupEventsBadge(
-                                        count = eventCount,
-                                        // Same reasoning as the row's own onClick above: a
-                                        // rearrange can't be allowed to navigate away.
-                                        onClick = { if (!reorderMode) onGroupEventsClick(group) },
-                                    )
-                                }
-                            }
-                            else -> null
-                        },
-                        modifier = Modifier
-                            .padding(horizontal = 12.dp)
-                            // Displaced rows slide to their new slot so the reorder is
-                            // visible; the dragged row itself must not animate — it is
-                            // positioned by the finger (translationY below), and a
-                            // placement animation would fight the swap compensation.
-                            .then(if (dragging) Modifier else Modifier.animateItem(fadeInSpec = null, fadeOutSpec = null))
-                            .zIndex(if (dragging) 1f else 0f)
-                            .graphicsLayer {
-                                translationY = if (dragging) dragOffset else 0f
-                                shadowElevation = if (dragging) 8.dp.toPx() else 0f
-                                // Match the pill shape of the drawer item's highlight so
-                                // the drag shadow isn't a bare rectangle behind it.
-                                shape = CircleShape
-                            }
-                            .then(
-                                if (!reorderMode) Modifier
-                                else Modifier.pointerInput(group.id) {
-                                    detectDragGesturesAfterLongPress(
-                                        onDragStart = { startDrag(group.id) },
-                                        onDrag = { change, amount ->
-                                            change.consume()
-                                            dragBy(group.id, amount.y)
-                                        },
-                                        onDragEnd = ::endDrag,
-                                        onDragCancel = ::cancelDrag,
-                                    )
-                                },
-                            ),
-                    )
-                }
-                // Discover and join more groups on Ravelry's own search page (issue #232 —
-                // linking out rather than rebuilding search in-app).
-                item(key = "find-groups") {
-                    NavigationDrawerItem(
-                        label = { Text("Find groups") },
-                        selected = false,
-                        onClick = onFindGroups,
-                        icon = { Icon(Icons.Default.Search, contentDescription = null) },
-                        modifier = Modifier.padding(horizontal = 12.dp),
-                    )
-                }
-                } // end of the collapsible "Groups" section (groupsCollapsed)
-                item(key = "drawer-footer-spacer") { Spacer(Modifier.height(16.dp)) }
+                                ),
+                        )
+                    }
+                    // Discover and join more groups on Ravelry's own search page (issue #232 —
+                    // linking out rather than rebuilding search in-app).
+                    item(key = "find-groups") {
+                        NavigationDrawerItem(
+                            label = { Text("Find groups") },
+                            selected = false,
+                            onClick = onFindGroups,
+                            icon = { Icon(Icons.Default.Search, contentDescription = null) },
+                            modifier = Modifier.padding(horizontal = 12.dp),
+                        )
+                    }
+                    item(key = "drawer-footer-spacer") { Spacer(Modifier.height(16.dp)) }
                 }
                 GroupListScrollbar(state = listState, modifier = Modifier.align(Alignment.CenterEnd))
             }
@@ -2892,8 +2865,9 @@ private fun PinnedSectionHeader(
 }
 
 /**
- * Rotation (clockwise degrees) for a disclosure chevron — [PinnedSectionHeader]'s and the
- * drawer's "Groups" section header both use this.
+ * Rotation (clockwise degrees) for a disclosure chevron — [PinnedSectionHeader] is its
+ * only caller (the drawer's "Groups" header used it too until the collapse toggle was
+ * removed, issue #364).
  *
  * `Icons.AutoMirrored.Filled.KeyboardArrowRight` flips horizontally in RTL layouts (it
  * points left while folded there, matching every other directional icon in this app), but
