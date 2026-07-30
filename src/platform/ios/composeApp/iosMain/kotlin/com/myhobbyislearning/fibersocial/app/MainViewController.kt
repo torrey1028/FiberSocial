@@ -14,11 +14,13 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.window.ComposeUIViewController
 import coil3.ImageLoader
 import coil3.SingletonImageLoader
 import coil3.network.ktor2.KtorNetworkFetcherFactory
 import com.myhobbyislearning.fibersocial.auth.AuthState
+import com.myhobbyislearning.fibersocial.debug.DebugFlags
 import com.myhobbyislearning.fibersocial.auth.KeyValueTokenStorage
 import com.myhobbyislearning.fibersocial.feed.FeedScreen
 import com.myhobbyislearning.fibersocial.feed.LocalProjectLinkOpener
@@ -27,15 +29,23 @@ import com.myhobbyislearning.fibersocial.login.LoginScreen
 import com.myhobbyislearning.fibersocial.notifications.EventSync
 import com.myhobbyislearning.fibersocial.notifications.IosEventNotifier
 import com.myhobbyislearning.fibersocial.login.WebViewLoginScreen
+import com.myhobbyislearning.fibersocial.moderation.KeyValueBlockedUsersStore
 import com.myhobbyislearning.fibersocial.notifications.KeyValueMutedTopicsStore
 import com.myhobbyislearning.fibersocial.notifications.KeyValueNotificationSettingsStore
+import com.myhobbyislearning.fibersocial.settings.CURRENT_TERMS_VERSION
+import com.myhobbyislearning.fibersocial.settings.KeyValueTermsAcceptanceStore
 import com.myhobbyislearning.fibersocial.settings.KeyValueThemeSettingsStore
+import com.myhobbyislearning.fibersocial.settings.TermsAcceptance
 import com.myhobbyislearning.fibersocial.settings.ThemeMode
 import com.myhobbyislearning.fibersocial.settings.ThemeSettings
+import com.myhobbyislearning.fibersocial.settings.shouldShowTermsGate
+import com.myhobbyislearning.fibersocial.storage.BLOCKED_USERS_STORE_NAME
 import com.myhobbyislearning.fibersocial.storage.NOTIFICATION_SETTINGS_STORE_NAME
 import com.myhobbyislearning.fibersocial.storage.NOTIFICATION_STATE_STORE_NAME
+import com.myhobbyislearning.fibersocial.storage.TERMS_ACCEPTANCE_STORE_NAME
 import com.myhobbyislearning.fibersocial.storage.THEME_SETTINGS_STORE_NAME
 import com.myhobbyislearning.fibersocial.storage.NsUserDefaultsKeyValueStore
+import com.myhobbyislearning.fibersocial.terms.TermsGateScreen
 import com.myhobbyislearning.fibersocial.ui.FiberSocialTheme
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.darwin.Darwin
@@ -53,7 +63,12 @@ import platform.UIKit.UIViewController
  * The app's Compose root, embedded by the SwiftUI host (src/platform/ios). The iOS
  * counterpart of `MainActivity.onCreate/setContent`.
  */
+@OptIn(ExperimentalNativeApi::class)
 fun MainViewController(): UIViewController {
+    // Before anything can log: DebugFlags defaults to "not a debug build", so a missed
+    // call here fails closed (nothing sensitive logged) rather than open (issue #395).
+    // Same signal that gates the debug panel below.
+    DebugFlags.initDebugBuild(Platform.isDebugBinary)
     // App-lifetime scope: a single-window iOS app has no Activity recreation, so the
     // models simply live as long as the process (the ViewModel-shaped equivalent of
     // `by viewModels()` retention).
@@ -126,15 +141,64 @@ private fun IosApp(authModel: IosAuthModel, feedModel: IosFeedModel) {
         val authState by authModel.auth.state.collectAsState()
         var showWebView by remember { mutableStateOf(false) }
 
-        // Checked ahead of the AuthState when-branch below so a retry from
-        // AuthState.Error re-opens the WebView (issue #149) — same as MainActivity.
-        if (showWebView) {
-            val authUrl = remember { authModel.buildAuthUrl() }
+        // Terms-of-use gate (issue #408, Apple Guideline 1.2) — same shape as MainActivity.
+        // Since issue #424 it also gates an authenticated user whose acceptance is wiped
+        // (the iOS uninstall/reinstall case: the Keychain token survives, the
+        // NSUserDefaults acceptance doesn't) or stale. null while loading; the null-hold
+        // branch below keeps EVERYTHING back for that gap.
+        val termsStore = remember {
+            KeyValueTermsAcceptanceStore(NsUserDefaultsKeyValueStore(TERMS_ACCEPTANCE_STORE_NAME))
+        }
+        var termsAcceptance by remember { mutableStateOf<TermsAcceptance?>(null) }
+        LaunchedEffect(Unit) {
+            if (termsAcceptance == null) {
+                // Fail CLOSED: an unreadable store gates rather than leaving the hold
+                // branch below blank forever — same as MainActivity.
+                termsAcceptance = runCatching { termsStore.load() }.getOrElse { TermsAcceptance() }
+            }
+        }
+        val termsScope = rememberCoroutineScope()
+
+        // Branch order is load-bearing (issue #424) — same reasoning as MainActivity:
+        // 1. While the acceptance store is still loading (null), hold everything — a
+        //    brief blank frame. Rendering the normal branches in that gap showed feed
+        //    content, fired its network load, and popped the notification-permission
+        //    prompt for the first frames of a launch that then turned out to need the
+        //    gate (the exact reinstall cohort this fix exists for) — content before
+        //    agreement, the exact thing Guideline 1.2 forbids.
+        // 2. The gate outranks showWebView: agreeing leaves showWebView untouched, so a
+        //    login WebView pending behind the gate opens right after.
+        // 3. The Error-retry path (issue #149) is unaffected: shouldShowTermsGate
+        //    deliberately never gates AuthState.Error.
+        if (termsAcceptance == null) {
+            Box(Modifier.fillMaxSize())
+        } else if (shouldShowTermsGate(authState, termsAcceptance)) {
+            val uriHandler = LocalUriHandler.current
+            TermsGateScreen(
+                onOpenFullTerms = {
+                    uriHandler.openUri("https://torrey1028.github.io/FiberSocial/terms-of-use.html")
+                },
+                onAgree = {
+                    val updated = TermsAcceptance(version = CURRENT_TERMS_VERSION)
+                    termsAcceptance = updated
+                    termsScope.launch { termsStore.save(updated) }
+                },
+            )
+        } else if (showWebView) {
             WebViewLoginScreen(
-                authUrl = authUrl,
+                // A supplier, not a pre-built URL: the WebView mints a fresh authorize
+                // URL when the server derails the flow (stale challenge) and it needs
+                // to restart — same as MainActivity.
+                buildAuthUrl = { authModel.buildAuthUrl() },
                 onAuthComplete = { code, state, cookie ->
                     showWebView = false
                     authModel.handleAuthCode(code, state, cookie)
+                },
+                // Leave the web view and report it, rather than sitting on a dead
+                // authorize page (issue #394) — same routing as MainActivity.
+                onAuthError = { message ->
+                    showWebView = false
+                    authModel.auth.failLogin(message)
                 },
                 onBack = { showWebView = false },
             )
@@ -162,12 +226,20 @@ private fun IosApp(authModel: IosAuthModel, feedModel: IosFeedModel) {
                             NsUserDefaultsKeyValueStore(NOTIFICATION_STATE_STORE_NAME),
                         )
                     }
+                    // Local blocked-users list (issue #410); see MainActivity's twin for
+                    // why this is `remember`, not `rememberSaveable`.
+                    val blockedUsersStore = remember {
+                        KeyValueBlockedUsersStore(
+                            NsUserDefaultsKeyValueStore(BLOCKED_USERS_STORE_NAME),
+                        )
+                    }
                     LaunchedEffect(Unit) {
                         feedModel.load()
                         // Same point in the flow where Android prompts (MainActivity
                         // requests POST_NOTIFICATIONS at launch).
                         IosEventNotifier().requestAuthorization()
                     }
+                    LaunchedEffect(blockedUsersStore) { blockedUsersStore.load() }
                     // On session expiry: show WebView login before clearing auth so
                     // there's no LoginScreen flash (same as MainActivity).
                     LaunchedEffect(feedModel) {
@@ -205,6 +277,7 @@ private fun IosApp(authModel: IosAuthModel, feedModel: IosFeedModel) {
                             },
                             notificationSettingsStore = notificationSettingsStore,
                             mutedTopicsStore = mutedTopicsStore,
+                            blockedUsersStore = blockedUsersStore,
                             // A cadence change re-baselines the next background-refresh
                             // request (iOS treats it as a floor, not a schedule).
                             onPollCadenceChanged = { EventSync.scheduleBackgroundRefresh(it) },

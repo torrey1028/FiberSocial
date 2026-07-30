@@ -75,6 +75,7 @@ import com.myhobbyislearning.fibersocial.feed.html.parseBodyDocument
 import com.myhobbyislearning.fibersocial.feed.html.parseSummaryDocument
 import com.myhobbyislearning.fibersocial.feed.models.FeedItem
 import com.myhobbyislearning.fibersocial.feed.models.Post
+import com.myhobbyislearning.fibersocial.moderation.BlockUserConfirmDialog
 import com.myhobbyislearning.fibersocial.ui.Avatar
 import com.myhobbyislearning.fibersocial.profile.UsernameLink
 import com.myhobbyislearning.fibersocial.ui.DeleteConfirmDialog
@@ -100,6 +101,21 @@ fun TopicDetailScreen(
     editState: EditState = EditState.Idle,
     onEditPost: (Post, String) -> Unit = { _, _ -> },
     onEditErrorShown: () -> Unit = {},
+    // Report a post (issue #409): the flag dialog's state, opening it for a post, its
+    // reason-picker submission, dismissal, acknowledging a successful send, and the
+    // secondary "report to app developer" email fallback.
+    reportState: ReportState = ReportState.Idle,
+    onReportPost: (Post) -> Unit = {},
+    onSubmitReport: (reasonId: String, escalate: Boolean) -> Unit = { _, _ -> },
+    onDismissReport: () -> Unit = {},
+    onReportSent: () -> Unit = {},
+    onReportToDeveloper: (Post) -> Unit = {},
+    // Block a user (issue #410): the per-post overflow menu's second action, offered
+    // alongside Report (see the KDoc on ReplyItem.onBlock for why the menu was built to
+    // make room for exactly this). onBlockUser fires after the confirmation dialog, with
+    // whether the user also asked to notify the developer.
+    blockedUsernames: Set<String> = emptySet(),
+    onBlockUser: (post: Post, notifyDeveloper: Boolean) -> Unit = { _, _ -> },
     replyState: ReplyState = ReplyState.Idle,
     onSendReply: (String) -> Unit = {},
     onReplySent: () -> Unit = {},
@@ -142,6 +158,40 @@ fun TopicDetailScreen(
             message = deleteState.message,
             onDismiss = onDeleteErrorShown,
         )
+    }
+    // Report a post (issue #409): the report dialog covers Loading/Ready/LoadError (see
+    // ReportPostDialog); a successful send instead shows a separate one-shot confirmation,
+    // matching PostActionErrorDialog's shape for the failure side of other post actions.
+    val reportedPost = when (val r = reportState) {
+        is ReportState.LoadingForm -> r.post
+        is ReportState.Ready -> r.post
+        is ReportState.LoadError -> r.post
+        else -> null
+    }
+    if (reportedPost != null) {
+        ReportPostDialog(
+            state = reportState,
+            onSubmit = onSubmitReport,
+            onReportToDeveloper = { onReportToDeveloper(reportedPost) },
+            onDismiss = onDismissReport,
+        )
+    }
+    if (reportState is ReportState.Sent) {
+        ReportSentDialog(onDismiss = onReportSent)
+    }
+    // Block a user (issue #410): local dialog state, mirroring pendingDelete above —
+    // blocking has no network call and no loading/error states of its own, unlike Report,
+    // so it doesn't need a ViewModel-driven state machine the way ReportPostDialog does.
+    var pendingBlockPost by remember { mutableStateOf<Post?>(null) }
+    pendingBlockPost?.let { post ->
+        val username = post.user?.username
+        if (username != null) {
+            BlockUserConfirmDialog(
+                username = username,
+                onConfirm = { notifyDeveloper -> onBlockUser(post, notifyDeveloper) },
+                onDismiss = { pendingBlockPost = null },
+            )
+        }
     }
     // Furthest post number the user has scrolled to this visit (issue #206): the read
     // marker follows how far they actually got, not how many posts the app fetched. A
@@ -543,10 +593,20 @@ fun TopicDetailScreen(
                             modifier = Modifier.padding(vertical = 16.dp),
                         )
                     }
-                    is TopicDetailState.Loaded -> items(
-                        displayState.posts,
-                        key = { it.id },
-                    ) { post ->
+                    // Blocked authors' posts are filtered out here — fully hidden, not
+                    // greyed or collapsed, per Apple's "removed from view" requirement
+                    // (issue #410). blockedUsernames is collected from BlockedUsersStore's
+                    // StateFlow at the call site, so a block/unblock while this thread is
+                    // open takes effect on the very next recomposition, no refresh needed.
+                    // Not `remember`-cached: the LazyListScope content block this sits in
+                    // (like item/items' own list/key arguments) is a plain, non-@Composable
+                    // lambda — LazyColumn defers actual composition to the per-item lambdas
+                    // below — so a memoizing composable call isn't reachable here, and
+                    // isn't needed either: filtering a post page is cheap enough to just
+                    // recompute on every recomposition of this block.
+                    is TopicDetailState.Loaded -> {
+                    val visiblePosts = filterBlockedPosts(displayState.posts, blockedUsernames)
+                    items(visiblePosts, key = { it.id }) { post ->
                         val mine = currentUsername != null && post.user?.username == currentUsername
                         ReplyItem(
                             post = post,
@@ -569,8 +629,16 @@ fun TopicDetailScreen(
                                 onEditErrorShown()
                                 editingPostId = post.id
                             },
+                            onReport = { onReportPost(post) },
+                            // Only offered when the post actually has an author to block (an
+                            // unattributed post has no username BlockedUsersStore could ever
+                            // act on) and isn't the viewer's own post — blocking yourself
+                            // would hide every topic/reply you've ever posted from your own
+                            // feed, the same self-block gate UserProfileScreen applies.
+                            onBlock = if (!mine) post.user?.username?.let { { pendingBlockPost = post } } else null,
                         )
                         HorizontalDivider()
+                    }
                     }
                 }
 
@@ -703,6 +771,23 @@ private suspend fun LazyListState.snapTargetToBottom(index: Int) {
     if (gap > 0) scrollBy(-gap.toFloat())
 }
 
+/**
+ * Purely client-side block filter (issue #410), mirroring [filterUnread]'s shape: no new
+ * API call, just hides posts whose author is on the local blocked-users list. Compared
+ * case-insensitively, matching [com.myhobbyislearning.fibersocial.moderation.isBlocked].
+ * A post with no known author ([Post.user] `null`) is never filtered — there's no username
+ * to have blocked.
+ */
+internal fun filterBlockedPosts(posts: List<Post>, blockedUsernames: Set<String>): List<Post> =
+    if (blockedUsernames.isEmpty()) {
+        posts
+    } else {
+        posts.filterNot { post ->
+            val username = post.user?.username ?: return@filterNot false
+            blockedUsernames.any { it.equals(username, ignoreCase = true) }
+        }
+    }
+
 @Composable
 internal fun ReplyItem(
     post: Post,
@@ -714,6 +799,16 @@ internal fun ReplyItem(
     saving: Boolean = false,
     actionsEnabled: Boolean = true,
     onEdit: () -> Unit = {},
+    // Report a post (issue #409): a minimal per-post overflow menu, offered on every
+    // post (own or not — objectionable content isn't limited to other people's posts,
+    // and Apple's requirement is a flag mechanism, not one gated on authorship). Built
+    // as a DropdownMenu rather than a bare icon so #410 (block user) can add a second
+    // item to the same menu later instead of accumulating more inline icon buttons.
+    onReport: () -> Unit = {},
+    // Block a user (issue #410): the second item in that same overflow menu. Null (not a
+    // false/no-op lambda) when the post has no known author to block, so there's no way
+    // to render an enabled item with nothing behind it — see the call site.
+    onBlock: (() -> Unit)? = null,
 ) {
     Column(modifier = Modifier.padding(vertical = 12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -738,6 +833,32 @@ internal fun ReplyItem(
                             Icons.Default.Delete,
                             contentDescription = "Delete post",
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                var overflowOpen by remember { mutableStateOf(false) }
+                IconButton(onClick = { overflowOpen = true }, enabled = actionsEnabled) {
+                    Icon(
+                        Icons.Default.MoreVert,
+                        contentDescription = "More post options",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                DropdownMenu(expanded = overflowOpen, onDismissRequest = { overflowOpen = false }) {
+                    DropdownMenuItem(
+                        text = { Text("Report post") },
+                        onClick = {
+                            overflowOpen = false
+                            onReport()
+                        },
+                    )
+                    onBlock?.let { block ->
+                        DropdownMenuItem(
+                            text = { Text("Block user") },
+                            onClick = {
+                                overflowOpen = false
+                                block()
+                            },
                         )
                     }
                 }

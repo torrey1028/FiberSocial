@@ -5,8 +5,9 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 
 /**
- * [disclosureChevronRotation] drives the pinned-topics header's and the drawer's "Your
- * Groups" header's chevrons via a raw screen-space rotation, which doesn't automatically
+ * [disclosureChevronRotation] drives the pinned-topics header's chevron (its only
+ * remaining caller — the drawer's "Groups" header lost its collapse toggle in issue
+ * #364) via a raw screen-space rotation,which doesn't automatically
  * account for the icon's own RTL auto-mirroring — so the sign has to flip for RTL to keep
  * "expanded" pointing down in both directions.
  * No Robolectric needed: this is a pure function over an enum, not a composable.

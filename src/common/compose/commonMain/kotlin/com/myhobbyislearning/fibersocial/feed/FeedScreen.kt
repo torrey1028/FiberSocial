@@ -121,6 +121,7 @@ import com.myhobbyislearning.fibersocial.events.EventDetailScreen
 import com.myhobbyislearning.fibersocial.events.EventsScreen
 import com.myhobbyislearning.fibersocial.events.EventsState
 import com.myhobbyislearning.fibersocial.events.NewEventScreen
+import com.myhobbyislearning.fibersocial.featureflags.FeatureFlags
 import com.myhobbyislearning.fibersocial.feed.models.FeedItem
 import com.myhobbyislearning.fibersocial.feed.models.Group
 import com.myhobbyislearning.fibersocial.feed.models.Post
@@ -134,11 +135,15 @@ import com.myhobbyislearning.fibersocial.feed.models.UserSearchResult
 import com.myhobbyislearning.fibersocial.feed.models.VoteType
 import com.myhobbyislearning.fibersocial.composeapp.resources.Res
 import com.myhobbyislearning.fibersocial.composeapp.resources.app_logo_content_description
+import com.myhobbyislearning.fibersocial.messages.MessageThread
 import com.myhobbyislearning.fibersocial.messages.MessageThreadScreen
 import com.myhobbyislearning.fibersocial.messages.MessagesScreen
+import com.myhobbyislearning.fibersocial.messages.MessagesState
 import com.myhobbyislearning.fibersocial.messages.NewMessageScreen
 import com.myhobbyislearning.fibersocial.messages.ReplyContext
 import com.myhobbyislearning.fibersocial.messages.replySubject
+import com.myhobbyislearning.fibersocial.moderation.BlockedUsersScreen
+import com.myhobbyislearning.fibersocial.moderation.BlockedUsersStore
 import com.myhobbyislearning.fibersocial.profile.UserProfileScreen
 import com.myhobbyislearning.fibersocial.profile.UserProfileState
 import com.myhobbyislearning.fibersocial.notifications.DeepLink
@@ -155,6 +160,7 @@ import com.myhobbyislearning.fibersocial.ui.GroupBadge
 import com.myhobbyislearning.fibersocial.ui.PullToRefreshBox
 import com.myhobbyislearning.fibersocial.ui.appLogoResource
 import com.myhobbyislearning.fibersocial.ui.UserAvatar
+import io.ktor.http.encodeURLParameter
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -381,6 +387,10 @@ fun FeedScreen(
     // Where per-topic reply mutes are persisted (issue #338); read for the topic overflow
     // menu's mute state and written when the user toggles it.
     mutedTopicsStore: MutedTopicsStore? = null,
+    // Local blocked-users list (issue #410). Reactive: every surface that filters user
+    // content below collects blockedUsersStore.blockedUsernames directly (not a one-shot
+    // load()), so a block/unblock takes effect instantly everywhere without a refresh.
+    blockedUsersStore: BlockedUsersStore? = null,
     onPollCadenceChanged: (PollCadence) -> Unit = {},
     debugPanelEnabled: Boolean = false,
     onRunEventSync: () -> Unit = {},
@@ -391,6 +401,11 @@ fun FeedScreen(
     val eventsState by viewModel.events.state.collectAsState()
     val eventDetailState by viewModel.eventDetail.state.collectAsState()
     val messagesState by viewModel.messages.state.collectAsState()
+    // Blocked usernames (issue #410), collected directly from the store's StateFlow so a
+    // block/unblock anywhere below recomposes every filter that reads this immediately —
+    // no host wires blockedUsersStore in previews/tests, hence the empty fallback State.
+    val blockedUsernames by blockedUsersStore?.blockedUsernames?.collectAsState()
+        ?: remember { mutableStateOf(emptySet<String>()) }
     // THE conversation-detail nav flag (issue #371). Non-null means a thread is open, and
     // it is the ViewModel's own state rather than a screen-level `mutableStateOf` like the
     // other destinations here: the thread's content, its mark-read pass and the list row's
@@ -522,9 +537,16 @@ fun FeedScreen(
     // Same reasoning as settingsScope above, for the topic-detail mute toggle's early-return
     // block: hoisted here so tapping Back right after toggling mute doesn't cancel the write.
     val muteScope = rememberCoroutineScope()
+    // Same reasoning again, for block/unblock writes (issue #410): hoisted so navigating
+    // away from the post/profile that triggered the write (which the confirmation dialog
+    // dismisses immediately, before the suspend call above necessarily lands) can't cancel
+    // it mid-flight.
+    val blockScope = rememberCoroutineScope()
     // Opened from the Settings block below without clearing showSettings, so backing out
     // of About returns to the still-open Settings screen (issue #289).
     var showAbout by remember { mutableStateOf(false) }
+    // Opened from Settings, same nav shape as showAbout (issue #410).
+    var showBlockedUsers by remember { mutableStateOf(false) }
     var composingTopic by rememberSaveable { mutableStateOf(false) }
     // The message composer (issue #374), following composingTopic's shape exactly: a
     // rememberSaveable flag plus an early return, not a new navigation mechanism.
@@ -569,6 +591,7 @@ fun FeedScreen(
         selectedEventPermalink = null
         showSettings = false
         showAbout = false
+        showBlockedUsers = false
         showDebugPanel = false
         eventsGroup = null
         showingMessages = false
@@ -707,6 +730,14 @@ fun FeedScreen(
             // entirely and reads none of its state, so gating on the feed would strand the
             // tap whenever the feed happened to fail to load.
             is DeepLink.Message -> {
+                // Messages is compile-time gated out of release builds — see FeatureFlags.
+                // A stale notification or shared link tapped on a release build must not
+                // route here at all, since there's no drawer entry or FAB to land the user
+                // on afterward.
+                if (!FeatureFlags.messagesEnabled) {
+                    onDeepLinkConsumed()
+                    return@LaunchedEffect
+                }
                 clearNavigationForDeepLink()
                 showingMessages = true
                 // PARKED FOR #371. Selecting Messages is as far as this can route today —
@@ -723,6 +754,10 @@ fun FeedScreen(
             }
 
             DeepLink.Messages -> {
+                if (!FeatureFlags.messagesEnabled) {
+                    onDeepLinkConsumed()
+                    return@LaunchedEffect
+                }
                 clearNavigationForDeepLink()
                 showingMessages = true
                 onDeepLinkConsumed()
@@ -826,6 +861,7 @@ fun FeedScreen(
             onPostErrorShown = { viewModel.projectPage.acknowledgePostError() },
             onDeleteComment = { viewModel.projectPage.deleteComment(it) },
             onPostAcknowledged = { viewModel.projectPage.acknowledgePosted() },
+            blockedUsernames = blockedUsernames,
         )
         return
     }
@@ -835,6 +871,8 @@ fun FeedScreen(
     // backing out returns there untouched.
     val userProfileState by viewModel.userProfile.state.collectAsState()
     if (userProfileState !is UserProfileState.Hidden) {
+        val profileUriHandler = LocalUriHandler.current
+        val profileUsername = (userProfileState as? UserProfileState.Loaded)?.profile?.username
         UserProfileScreen(
             state = userProfileState,
             onBack = { viewModel.userProfile.dismiss() },
@@ -843,6 +881,29 @@ fun FeedScreen(
             onGroupClick = { group ->
                 viewModel.userProfile.dismiss()
                 viewModel.feed.selectGroup(group)
+            },
+            // Block a user (issue #410) from their own profile page. Stays open after
+            // blocking (unlike onSendMessage/onGroupClick, which dismiss to hand off to
+            // another screen) — blocking is complete in itself, and the header's action
+            // flips to "Unblock" immediately from the same reactive blockedUsernames read.
+            isBlocked = profileUsername != null &&
+                blockedUsernames.any { it.equals(profileUsername, ignoreCase = true) },
+            onBlockUser = { notifyDeveloper ->
+                if (profileUsername != null) {
+                    blockScope.launch {
+                        withContext(NonCancellable) { blockedUsersStore?.block(profileUsername) }
+                    }
+                    if (notifyDeveloper) {
+                        profileUriHandler.openUri(blockUserEmailUri(profileUsername))
+                    }
+                }
+            },
+            onUnblockUser = {
+                if (profileUsername != null) {
+                    blockScope.launch {
+                        withContext(NonCancellable) { blockedUsersStore?.unblock(profileUsername) }
+                    }
+                }
             },
             // Opens the composer addressed to this person (issue #373). The profile is
             // DISMISSED rather than left underneath because this early return sits above
@@ -906,6 +967,7 @@ fun FeedScreen(
             onBack = { showAbout = false },
             onOpenRepo = { uriHandler.openUri("https://github.com/torrey1028/FiberSocial") },
             onOpenPrivacyPolicy = { uriHandler.openUri("https://torrey1028.github.io/FiberSocial/") },
+            onOpenTermsOfUse = { uriHandler.openUri("https://torrey1028.github.io/FiberSocial/terms-of-use.html") },
             // Private mailto, deliberately not the public "Send feedback" flow — see the
             // param KDoc on AboutScreen. Also reported to NCMEC/Ravelry per
             // legal/child-safety-standards.html; this is just the in-app entry point.
@@ -916,6 +978,23 @@ fun FeedScreen(
                         "&body=Please%20describe%20what%20you%20observed%2C%20including%20a%20" +
                         "Ravelry%20username%2C%20group%2C%20or%20topic%20link%20if%20possible.",
                 )
+            },
+        )
+        return
+    }
+
+    // Rendered before settings, same shape as showAbout above (issue #410): "Blocked
+    // users" (opened from Settings) shows over it; backing out returns to Settings.
+    if (showBlockedUsers) {
+        BlockedUsersScreen(
+            // Sorted so the list has a stable, predictable order — a Set's iteration
+            // order isn't guaranteed, and re-sorting on every recomposition (as opposed
+            // to once when the set changes) would be wasted work for a list this small
+            // that's never in the reactive hot path.
+            blockedUsernames = remember(blockedUsernames) { blockedUsernames.sorted() },
+            onBack = { showBlockedUsers = false },
+            onUnblock = { username ->
+                blockScope.launch { withContext(NonCancellable) { blockedUsersStore?.unblock(username) } }
             },
         )
         return
@@ -983,6 +1062,7 @@ fun FeedScreen(
                 null
             },
             onOpenAbout = { showAbout = true },
+            onOpenBlockedUsers = { showBlockedUsers = true },
         )
         return
     }
@@ -1073,7 +1153,22 @@ fun FeedScreen(
         val replyState by viewModel.topicDetail.replyState.collectAsState()
         val deleteState by viewModel.topicDetail.deleteState.collectAsState()
         val editState by viewModel.topicDetail.editState.collectAsState()
+        val reportState by viewModel.topicDetail.reportState.collectAsState()
         val replyAttachment by viewModel.replyImage.state.collectAsState()
+        val uriHandler = LocalUriHandler.current
+        // Best-effort group permalink for the "report to app developer" email's post
+        // link (issue #409): neither FeedItem nor Post carries a Ravelry permalink of
+        // its own (see reportPostEmailUri), so this resolves it from whichever groups
+        // are already loaded in the feed. Null (e.g. state still Loading) just means the
+        // email body falls back to identifying details instead of a clickable link.
+        val groupPermalink = remember(topic.groupId, state) {
+            val groups = when (val s = state) {
+                is FeedState.Loaded -> s.groups
+                is FeedState.Refreshing -> s.stale.groups
+                else -> emptyList()
+            }
+            groups.firstOrNull { it.id == topic.groupId }?.permalink
+        }
         val currentUsername = when (val s = state) {
             is FeedState.Loaded -> s.user.username
             is FeedState.Refreshing -> s.stale.user.username
@@ -1142,6 +1237,34 @@ fun FeedScreen(
             editState = editState,
             onEditPost = { post, newBody -> viewModel.topicDetail.editPost(post, newBody) },
             onEditErrorShown = { viewModel.topicDetail.acknowledgeEditError() },
+            reportState = reportState,
+            onReportPost = { post -> viewModel.topicDetail.openReportDialog(post) },
+            onSubmitReport = { reasonId, escalate -> viewModel.topicDetail.submitReport(reasonId, escalate) },
+            onDismissReport = { viewModel.topicDetail.dismissReport() },
+            onReportSent = { viewModel.topicDetail.acknowledgeReportSent() },
+            // Secondary channel (issue #409): a private, pre-addressed email — same
+            // mechanism as AboutScreen's onReportChildSafetyConcern — that the user still
+            // has to send themself. Never auto-sent.
+            onReportToDeveloper = { post ->
+                uriHandler.openUri(reportPostEmailUri(topic, post, groupPermalink))
+            },
+            // Block a user (issue #410): the per-post overflow menu's second action.
+            // blockedUsernames drives the reply list's instant filtering; onBlockUser
+            // persists the block (and, if requested, opens the same drafts-only
+            // notify-the-developer mailto as onReportToDeveloper above) after the
+            // confirmation dialog TopicDetailScreen itself renders.
+            blockedUsernames = blockedUsernames,
+            onBlockUser = { post, notifyDeveloper ->
+                val username = post.user?.username
+                if (username != null) {
+                    blockScope.launch {
+                        withContext(NonCancellable) { blockedUsersStore?.block(username) }
+                    }
+                    if (notifyDeveloper) {
+                        uriHandler.openUri(blockUserEmailUri(username, topic, post, groupPermalink))
+                    }
+                }
+            },
             attachment = replyAttachment,
             onImagePicked = { uri -> viewModel.attachReplyImage(uri) },
             onAttachmentInserted = { viewModel.replyImage.acknowledgeInserted() },
@@ -1413,8 +1536,21 @@ fun FeedScreen(
         ) { padding ->
             // Messages replaces the feed content while keeping the drawer and top bar, so the
             // user can navigate back out to Posts or a group (issue #370, epic #365).
+            // Blocked-user filtering (issue #410): a conversation whose counterpart is
+            // blocked is dropped entirely from the mailbox, reactively — see
+            // filterBlockedThreads. remember(..) avoids rebuilding the state (and its
+            // wrapped List) on every unrelated recomposition of this large composable.
+            val displayedMessagesState = remember(messagesState, blockedUsernames) {
+                val snapshot = messagesState
+                when (snapshot) {
+                    is MessagesState.Loaded -> snapshot.copy(
+                        threads = filterBlockedThreads(snapshot.threads, blockedUsernames),
+                    )
+                    else -> snapshot
+                }
+            }
             if (showingMessages) MessagesScreen(
-                state = messagesState,
+                state = displayedMessagesState,
                 onRefresh = { viewModel.messages.refresh() },
                 // NOT refresh(): retry has to work from the error state, where refresh has
                 // no loaded content to refresh and would no-op — that is exactly the open
@@ -1466,7 +1602,7 @@ fun FeedScreen(
                     onRefresh = { viewModel.feed.refresh() },
                     modifier = Modifier.padding(padding),
                 ) {
-                    val displayedItems = filterUnread(s.items, showUnreadOnly)
+                    val displayedItems = filterBlocked(filterUnread(s.items, showUnreadOnly), blockedUsernames)
                     if (showUnreadOnly && displayedItems.isEmpty()) {
                         UnreadFilterEmptyState(
                             hasMore = s.hasMore,
@@ -1514,7 +1650,7 @@ fun FeedScreen(
                     onRefresh = { viewModel.feed.refresh() },
                     modifier = Modifier.padding(padding),
                 ) {
-                    val displayedItems = filterUnread(s.stale.items, showUnreadOnly)
+                    val displayedItems = filterBlocked(filterUnread(s.stale.items, showUnreadOnly), blockedUsernames)
                     if (showUnreadOnly && displayedItems.isEmpty()) {
                         UnreadFilterEmptyState(
                             hasMore = s.stale.hasMore,
@@ -1592,6 +1728,14 @@ internal fun TopicDetailRoute(
     editState: EditState = EditState.Idle,
     onEditPost: (Post, String) -> Unit = { _, _ -> },
     onEditErrorShown: () -> Unit = {},
+    reportState: ReportState = ReportState.Idle,
+    onReportPost: (Post) -> Unit = {},
+    onSubmitReport: (reasonId: String, escalate: Boolean) -> Unit = { _, _ -> },
+    onDismissReport: () -> Unit = {},
+    onReportSent: () -> Unit = {},
+    onReportToDeveloper: (Post) -> Unit = {},
+    blockedUsernames: Set<String> = emptySet(),
+    onBlockUser: (post: Post, notifyDeveloper: Boolean) -> Unit = { _, _ -> },
     attachment: ImageAttachmentState = ImageAttachmentState.Idle,
     onImagePicked: (String) -> Unit = {},
     onAttachmentInserted: () -> Unit = {},
@@ -1632,6 +1776,14 @@ internal fun TopicDetailRoute(
         editState = editState,
         onEditPost = onEditPost,
         onEditErrorShown = onEditErrorShown,
+        reportState = reportState,
+        onReportPost = onReportPost,
+        onSubmitReport = onSubmitReport,
+        onDismissReport = onDismissReport,
+        onReportSent = onReportSent,
+        onReportToDeveloper = onReportToDeveloper,
+        blockedUsernames = blockedUsernames,
+        onBlockUser = onBlockUser,
         attachment = attachment,
         onImagePicked = onImagePicked,
         onAttachmentInserted = onAttachmentInserted,
@@ -1669,6 +1821,72 @@ private fun ProjectPhotoPickerHost(viewModel: FeedScreenModel, target: ImageAtta
  */
 internal fun trackReplySent(repliedThisVisit: Boolean, replyState: ReplyState): Boolean =
     repliedThisVisit || replyState is ReplyState.Sent
+
+/**
+ * Builds the pre-addressed "report to app developer" mailto URI for [post] in [topic]
+ * (issue #409's secondary reporting channel — the same private-mailto mechanism as
+ * [com.myhobbyislearning.fibersocial.about.AboutScreen]'s onReportChildSafetyConcern,
+ * wired the same way in [FeedScreen] rather than triggering any network call itself).
+ *
+ * Neither [FeedItem] nor [Post] carries a Ravelry permalink of its own, so [groupPermalink]
+ * (resolved from whichever groups the feed already has loaded) is best-effort: when it's
+ * known, the body includes a real `www.ravelry.com/discuss/{group}/{topicId}` link
+ * (matching the URL shape `EventPageParser` scrapes back out of similar links elsewhere);
+ * when it's null, the body still identifies the post by group name, topic title, and post
+ * ID/author so the report is still actionable without one.
+ */
+internal fun reportPostEmailUri(topic: FeedItem, post: Post, groupPermalink: String?): String {
+    val subject = "FiberSocial post report: ${topic.title}".encodeURLParameter()
+    val link = groupPermalink?.let { "https://www.ravelry.com/discuss/$it/${topic.id}" }
+    val body = listOfNotNull(
+        "Please describe what's objectionable about this post.",
+        "",
+        "Group: ${topic.groupName}",
+        "Topic: ${topic.title}",
+        link?.let { "Topic link: $it" },
+        "Post author: ${post.user?.username ?: "unknown"}",
+        "Post ID: ${post.id}",
+    ).joinToString("\n").encodeURLParameter()
+    return "mailto:myhobbyislearning@gmail.com?subject=$subject&body=$body"
+}
+
+/**
+ * Builds the pre-addressed "notify the developer" mailto URI for blocking [username]
+ * (issue #410's developer-notification step — the same drafts-only mechanism as
+ * [reportPostEmailUri] and [com.myhobbyislearning.fibersocial.about.AboutScreen]'s
+ * child-safety report). Never auto-sent: this only builds the URI, the caller opens it,
+ * and the user still has to tap send themself, keeping the About screen's "nothing you do
+ * in FiberSocial is sent to the developer" statement true.
+ *
+ * @param topic The topic the block was initiated from, if any (null when blocked from the
+ *   profile screen rather than a post's overflow menu). Mirrors [reportPostEmailUri]'s
+ *   best-effort context: identifying details when known, a plain block notice otherwise.
+ * @param post The specific post that prompted the block, if any.
+ * @param groupPermalink Same best-effort permalink [reportPostEmailUri] resolves, for a
+ *   real topic link when [topic] is supplied and the group is known.
+ */
+internal fun blockUserEmailUri(
+    username: String,
+    topic: FeedItem? = null,
+    post: Post? = null,
+    groupPermalink: String? = null,
+): String {
+    val subject = "FiberSocial user block: $username".encodeURLParameter()
+    val link = if (topic != null && groupPermalink != null) {
+        "https://www.ravelry.com/discuss/$groupPermalink/${topic.id}"
+    } else {
+        null
+    }
+    val body = listOfNotNull(
+        "Please describe why you blocked this user, if you'd like to.",
+        "",
+        "Blocked user: @$username",
+        topic?.let { "Topic: ${it.title}" },
+        link?.let { "Topic link: $it" },
+        post?.let { "Post ID: ${it.id}" },
+    ).joinToString("\n").encodeURLParameter()
+    return "mailto:myhobbyislearning@gmail.com?subject=$subject&body=$body"
+}
 
 /**
  * Reorders [list] by moving the element at [from] to [to] (both must be valid indices).
@@ -1899,12 +2117,6 @@ internal fun GroupDrawer(
     // immediately from the handle, or via long-press anywhere on the row.
     var reorderMode by remember { mutableStateOf(false) }
 
-    // Folds the "Groups" section (list + "Find groups") behind its header pill.
-    // Session-scoped like the feed's pinnedCollapsed: a standing preference, not
-    // persisted. Toggling is locked during reorder mode — collapsing mid-drag would
-    // tear the rows being dragged out of composition.
-    var groupsCollapsed by remember { mutableStateOf(false) }
-
     // Rows move live in a local working copy so the list follows the finger; the new
     // order is committed upstream (and persisted) once at drop. One state object for
     // the drawer's lifetime — NOT remember(groups) — because the per-row pointerInput
@@ -2004,59 +2216,46 @@ internal fun GroupDrawer(
                 },
                 modifier = Modifier.padding(horizontal = 12.dp),
             )
-            Spacer(Modifier.height(8.dp))
-            HorizontalDivider(Modifier.testTag("DrawerNavDividerAboveMessages"))
-            Spacer(Modifier.height(8.dp))
-            // Direct messages (#369). A peer of "Posts" rather than a group-list entry, so it
-            // gets the same row treatment, including the unread-dot slot.
-            NavigationDrawerItem(
-                label = { Text("Messages") },
-                selected = messagesSelected,
-                onClick = { if (!reorderMode) onMessagesSelected() },
-                icon = {
-                    IconWithUnreadDot(hasUnread = messagesHasUnread) {
-                        Icon(Icons.Default.Email, contentDescription = null)
-                    }
-                },
-                modifier = Modifier.padding(horizontal = 12.dp),
-            )
+            // Messages is compile-time gated out of release builds (drawer entry, deep links,
+            // and new-message notifications all key off the same FeatureFlags.messagesEnabled)
+            // — hidden here rather than merely disabled so a release build never shows an
+            // entry point to a destination it can't reach.
+            if (FeatureFlags.messagesEnabled) {
+                Spacer(Modifier.height(8.dp))
+                HorizontalDivider(Modifier.testTag("DrawerNavDividerAboveMessages"))
+                Spacer(Modifier.height(8.dp))
+                // Direct messages (#369). A peer of "Posts" rather than a group-list entry, so
+                // it gets the same row treatment, including the unread-dot slot.
+                NavigationDrawerItem(
+                    label = { Text("Messages") },
+                    selected = messagesSelected,
+                    onClick = { if (!reorderMode) onMessagesSelected() },
+                    icon = {
+                        IconWithUnreadDot(hasUnread = messagesHasUnread) {
+                            Icon(Icons.Default.Email, contentDescription = null)
+                        }
+                    },
+                    modifier = Modifier.padding(horizontal = 12.dp),
+                )
+            }
             Spacer(Modifier.height(8.dp))
             HorizontalDivider(Modifier.testTag("DrawerNavDividerAboveGroups"))
             Spacer(Modifier.height(8.dp))
             // The section header is a NavigationDrawerItem so its pill matches the "Posts"
-            // row above, and it folds the group list like the feed's pinned section: same
-            // rotating disclosure chevron (right = folded, down = open). While open the
-            // badge slot holds the reorder Edit/Done button; folded it shows the hidden
-            // group count, and the pill highlights when the active feed is one of them.
-            val chevronRotation by animateFloatAsState(
-                disclosureChevronRotation(groupsCollapsed, LocalLayoutDirection.current),
-            )
+            // row above. It is a plain label — the collapse toggle it used to carry was
+            // removed as visual clutter (issue #364), so the group list is always visible.
+            // The badge slot holds the reorder Edit/Done button. The invisible icon-slot
+            // spacer keeps the label's start aligned with every other row: M3 omits the
+            // icon slot AND its spacing entirely when icon is null, which would outdent
+            // "Groups" ~36dp left of "Posts"/"Messages" and the group rows below.
             NavigationDrawerItem(
                 label = { Text("Groups") },
-                selected = groupsCollapsed && selectedGroup != null,
-                onClick = { if (!reorderMode) groupsCollapsed = !groupsCollapsed },
-                icon = {
-                    Icon(
-                        Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                        contentDescription = if (groupsCollapsed) {
-                            "Expand your groups"
-                        } else {
-                            "Collapse your groups"
-                        },
-                        modifier = Modifier.rotate(chevronRotation),
-                    )
-                },
+                selected = false,
+                onClick = {},
+                icon = { Spacer(Modifier.size(24.dp)) },
                 badge = {
-                    if (groupsCollapsed) {
-                        Text(
-                            text = groups.size.toString(),
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    } else {
-                        TextButton(onClick = { reorderMode = !reorderMode }) {
-                            Text(if (reorderMode) "Done" else "Edit")
-                        }
+                    TextButton(onClick = { reorderMode = !reorderMode }) {
+                        Text(if (reorderMode) "Done" else "Edit")
                     }
                 },
                 modifier = Modifier.padding(horizontal = 12.dp),
@@ -2084,30 +2283,98 @@ internal fun GroupDrawer(
                     state = listState,
                     modifier = Modifier.fillMaxSize().testTag("GroupList"),
                 ) {
-                    if (!groupsCollapsed) {
                     items(localGroups, key = { it.id }) { group ->
-                    val eventCount = eventCounts[group.id] ?: 0
-                    val dragging = draggingId == group.id
-                    NavigationDrawerItem(
-                        label = { Text(group.name) },
-                        selected = selectedGroup?.id == group.id,
-                        // While reordering, taps must not navigate away mid-arrangement.
-                        onClick = { if (!reorderMode) onGroupSelected(group) },
-                        // The badge image yields to the drag handle in reorder mode —
-                        // both compete for the leading slot, and mid-reorder the handle
-                        // is the one doing work.
-                        icon = if (!reorderMode) {
-                            {
-                                IconWithUnreadDot(hasUnread = group.forumId in unreadGroupForumIds) {
-                                    GroupBadge(group = group, size = 28.dp)
+                        val eventCount = eventCounts[group.id] ?: 0
+                        val dragging = draggingId == group.id
+                        NavigationDrawerItem(
+                            label = { Text(group.name) },
+                            selected = selectedGroup?.id == group.id,
+                            // While reordering, taps must not navigate away mid-arrangement.
+                            onClick = { if (!reorderMode) onGroupSelected(group) },
+                            // The badge image yields to the drag handle in reorder mode —
+                            // both compete for the leading slot, and mid-reorder the handle
+                            // is the one doing work.
+                            icon = if (!reorderMode) {
+                                {
+                                    IconWithUnreadDot(hasUnread = group.forumId in unreadGroupForumIds) {
+                                        GroupBadge(group = group, size = 28.dp)
+                                    }
                                 }
-                            }
-                        } else {
-                            {
-                                DragHandle(
-                                    contentDescription = "Reorder ${group.name}",
-                                    modifier = Modifier.pointerInput(group.id) {
-                                        detectDragGestures(
+                            } else {
+                                {
+                                    DragHandle(
+                                        contentDescription = "Reorder ${group.name}",
+                                        modifier = Modifier.pointerInput(group.id) {
+                                            detectDragGestures(
+                                                onDragStart = { startDrag(group.id) },
+                                                onDrag = { change, amount ->
+                                                    change.consume()
+                                                    dragBy(group.id, amount.y)
+                                                },
+                                                onDragEnd = ::endDrag,
+                                                onDragCancel = ::cancelDrag,
+                                            )
+                                        },
+                                    )
+                                }
+                            },
+                            badge = when {
+                                // In edit mode the trailing slot offers "leave this group" (#231)
+                                // in place of the event badge.
+                                reorderMode -> {
+                                    {
+                                        IconButton(
+                                            onClick = {
+                                                // Clears any leaveError left over from a
+                                                // previous group's dialog that got dismissed
+                                                // without going through Cancel/onDismissRequest
+                                                // (e.g. a deep link tearing the drawer down
+                                                // while an error was showing) — otherwise this
+                                                // fresh dialog for a DIFFERENT group would open
+                                                // already showing that stale error/Retry.
+                                                onAcknowledgeLeaveError()
+                                                pendingLeave = group
+                                            },
+                                        ) {
+                                            Icon(
+                                                Icons.Default.Delete,
+                                                contentDescription = "Leave ${group.name}",
+                                                tint = MaterialTheme.colorScheme.error,
+                                            )
+                                        }
+                                    }
+                                }
+                                eventCount > 0 -> {
+                                    {
+                                        GroupEventsBadge(
+                                            count = eventCount,
+                                            // Same reasoning as the row's own onClick above: a
+                                            // rearrange can't be allowed to navigate away.
+                                            onClick = { if (!reorderMode) onGroupEventsClick(group) },
+                                        )
+                                    }
+                                }
+                                else -> null
+                            },
+                            modifier = Modifier
+                                .padding(horizontal = 12.dp)
+                                // Displaced rows slide to their new slot so the reorder is
+                                // visible; the dragged row itself must not animate — it is
+                                // positioned by the finger (translationY below), and a
+                                // placement animation would fight the swap compensation.
+                                .then(if (dragging) Modifier else Modifier.animateItem(fadeInSpec = null, fadeOutSpec = null))
+                                .zIndex(if (dragging) 1f else 0f)
+                                .graphicsLayer {
+                                    translationY = if (dragging) dragOffset else 0f
+                                    shadowElevation = if (dragging) 8.dp.toPx() else 0f
+                                    // Match the pill shape of the drawer item's highlight so
+                                    // the drag shadow isn't a bare rectangle behind it.
+                                    shape = CircleShape
+                                }
+                                .then(
+                                    if (!reorderMode) Modifier
+                                    else Modifier.pointerInput(group.id) {
+                                        detectDragGesturesAfterLongPress(
                                             onDragStart = { startDrag(group.id) },
                                             onDrag = { change, amount ->
                                                 change.consume()
@@ -2117,91 +2384,21 @@ internal fun GroupDrawer(
                                             onDragCancel = ::cancelDrag,
                                         )
                                     },
-                                )
-                            }
-                        },
-                        badge = when {
-                            // In edit mode the trailing slot offers "leave this group" (#231)
-                            // in place of the event badge.
-                            reorderMode -> {
-                                {
-                                    IconButton(
-                                        onClick = {
-                                            // Clears any leaveError left over from a
-                                            // previous group's dialog that got dismissed
-                                            // without going through Cancel/onDismissRequest
-                                            // (e.g. a deep link tearing the drawer down
-                                            // while an error was showing) — otherwise this
-                                            // fresh dialog for a DIFFERENT group would open
-                                            // already showing that stale error/Retry.
-                                            onAcknowledgeLeaveError()
-                                            pendingLeave = group
-                                        },
-                                    ) {
-                                        Icon(
-                                            Icons.Default.Delete,
-                                            contentDescription = "Leave ${group.name}",
-                                            tint = MaterialTheme.colorScheme.error,
-                                        )
-                                    }
-                                }
-                            }
-                            eventCount > 0 -> {
-                                {
-                                    GroupEventsBadge(
-                                        count = eventCount,
-                                        // Same reasoning as the row's own onClick above: a
-                                        // rearrange can't be allowed to navigate away.
-                                        onClick = { if (!reorderMode) onGroupEventsClick(group) },
-                                    )
-                                }
-                            }
-                            else -> null
-                        },
-                        modifier = Modifier
-                            .padding(horizontal = 12.dp)
-                            // Displaced rows slide to their new slot so the reorder is
-                            // visible; the dragged row itself must not animate — it is
-                            // positioned by the finger (translationY below), and a
-                            // placement animation would fight the swap compensation.
-                            .then(if (dragging) Modifier else Modifier.animateItem(fadeInSpec = null, fadeOutSpec = null))
-                            .zIndex(if (dragging) 1f else 0f)
-                            .graphicsLayer {
-                                translationY = if (dragging) dragOffset else 0f
-                                shadowElevation = if (dragging) 8.dp.toPx() else 0f
-                                // Match the pill shape of the drawer item's highlight so
-                                // the drag shadow isn't a bare rectangle behind it.
-                                shape = CircleShape
-                            }
-                            .then(
-                                if (!reorderMode) Modifier
-                                else Modifier.pointerInput(group.id) {
-                                    detectDragGesturesAfterLongPress(
-                                        onDragStart = { startDrag(group.id) },
-                                        onDrag = { change, amount ->
-                                            change.consume()
-                                            dragBy(group.id, amount.y)
-                                        },
-                                        onDragEnd = ::endDrag,
-                                        onDragCancel = ::cancelDrag,
-                                    )
-                                },
-                            ),
-                    )
-                }
-                // Discover and join more groups on Ravelry's own search page (issue #232 —
-                // linking out rather than rebuilding search in-app).
-                item(key = "find-groups") {
-                    NavigationDrawerItem(
-                        label = { Text("Find groups") },
-                        selected = false,
-                        onClick = onFindGroups,
-                        icon = { Icon(Icons.Default.Search, contentDescription = null) },
-                        modifier = Modifier.padding(horizontal = 12.dp),
-                    )
-                }
-                } // end of the collapsible "Groups" section (groupsCollapsed)
-                item(key = "drawer-footer-spacer") { Spacer(Modifier.height(16.dp)) }
+                                ),
+                        )
+                    }
+                    // Discover and join more groups on Ravelry's own search page (issue #232 —
+                    // linking out rather than rebuilding search in-app).
+                    item(key = "find-groups") {
+                        NavigationDrawerItem(
+                            label = { Text("Find groups") },
+                            selected = false,
+                            onClick = onFindGroups,
+                            icon = { Icon(Icons.Default.Search, contentDescription = null) },
+                            modifier = Modifier.padding(horizontal = 12.dp),
+                        )
+                    }
+                    item(key = "drawer-footer-spacer") { Spacer(Modifier.height(16.dp)) }
                 }
                 GroupListScrollbar(state = listState, modifier = Modifier.align(Alignment.CenterEnd))
             }
@@ -2403,6 +2600,38 @@ private fun GroupEventsBadge(count: Int, onClick: () -> Unit) {
 internal fun filterUnread(items: List<FeedItem>, showUnreadOnly: Boolean): List<FeedItem> =
     if (showUnreadOnly) items.filter { it.unreadCount > 0 } else items
 
+/**
+ * Purely client-side block filter (issue #410), applied after [filterUnread] wherever the
+ * feed renders topic cards. A topic's card is attributed to its STARTER ([FeedItem.author]
+ * — see the class KDoc), so blocking hides topics that person opened; a reply from a
+ * blocked user deep inside someone else's topic is instead hidden at the post level (see
+ * `filterBlockedPosts` in `TopicDetailScreen.kt`), since the card itself carries no
+ * per-reply author to filter on. Compared case-insensitively, matching
+ * [com.myhobbyislearning.fibersocial.moderation.isBlocked].
+ */
+internal fun filterBlocked(items: List<FeedItem>, blockedUsernames: Set<String>): List<FeedItem> =
+    if (blockedUsernames.isEmpty()) {
+        items
+    } else {
+        items.filterNot { item -> blockedUsernames.any { it.equals(item.author.username, ignoreCase = true) } }
+    }
+
+/**
+ * Purely client-side block filter (issue #410) over the Messages conversation list: a
+ * thread whose [MessageThread.counterpart] is blocked is dropped entirely, so no message
+ * from (or to) that person shows in the mailbox. A thread with no resolvable counterpart
+ * (see `MessageThreads.kt`) is never filtered — there's no username to have blocked.
+ */
+internal fun filterBlockedThreads(threads: List<MessageThread>, blockedUsernames: Set<String>): List<MessageThread> =
+    if (blockedUsernames.isEmpty()) {
+        threads
+    } else {
+        threads.filterNot { thread ->
+            val username = thread.counterpart?.username ?: return@filterNot false
+            blockedUsernames.any { it.equals(username, ignoreCase = true) }
+        }
+    }
+
 /** Visible-item slack before the end of the list that triggers [onLoadMore]. */
 private const val LOAD_MORE_THRESHOLD = 5
 
@@ -2572,8 +2801,9 @@ private fun PinnedSectionHeader(
 }
 
 /**
- * Rotation (clockwise degrees) for a disclosure chevron — [PinnedSectionHeader]'s and the
- * drawer's "Groups" section header both use this.
+ * Rotation (clockwise degrees) for a disclosure chevron — [PinnedSectionHeader] is its
+ * only caller (the drawer's "Groups" header used it too until the collapse toggle was
+ * removed, issue #364).
  *
  * `Icons.AutoMirrored.Filled.KeyboardArrowRight` flips horizontally in RTL layouts (it
  * points left while folded there, matching every other directional icon in this app), but

@@ -22,8 +22,10 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalUriHandler
 import com.myhobbyislearning.fibersocial.app.ForegroundActivations
 import com.myhobbyislearning.fibersocial.auth.AuthState
+import com.myhobbyislearning.fibersocial.debug.DebugFlags
 import com.myhobbyislearning.fibersocial.feed.FeedAndroidViewModel
 import androidx.compose.runtime.CompositionLocalProvider
 import com.myhobbyislearning.fibersocial.feed.FeedScreen
@@ -37,15 +39,23 @@ import com.myhobbyislearning.fibersocial.notifications.DeepLink
 import com.myhobbyislearning.fibersocial.notifications.EventNotifier
 import com.myhobbyislearning.fibersocial.notifications.toDeepLink
 import com.myhobbyislearning.fibersocial.notifications.EventSyncWorker
+import com.myhobbyislearning.fibersocial.moderation.KeyValueBlockedUsersStore
 import com.myhobbyislearning.fibersocial.notifications.KeyValueMutedTopicsStore
 import com.myhobbyislearning.fibersocial.notifications.KeyValueNotificationSettingsStore
+import com.myhobbyislearning.fibersocial.settings.CURRENT_TERMS_VERSION
+import com.myhobbyislearning.fibersocial.settings.KeyValueTermsAcceptanceStore
 import com.myhobbyislearning.fibersocial.settings.KeyValueThemeSettingsStore
+import com.myhobbyislearning.fibersocial.settings.TermsAcceptance
 import com.myhobbyislearning.fibersocial.settings.ThemeMode
 import com.myhobbyislearning.fibersocial.settings.ThemeSettings
+import com.myhobbyislearning.fibersocial.settings.shouldShowTermsGate
+import com.myhobbyislearning.fibersocial.storage.BLOCKED_USERS_PREFS_NAME
 import com.myhobbyislearning.fibersocial.storage.NOTIFICATION_SETTINGS_PREFS_NAME
 import com.myhobbyislearning.fibersocial.storage.NOTIFICATION_STATE_PREFS_NAME
+import com.myhobbyislearning.fibersocial.storage.TERMS_ACCEPTANCE_PREFS_NAME
 import com.myhobbyislearning.fibersocial.storage.THEME_SETTINGS_PREFS_NAME
 import com.myhobbyislearning.fibersocial.storage.plainKeyValueStore
+import com.myhobbyislearning.fibersocial.terms.TermsGateScreen
 import com.myhobbyislearning.fibersocial.ui.FiberSocialTheme
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
@@ -63,6 +73,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Before anything can log: DebugFlags defaults to "not a debug build", so a
+        // missed call here fails closed (nothing sensitive logged) rather than open
+        // (issue #395). Same signal that gates the debug panel below.
+        DebugFlags.initDebugBuild(BuildConfig.DEBUG)
         // targetSdk 35+ enforces edge-to-edge with no opt-out; this call makes that
         // consistent from minSdk 26 up, instead of only on 35+ devices. Per-screen
         // system-bar icon contrast is still handled dynamically in SystemBarStyle,
@@ -101,17 +115,80 @@ class MainActivity : ComponentActivity() {
                 val authState by authVm.auth.state.collectAsState()
                 var showWebView by remember { mutableStateOf(false) }
 
-                // Checked ahead of the AuthState when-branch below so a retry from
-                // AuthState.Error (e.g. a rejected OAuth state, issue #149) re-opens the
-                // WebView instead of being silently swallowed by the Error branch, which
-                // has no showWebView check of its own.
-                if (showWebView) {
-                    val authUrl = remember { authVm.buildAuthUrl() }
+                // Terms-of-use gate (issue #408, Apple Guideline 1.2): must appear before
+                // "Log in with Ravelry" can be used, and — since issue #424 — before an
+                // authenticated user's feed when their acceptance is wiped or stale.
+                // null while loading; the null-hold branch below keeps EVERYTHING back
+                // for that gap.
+                //
+                // rememberSaveable, not remember (same reasoning as themeMode above): on a
+                // config change the accepted version is restored from instance state rather
+                // than resetting to null and re-reading SharedPreferences. Stores just the
+                // Int version — TermsAcceptance's only field — since the default Bundle
+                // Saver doesn't handle a Kotlin data class.
+                val termsStore = remember {
+                    KeyValueTermsAcceptanceStore(plainKeyValueStore(this, TERMS_ACCEPTANCE_PREFS_NAME))
+                }
+                var termsVersion by rememberSaveable { mutableStateOf<Int?>(null) }
+                val termsAcceptance = termsVersion?.let { TermsAcceptance(version = it) }
+                LaunchedEffect(Unit) {
+                    if (termsVersion == null) {
+                        // Fail CLOSED: an unreadable store gates (and the gate re-saves on
+                        // Agree) rather than leaving termsVersion null forever, which the
+                        // hold branch below would render as a permanent blank screen.
+                        termsVersion =
+                            runCatching { termsStore.load() }.getOrElse { TermsAcceptance() }.version
+                    }
+                }
+                val termsScope = rememberCoroutineScope()
+
+                // Branch order is load-bearing (issue #424):
+                // 1. While the acceptance store is still loading (null), hold everything —
+                //    a brief blank frame. Rendering the normal branches in that gap showed
+                //    feed content, fired its network load, and (on iOS) popped the
+                //    notification-permission prompt for the first frames of a launch that
+                //    then turned out to need the gate — content before agreement, the exact
+                //    thing Guideline 1.2 forbids — then tore it down and re-loaded after
+                //    Agree. It also let a login WebView start mid-gap only to be replaced.
+                // 2. The gate outranks showWebView: agreeing leaves showWebView untouched,
+                //    so a login WebView pending behind the gate opens right after. (With
+                //    the hold branch, the only way that state arises is a session expiry
+                //    racing the store read.)
+                // 3. The Error-retry path (issue #149) is unaffected: shouldShowTermsGate
+                //    deliberately never gates AuthState.Error, so a retry still re-opens
+                //    the WebView instead of being swallowed by an unrelated terms prompt.
+                if (termsAcceptance == null) {
+                    Box(Modifier.fillMaxSize())
+                } else if (shouldShowTermsGate(authState, termsAcceptance)) {
+                    val uriHandler = LocalUriHandler.current
+                    TermsGateScreen(
+                        onOpenFullTerms = {
+                            uriHandler.openUri("https://torrey1028.github.io/FiberSocial/terms-of-use.html")
+                        },
+                        onAgree = {
+                            val updated = TermsAcceptance(version = CURRENT_TERMS_VERSION)
+                            termsVersion = updated.version
+                            termsScope.launch { termsStore.save(updated) }
+                        },
+                    )
+                } else if (showWebView) {
                     WebViewLoginScreen(
-                        authUrl = authUrl,
+                        // A supplier, not a pre-built URL: the WebView mints a fresh
+                        // authorize URL when the server derails the flow (stale
+                        // challenge) and it needs to restart.
+                        buildAuthUrl = { authVm.buildAuthUrl() },
                         onAuthComplete = { code, state, cookie ->
                             showWebView = false
                             authVm.handleAuthCode(code, state, cookie)
+                        },
+                        // Leave the web view and report it, rather than sitting on a
+                        // dead authorize page (issue #394). Routed through failLogin so
+                        // an authorization-server refusal lands in the same place as the
+                        // state-mismatch rejection: AuthState.Error on the login screen,
+                        // which already offers a retry.
+                        onAuthError = { message ->
+                            showWebView = false
+                            authVm.auth.failLogin(message)
                         },
                         onBack = { showWebView = false },
                     )
@@ -139,6 +216,17 @@ class MainActivity : ComponentActivity() {
                                     plainKeyValueStore(this@MainActivity, NOTIFICATION_STATE_PREFS_NAME),
                                 )
                             }
+                            // Local blocked-users list (issue #410). remember, not
+                            // rememberSaveable — the store is a plain object wrapping a
+                            // SharedPreferences handle, not serializable state; its own
+                            // backing prefs file is what survives process death, and load()
+                            // below repopulates blockedUsernames from it on the fresh instance
+                            // a recreation produces.
+                            val blockedUsersStore = remember {
+                                KeyValueBlockedUsersStore(
+                                    plainKeyValueStore(this@MainActivity, BLOCKED_USERS_PREFS_NAME),
+                                )
+                            }
                             LaunchedEffect(Unit) {
                                 feedVm.load()
                                 EventSyncWorker.schedulePeriodic(
@@ -146,6 +234,7 @@ class MainActivity : ComponentActivity() {
                                     notificationSettingsStore.load().effectivePollCadence,
                                 )
                             }
+                            LaunchedEffect(blockedUsersStore) { blockedUsersStore.load() }
                             // On session expiry: show WebView login before clearing auth so there's no
                             // LoginScreen flash between the state change and the WebView appearing.
                             LaunchedEffect(feedVm) {
@@ -182,6 +271,7 @@ class MainActivity : ComponentActivity() {
                                 },
                                 notificationSettingsStore = notificationSettingsStore,
                                 mutedTopicsStore = mutedTopicsStore,
+                                blockedUsersStore = blockedUsersStore,
                                 // UPDATE policy re-registers the periodic sync at the new cadence.
                                 onPollCadenceChanged = { cadence ->
                                     EventSyncWorker.schedulePeriodic(this@MainActivity, cadence)

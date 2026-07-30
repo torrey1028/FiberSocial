@@ -4,6 +4,7 @@ import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import com.myhobbyislearning.fibersocial.feed.models.Group
@@ -195,5 +196,90 @@ class UserProfileScreenTest {
         }
         compose.onNodeWithContentDescription("Back").performClick()
         compose.runOnIdle { assertEquals(1, backs) }
+    }
+
+    // --- Block/unblock a user (issue #410) ---
+
+    @Test
+    fun `loaded state offers block when viewing someone else`() {
+        compose.setContent {
+            UserProfileScreen(
+                UserProfileState.Loaded(profile, emptyList(), emptyList()),
+                onBack = {}, onRetry = {}, currentUsername = "someoneelse",
+            )
+        }
+        compose.onNodeWithText("Block").assertIsDisplayed()
+    }
+
+    @Test
+    fun `block is absent on your own profile`() {
+        compose.setContent {
+            UserProfileScreen(
+                UserProfileState.Loaded(profile, emptyList(), emptyList()),
+                onBack = {}, onRetry = {}, currentUsername = "yarnie",
+            )
+        }
+        compose.onNodeWithText("Block").assertDoesNotExist()
+    }
+
+    @Test
+    fun `tapping block opens a confirmation dialog naming the profile owner`() {
+        compose.setContent {
+            UserProfileScreen(
+                UserProfileState.Loaded(profile, emptyList(), emptyList()),
+                onBack = {}, onRetry = {}, currentUsername = "someoneelse",
+            )
+        }
+        compose.onNodeWithText("Block").performClick()
+        compose.onNodeWithText("Block @yarnie?").assertIsDisplayed()
+    }
+
+    @Test
+    fun `confirming the block dialog invokes onBlockUser`() {
+        var blocked: Boolean? = null
+        compose.setContent {
+            UserProfileScreen(
+                UserProfileState.Loaded(profile, emptyList(), emptyList()),
+                onBack = {}, onRetry = {}, currentUsername = "someoneelse",
+                onBlockUser = { notify -> blocked = notify },
+            )
+        }
+        compose.onNodeWithText("Block").performClick()
+        // Tagged: the row's own "Block" button stays in the tree behind the dialog, so a
+        // second onNodeWithText("Block") here would match both and fail as ambiguous.
+        compose.onNodeWithTag("ConfirmBlockUser").performClick()
+        compose.runOnIdle { assertEquals(false, blocked) }
+    }
+
+    @Test
+    fun `canceling the block dialog does not invoke onBlockUser`() {
+        var invoked = false
+        compose.setContent {
+            UserProfileScreen(
+                UserProfileState.Loaded(profile, emptyList(), emptyList()),
+                onBack = {}, onRetry = {}, currentUsername = "someoneelse",
+                onBlockUser = { invoked = true },
+            )
+        }
+        compose.onNodeWithText("Block").performClick()
+        compose.onNodeWithText("Cancel").performClick()
+        compose.onNodeWithText("Block @yarnie?").assertDoesNotExist()
+        compose.runOnIdle { assertEquals(false, invoked) }
+    }
+
+    @Test
+    fun `when already blocked the action reads Unblock and needs no confirmation`() {
+        var unblocked = false
+        compose.setContent {
+            UserProfileScreen(
+                UserProfileState.Loaded(profile, emptyList(), emptyList()),
+                onBack = {}, onRetry = {}, currentUsername = "someoneelse",
+                isBlocked = true,
+                onUnblockUser = { unblocked = true },
+            )
+        }
+        compose.onNodeWithText("Block").assertDoesNotExist()
+        compose.onNodeWithText("Unblock").performClick()
+        compose.runOnIdle { assertEquals(true, unblocked) }
     }
 }
