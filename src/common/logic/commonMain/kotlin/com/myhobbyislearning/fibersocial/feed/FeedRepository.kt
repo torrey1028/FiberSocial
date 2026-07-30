@@ -296,6 +296,14 @@ class FeedRepository(private val apiClient: RavelryApiClient) {
      * the user's groups (e.g. posted in a since-left group) keeps an empty group name
      * rather than being dropped — it's still the user's post.
      *
+     * Exception (issue #458): a topic that is BOTH sticky AND unattributable is dropped.
+     * Ravelry injects site announcements — topics pinned on the website's `/discuss/browse`
+     * page — into `filtered_topics.json` responses regardless of the `status=posting`
+     * filter, and those arrive exactly as sticky topics whose forum matches none of the
+     * user's groups. The cost is that the user's own post in a *pinned* topic of a
+     * since-left group is dropped too (indistinguishable from an injected announcement);
+     * their posts in ordinary topics of since-left groups still show unattributed.
+     *
      * @param groups The user's groups, for forum-to-group attribution.
      * @param page 1-based page number.
      */
@@ -317,8 +325,21 @@ class FeedRepository(private val apiClient: RavelryApiClient) {
                     topicFetchConcurrency.withPermit {
                         val group = groupsByForumId[topic.forumId]
                         runCatching {
-                            apiClient.getTopicDetail(topic.id)
-                                .toFeedItem(group?.id ?: 0L, group?.name.orEmpty())
+                            val detail = apiClient.getTopicDetail(topic.id)
+                            // Sticky comes from the DETAIL, not the list entry: the
+                            // detail's flag is the one the group feed's sticky-first
+                            // sort already relies on, so it's the verified-populated
+                            // source. See the KDoc's issue #458 exception for why
+                            // sticky + unattributed means "injected announcement".
+                            if (group == null && detail.sticky) {
+                                println(
+                                    "FiberSocial: getMyPostsPage: dropping injected " +
+                                        "announcement ${topic.id} (${detail.title})",
+                                )
+                                null
+                            } else {
+                                detail.toFeedItem(group?.id ?: 0L, group?.name.orEmpty())
+                            }
                         }.onFailure {
                             println("FiberSocial: getMyPostsPage: skipping topic ${topic.id} (${it.message})")
                         }.getOrNull()

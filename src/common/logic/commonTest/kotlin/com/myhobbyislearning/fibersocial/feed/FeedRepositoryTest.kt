@@ -432,6 +432,43 @@ class FeedRepositoryTest {
     }
 
     @Test
+    fun `getMyPostsPage drops a sticky topic whose forum matches no group`() = runTest {
+        // Issue #458: Ravelry injects site announcements (topics pinned on the website's
+        // /discuss/browse page) into filtered_topics.json regardless of status=posting.
+        // They arrive as sticky topics in a forum the user has no group for — drop them
+        // instead of showing a pinned stranger's post with no group attribution.
+        val repo = repoWithRoute { path ->
+            when {
+                path.contains("filtered_topics") -> """{"topics":[
+                    {"id":100,"title":"Site announcement","forum_id":999},
+                    {"id":200,"title":"Topic 200","forum_id":42}
+                ]}"""
+                path.contains("/topics/100") -> topicDetailJson(100L, sticky = true)
+                path.contains("/topics/200") -> topicDetailJson(200L)
+                else -> error("Unexpected: $path")
+            }
+        }
+        val page = repo.getMyPostsPage(twoGroups, page = 1)
+        assertEquals(listOf(200L), page.items.map { it.id })
+    }
+
+    @Test
+    fun `getMyPostsPage keeps a sticky topic attributed to one of the user's groups`() = runTest {
+        // The user's own post in a pinned topic of a group they're IN is genuine — only
+        // the sticky-AND-unattributed combination marks an injected announcement.
+        val repo = repoWithRoute { path ->
+            when {
+                path.contains("filtered_topics") ->
+                    """{"topics":[{"id":100,"title":"Pinned in my group","forum_id":42}]}"""
+                path.contains("/topics/100") -> topicDetailJson(100L, sticky = true)
+                else -> error("Unexpected: $path")
+            }
+        }
+        val item = repo.getMyPostsPage(twoGroups, page = 1).items.single()
+        assertEquals("KAL Hub", item.groupName)
+    }
+
+    @Test
     fun `getMyPostsPage sorts by recency only and ignores sticky`() = runTest {
         // Sticky means "pinned in its own forum" — meaningless across groups, so a
         // sticky topic with older activity must NOT jump ahead of a newer plain one.
