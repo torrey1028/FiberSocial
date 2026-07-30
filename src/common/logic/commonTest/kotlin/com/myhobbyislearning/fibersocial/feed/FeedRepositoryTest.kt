@@ -433,14 +433,15 @@ class FeedRepositoryTest {
 
     @Test
     fun `getMyPostsPage drops a sticky topic whose forum matches no group`() = runTest {
-        // Issue #458: Ravelry injects site announcements (topics pinned on the website's
-        // /discuss/browse page) into filtered_topics.json regardless of status=posting.
-        // They arrive as sticky topics in a forum the user has no group for — drop them
-        // instead of showing a pinned stranger's post with no group attribution.
+        // Issue #458: like the /discuss/browse page it twins, filtered_topics.json
+        // includes topics pinned in the user's forum-set forums regardless of
+        // status=posting — including Ravelry's main site forums, which correspond to no
+        // group. They arrive as sticky topics in a forum the user has no group for —
+        // drop them instead of showing a pinned stranger's post with no attribution.
         val repo = repoWithRoute { path ->
             when {
                 path.contains("filtered_topics") -> """{"topics":[
-                    {"id":100,"title":"Site announcement","forum_id":999},
+                    {"id":100,"title":"CFOM July 2026","forum_id":999},
                     {"id":200,"title":"Topic 200","forum_id":42}
                 ]}"""
                 path.contains("/topics/100") -> topicDetailJson(100L, sticky = true)

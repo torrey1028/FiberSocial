@@ -297,11 +297,13 @@ class FeedRepository(private val apiClient: RavelryApiClient) {
      * rather than being dropped — it's still the user's post.
      *
      * Exception (issue #458): a topic that is BOTH sticky AND unattributable is dropped.
-     * Ravelry injects site announcements — topics pinned on the website's `/discuss/browse`
-     * page — into `filtered_topics.json` responses regardless of the `status=posting`
-     * filter, and those arrive exactly as sticky topics whose forum matches none of the
-     * user's groups. The cost is that the user's own post in a *pinned* topic of a
-     * since-left group is dropped too (indistinguishable from an injected announcement);
+     * Like the website's `/discuss/browse` page it twins, `filtered_topics.json` includes
+     * topics pinned in the forums of the user's forum set regardless of the
+     * `status=posting` filter — and that set contains Ravelry's main site forums (which
+     * correspond to no group), so their pinned topics (confirmed on-device: the main
+     * Crochet forum's monthly "CFOM" thread) leak in as sticky topics whose forum matches
+     * none of the user's groups. The cost is that the user's own post in a *pinned* topic
+     * of a since-left group is dropped too (indistinguishable from an injected pin);
      * their posts in ordinary topics of since-left groups still show unattributed.
      *
      * @param groups The user's groups, for forum-to-group attribution.
@@ -330,11 +332,11 @@ class FeedRepository(private val apiClient: RavelryApiClient) {
                             // detail's flag is the one the group feed's sticky-first
                             // sort already relies on, so it's the verified-populated
                             // source. See the KDoc's issue #458 exception for why
-                            // sticky + unattributed means "injected announcement".
+                            // sticky + unattributed means "injected pinned topic".
                             if (group == null && detail.sticky) {
                                 println(
                                     "FiberSocial: getMyPostsPage: dropping injected " +
-                                        "announcement ${topic.id} (${detail.title})",
+                                        "pinned topic ${topic.id} (${detail.title})",
                                 )
                                 null
                             } else {
