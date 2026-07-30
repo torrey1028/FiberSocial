@@ -973,7 +973,7 @@ fun FeedScreen(
             // legal/child-safety-standards.html; this is just the in-app entry point.
             onReportChildSafetyConcern = {
                 uriHandler.openUri(
-                    "mailto:myhobbyislearning@gmail.com" +
+                    "mailto:$DEVELOPER_EMAIL" +
                         "?subject=FiberSocial%20child%20safety%20concern" +
                         "&body=Please%20describe%20what%20you%20observed%2C%20including%20a%20" +
                         "Ravelry%20username%2C%20group%2C%20or%20topic%20link%20if%20possible.",
@@ -1823,6 +1823,12 @@ internal fun trackReplySent(repliedThisVisit: Boolean, replyState: ReplyState): 
     repliedThisVisit || replyState is ReplyState.Sent
 
 /**
+ * Where every "contact the developer" mailto in the app is addressed — the report-post
+ * and block-user drafts below, and the About screen's child-safety report wired above.
+ */
+private const val DEVELOPER_EMAIL = "myhobbyislearning@gmail.com"
+
+/**
  * Builds the pre-addressed "report to app developer" mailto URI for [post] in [topic]
  * (issue #409's secondary reporting channel — the same private-mailto mechanism as
  * [com.myhobbyislearning.fibersocial.about.AboutScreen]'s onReportChildSafetyConcern,
@@ -1847,7 +1853,7 @@ internal fun reportPostEmailUri(topic: FeedItem, post: Post, groupPermalink: Str
         "Post author: ${post.user?.username ?: "unknown"}",
         "Post ID: ${post.id}",
     ).joinToString("\n").encodeURLParameter()
-    return "mailto:myhobbyislearning@gmail.com?subject=$subject&body=$body"
+    return "mailto:$DEVELOPER_EMAIL?subject=$subject&body=$body"
 }
 
 /**
@@ -1885,7 +1891,7 @@ internal fun blockUserEmailUri(
         link?.let { "Topic link: $it" },
         post?.let { "Post ID: ${it.id}" },
     ).joinToString("\n").encodeURLParameter()
-    return "mailto:myhobbyislearning@gmail.com?subject=$subject&body=$body"
+    return "mailto:$DEVELOPER_EMAIL?subject=$subject&body=$body"
 }
 
 /**
