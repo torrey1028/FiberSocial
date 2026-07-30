@@ -29,6 +29,7 @@ import com.myhobbyislearning.fibersocial.debug.DebugFlags
 import com.myhobbyislearning.fibersocial.feed.FeedAndroidViewModel
 import androidx.compose.runtime.CompositionLocalProvider
 import com.myhobbyislearning.fibersocial.feed.FeedScreen
+import com.myhobbyislearning.fibersocial.feed.KeyValueLastDestinationStore
 import com.myhobbyislearning.fibersocial.feed.LocalProjectLinkOpener
 import com.myhobbyislearning.fibersocial.feedback.deviceContext
 import com.myhobbyislearning.fibersocial.profile.LocalProfileOpener
@@ -50,6 +51,7 @@ import com.myhobbyislearning.fibersocial.settings.ThemeMode
 import com.myhobbyislearning.fibersocial.settings.ThemeSettings
 import com.myhobbyislearning.fibersocial.settings.shouldShowTermsGate
 import com.myhobbyislearning.fibersocial.storage.BLOCKED_USERS_PREFS_NAME
+import com.myhobbyislearning.fibersocial.storage.LAST_DESTINATION_PREFS_NAME
 import com.myhobbyislearning.fibersocial.storage.NOTIFICATION_SETTINGS_PREFS_NAME
 import com.myhobbyislearning.fibersocial.storage.NOTIFICATION_STATE_PREFS_NAME
 import com.myhobbyislearning.fibersocial.storage.TERMS_ACCEPTANCE_PREFS_NAME
@@ -227,6 +229,14 @@ class MainActivity : ComponentActivity() {
                                     plainKeyValueStore(this@MainActivity, BLOCKED_USERS_PREFS_NAME),
                                 )
                             }
+                            // Last viewed feed destination (issue #381): FeedScreen reads
+                            // and writes the Messages leg; FeedAndroidViewModel wraps the
+                            // same prefs file for the group / My Posts legs.
+                            val lastDestinationStore = remember {
+                                KeyValueLastDestinationStore(
+                                    plainKeyValueStore(this@MainActivity, LAST_DESTINATION_PREFS_NAME),
+                                )
+                            }
                             LaunchedEffect(Unit) {
                                 feedVm.load()
                                 EventSyncWorker.schedulePeriodic(
@@ -272,6 +282,7 @@ class MainActivity : ComponentActivity() {
                                 notificationSettingsStore = notificationSettingsStore,
                                 mutedTopicsStore = mutedTopicsStore,
                                 blockedUsersStore = blockedUsersStore,
+                                lastDestinationStore = lastDestinationStore,
                                 // UPDATE policy re-registers the periodic sync at the new cadence.
                                 onPollCadenceChanged = { cadence ->
                                     EventSyncWorker.schedulePeriodic(this@MainActivity, cadence)

@@ -391,6 +391,11 @@ fun FeedScreen(
     // content below collects blockedUsersStore.blockedUsernames directly (not a one-shot
     // load()), so a block/unblock takes effect instantly everywhere without a refresh.
     blockedUsersStore: BlockedUsersStore? = null,
+    // Last viewed feed destination (issue #381). FeedViewModel restores (and persists)
+    // the group / My Posts legs through the same store; this screen owns only the
+    // Messages leg, because Messages is the screen-level showingMessages flag below, not
+    // part of FeedState.
+    lastDestinationStore: LastDestinationStore? = null,
     onPollCadenceChanged: (PollCadence) -> Unit = {},
     debugPanelEnabled: Boolean = false,
     onRunEventSync: () -> Unit = {},
@@ -499,6 +504,32 @@ fun FeedScreen(
     // otherwise the user would land somewhere with no way back to Posts or Groups. Selecting
     // Posts or a group clears it (see the drawer call site below), which is the "back" here.
     var showingMessages by rememberSaveable { mutableStateOf(false) }
+    // One-shot restore of the Messages destination on a cold start (issue #381). The
+    // group / My Posts legs are restored inside FeedViewModel.load(); Messages is this
+    // screen-level flag, so its leg is applied here — driving the existing flag, not a
+    // second mechanism. The latch is rememberSaveable because showingMessages itself
+    // already survives config changes and saved-instance restores, and re-running the
+    // restore there could resurrect Messages after the user had navigated away.
+    //
+    // THE DEEP-LINK GUARD: a cold start from a notification runs this concurrently with
+    // the routing effect below, and the tap must win — a restore landing after
+    // clearNavigationForDeepLink() would stomp the destination the tap navigated to (or,
+    // by design of shouldRestoreMessages never touching the feed's own selection, at
+    // worst cover it — still wrong). The link is read through rememberUpdatedState and
+    // checked both before and after the suspending store read, so a link that arrives
+    // while the read is in flight still wins. The latch is set first, so this can never
+    // re-fire later and undo a deep link (or a user navigation) after the fact.
+    val deepLinkNow by rememberUpdatedState(deepLink)
+    var lastDestinationRestored by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        if (lastDestinationRestored) return@LaunchedEffect
+        lastDestinationRestored = true
+        if (deepLinkNow != null) return@LaunchedEffect // the tap wins; skip the read too
+        val destination = lastDestinationStore?.load()
+        if (shouldRestoreMessages(destination, deepLinkNow, FeatureFlags.messagesEnabled)) {
+            showingMessages = true
+        }
+    }
     var selectedTopic by remember { mutableStateOf<FeedItem?>(null) }
     var selectedEventPermalink by remember { mutableStateOf<String?>(null) }
     var eventsGroup by remember { mutableStateOf<Group?>(null) }
@@ -1456,6 +1487,11 @@ fun FeedScreen(
                 onMessagesSelected = {
                     scope.launch { drawerState.close() }
                     showingMessages = true
+                    // The Messages leg of the issue #381 persist; the Posts and group
+                    // rows persist theirs inside selectMyPosts/selectGroup.
+                    lastDestinationStore?.let { store ->
+                        scope.launch { store.save(LastDestination.Messages) }
+                    }
                 },
                 messagesHasUnread = drawerUnread.messagesHaveUnread,
                 unreadGroupForumIds = drawerUnread.unreadGroupForumIds,
@@ -2702,6 +2738,25 @@ internal fun filterBlockedThreads(threads: List<MessageThread>, blockedUsernames
             blockedUsernames.any { it.equals(username, ignoreCase = true) }
         }
     }
+
+/**
+ * Whether a restored [destination] should flip the Messages flag on at launch (issue
+ * #381) — the decision behind FeedScreen's one-shot restore effect, factored out so the
+ * guards are testable:
+ *
+ * - Only [LastDestination.Messages] restores here; the group / My Posts legs belong to
+ *   `FeedViewModel.load()`, and anything else (including `null` from missing or corrupt
+ *   data) leaves the feed's own default in place.
+ * - A pending [deepLink] wins outright: a notification tapped on a cold start must land
+ *   where it points, not where the user happened to be last.
+ * - Messages is compile-time gated out of release builds, and a gated build has no
+ *   drawer row to navigate back out with.
+ */
+internal fun shouldRestoreMessages(
+    destination: LastDestination?,
+    deepLink: DeepLink?,
+    messagesEnabled: Boolean,
+): Boolean = destination == LastDestination.Messages && deepLink == null && messagesEnabled
 
 /** Visible-item slack before the end of the list that triggers [onLoadMore]. */
 private const val LOAD_MORE_THRESHOLD = 5
