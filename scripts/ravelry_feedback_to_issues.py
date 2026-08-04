@@ -15,9 +15,12 @@ imported, so it never double-imports and never double-replies. Safe to run on a 
 PHOTOS: photos attached to any post in the thread (Markdown `![](...)` images in the
 source body, plus `<img>` tags that exist only in Ravelry's server rendering) are
 embedded in the issue body via their absolute Ravelry URLs, and local copies are
-downloaded to --photos-dir (default `feedback_photos/`, one `topic-<id>/` subfolder
-per imported topic; pass '' to disable downloading). Download failures are warnings
-only — they never block issue creation and don't affect the exit code.
+downloaded to --photos-dir (default `feedback_photos/`, relative to the CURRENT
+WORKING DIRECTORY — a cron with CWD=$HOME writes ~/feedback_photos/ — one
+`topic-<id>/` subfolder per imported topic; pass '' to disable downloading).
+Download failures are warnings only — they never block issue creation, don't
+affect the exit code, and are NOT retried on later runs (the topic is already
+imported and skipped), so re-fetch by hand if a gap matters.
 
 --------------------------------------------------------------------------------
 AUTH — three modes, in priority order
@@ -516,13 +519,23 @@ def resolve_image_url(src: str) -> str:
     return src
 
 
+_RAVELRY_PHOTO_DOMAINS = ("ravelry.com", "ravelrycache.com")
+
+
+def _is_ravelry_host(url: str) -> bool:
+    """True only for the Ravelry domains themselves or their subdomains — a dot
+    boundary, not a bare suffix match, so `evilravelry.com` doesn't count (it could
+    otherwise shadow a real photo in the dedupe, or widen the download surface)."""
+    host = urllib.parse.urlparse(url).hostname or ""
+    return any(host == d or host.endswith("." + d) for d in _RAVELRY_PHOTO_DOMAINS)
+
+
 def _photo_key(url: str) -> str:
     """Dedupe key for a photo URL. Ravelry serves the same photo from several hosts
     (site-relative resolution vs the absolute api-host URLs in `body_html`), so
     Ravelry-hosted photos dedupe by path; anything else keeps the full URL."""
     parsed = urllib.parse.urlparse(url)
-    host = parsed.hostname or ""
-    if host.endswith(("ravelry.com", "ravelrycache.com")) and len(parsed.path) > 1:
+    if _is_ravelry_host(url) and len(parsed.path) > 1:
         return parsed.path
     return url
 
@@ -559,7 +572,12 @@ def absolutize_md_images(md: str) -> str:
         if resolved == src:
             return m.group(0)
         wrapped = f"<{resolved}>" if raw.strip().startswith("<") else resolved
-        return m.group(0).replace(raw, wrapped, 1)
+        # Splice by the URL group's position — a str.replace could hit the alt text
+        # instead when it contains the same path (e.g. ![​/attached/x.jpg](/attached/x.jpg)),
+        # leaving the actual link target relative and broken.
+        start, end = m.start(2) - m.start(0), m.end(2) - m.start(0)
+        whole = m.group(0)
+        return whole[:start] + wrapped + whole[end:]
     return MD_IMAGE_RE.sub(fix, md)
 
 
@@ -567,14 +585,20 @@ def photo_lines(photos: list[dict], shown_md: str) -> list[str]:
     """Markdown lines embedding a post's photos right after its body. Photos already
     rendering inline in the shown Markdown (matched by dedupe key, so any Ravelry host
     variant counts) aren't repeated; the rest — attachments present only in Ravelry's
-    rendering — are appended so the issue actually shows them."""
+    rendering — are appended so the issue actually shows them. Only Ravelry-hosted
+    photos are *promoted* to embeds; an off-host URL from a post body (anyone can post
+    in the public support forum) is appended as a plain link instead, so the mirror
+    never vouches for arbitrary third-party images."""
     missing = [p for p in photos if _photo_key(p["url"]) not in shown_md]
     if not missing:
         return []
     lines = ["", f"📷 {len(missing)} attached photo{'' if len(missing) == 1 else 's'}:", ""]
     for p in missing:
         alt = (p["alt"] or "photo").replace("[", "(").replace("]", ")")
-        lines.append(f"![{alt}]({p['url']})")
+        if _is_ravelry_host(p["url"]):
+            lines.append(f"![{alt}]({p['url']})")
+        else:
+            lines.append(f"[{alt}]({p['url']})")
     return lines
 
 
@@ -593,12 +617,24 @@ def collect_topic_photos(posts: list[dict]) -> list[dict]:
 _CONTENT_TYPE_EXT = {"image/jpeg": ".jpg", "image/png": ".png", "image/gif": ".gif",
                      "image/webp": ".webp", "image/heic": ".heic"}
 
+# The only extensions a "photo" file may be written with — an off-list URL extension
+# (e.g. .svg, .exe) falls back to the Content-Type mapping or the neutral .img.
+_SAFE_PHOTO_EXTS = frozenset(_CONTENT_TYPE_EXT.values()) | {".jpeg"}
+
+# Cap a single photo read: Ravelry forum photos are a few MB at most, and an unbounded
+# read() would let one hostile/huge URL balloon the process before any check runs.
+_MAX_PHOTO_BYTES = 25 * 1024 * 1024
+
 
 def download_topic_photos(topic_id: int, photos: list[dict], dest_root: str, dry_run: bool) -> int:
-    """Save local copies under <dest_root>/topic-<id>/photo-NN.<ext>. Photo URLs are
-    served by the www site/CDN, not the API, so no API auth is sent. Failures are
-    warnings, not fatal — the issue embeds the remote URLs regardless. Returns the
-    number of failed downloads."""
+    """Save local copies under <dest_root>/topic-<id>/photo-NN.<ext>. The resolved
+    URLs are api-host (or ravelrycache) URLs — see resolve_image_url — which serve
+    photos without auth, so no API auth header is sent. Only Ravelry-hosted URLs are
+    fetched at all: post bodies are user-generated, and downloading arbitrary embedded
+    hosts from a cron would be an SSRF hole. Failures are warnings, not fatal — the
+    issue embeds the remote URLs regardless — and are NOT retried on later runs (the
+    topic's issue marker skips it), so a gap in the archive is permanent unless
+    re-fetched by hand. Returns the number of failed downloads."""
     if dry_run:
         for p in photos:
             print(f"      would download {p['url']}")
@@ -606,18 +642,27 @@ def download_topic_photos(topic_id: int, photos: list[dict], dest_root: str, dry
     subdir = os.path.join(dest_root, f"topic-{topic_id}")
     failures = 0
     for i, p in enumerate(photos, 1):
+        if not _is_ravelry_host(p["url"]):
+            print(f"      ! skipping non-Ravelry photo host: {p['url']}")
+            failures += 1
+            continue
         req = urllib.request.Request(p["url"], headers={"User-Agent": UA})
         try:
             with urllib.request.urlopen(req, timeout=60) as resp:
-                data = resp.read()
+                data = resp.read(_MAX_PHOTO_BYTES + 1)
                 ctype = (resp.headers.get("Content-Type") or "").split(";")[0].strip().lower()
-            if ctype and not ctype.startswith("image/"):
-                # e.g. an anonymous-access redirect to the login page — don't archive HTML as a photo
-                print(f"      ! photo download got {ctype or 'unknown type'}, not an image: {p['url']}")
+            if not ctype.startswith("image/"):
+                # e.g. an anonymous-access redirect to the login page — don't archive
+                # HTML (or a mystery missing-Content-Type response) as a photo.
+                print(f"      ! photo download got {ctype or 'no content type'}, not an image: {p['url']}")
                 failures += 1
                 continue
-            ext = (os.path.splitext(urllib.parse.urlparse(p["url"]).path)[1].lower()
-                   or _CONTENT_TYPE_EXT.get(ctype, ".img"))
+            if len(data) > _MAX_PHOTO_BYTES:
+                print(f"      ! photo exceeds {_MAX_PHOTO_BYTES} bytes, skipping: {p['url']}")
+                failures += 1
+                continue
+            url_ext = os.path.splitext(urllib.parse.urlparse(p["url"]).path)[1].lower()
+            ext = url_ext if url_ext in _SAFE_PHOTO_EXTS else _CONTENT_TYPE_EXT.get(ctype, ".img")
             os.makedirs(subdir, exist_ok=True)
             path = os.path.join(subdir, f"photo-{i:02d}{ext}")
             with open(path, "wb") as f:
@@ -672,8 +717,8 @@ def main() -> int:
     ap.add_argument("--label", default=DEFAULT_LABEL, help=f"issue label (default {DEFAULT_LABEL}; '' to skip)")
     ap.add_argument("--photos-dir", metavar="DIR", default="feedback_photos",
                     help="download photos attached to each imported topic into DIR/topic-<id>/ "
-                         "(default: feedback_photos; '' disables downloads — issues embed the "
-                         "remote photo URLs either way)")
+                         "(default: feedback_photos, relative to the current working directory; "
+                         "'' disables downloads — issues embed the remote photo URLs either way)")
     ap.add_argument("--all-topics", action="store_true", help="import every non-sticky topic, not just '[App Feedback]'")
     ap.add_argument("--limit", type=int, default=0, help="cap the number of issues created (0 = no cap)")
     ap.add_argument("--dry-run", action="store_true", help="print what would happen without creating/replying")
