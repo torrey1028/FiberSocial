@@ -48,14 +48,15 @@ link for a registered iPhone — see `docs/ios-debug-builds.md`.
 `vMAJOR.MINOR.PATCH` tag via `scripts/release.sh` (see the root `CLAUDE.md`'s
 "Versioning & cutting a release") fires the `build-rc` job in
 `.github/workflows/release-ios.yml`, archiving and uploading a signed build to
-App Store Connect with no local Xcode step, then auto-adding it to the
-`IOS_TESTFLIGHT_QA_GROUP_NAME` internal TestFlight group so QA testers get it
-immediately (internal, not external — an external group would need a
-one-time Apple Beta App Review plus App Store Connect metadata CI can't
-satisfy, and QA here is an internal team anyway). That job needs the `IOS_*` repo secrets and the `APPLE_TEAM_ID` /
-`IOS_TESTFLIGHT_QA_GROUP_NAME` repo variables documented in `CLAUDE.md`'s
-"Secrets" section to be configured first; it can also be dry-run via the
-workflow's `workflow_dispatch` trigger without cutting a real tag.
+App Store Connect with no local Xcode step. QA testers get it immediately
+with no further CI action: the QA Internal Testing group is configured in
+App Store Connect to auto-distribute every new build (internal, not external
+— an external group would need a one-time Apple Beta App Review plus App
+Store Connect metadata CI can't satisfy, and QA here is an internal team
+anyway). That job needs the `IOS_*` repo secrets and the `APPLE_TEAM_ID`
+repo variable documented in `CLAUDE.md`'s "Secrets" section to be configured
+first; it can also be dry-run via the workflow's `workflow_dispatch` trigger
+without cutting a real tag.
 
 This upload is **not** an App Store release yet. After QA runs through
 `docs/ios-device-checklist.md` against the TestFlight build, a reviewer
