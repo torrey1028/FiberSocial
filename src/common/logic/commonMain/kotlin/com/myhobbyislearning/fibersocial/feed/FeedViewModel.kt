@@ -93,6 +93,10 @@ sealed class JoinState {
  *   group opened on load (issue #97).
  * @param groupLastViewedStore Persisted per-group last-viewed timestamps, backing the
  *   drawer's activity dots (issue #350 part 3).
+ * @param lastDestinationStore Persisted last viewed feed destination (issue #381), so a
+ *   relaunch reopens where the user was instead of the first group. Defaulted to `null`
+ *   (no persistence, today's behaviour) — the Messages leg of the restore lives in
+ *   `FeedScreen`, which shares the same store.
  * @param now Current epoch millis. Injectable so tests can drive the last-viewed
  *   comparison deterministically instead of racing the wall clock.
  */
@@ -101,6 +105,7 @@ class FeedViewModel(
     private val scope: CoroutineScope,
     private val groupOrderStore: GroupOrderStore,
     private val groupLastViewedStore: GroupLastViewedStore,
+    private val lastDestinationStore: LastDestinationStore? = null,
     private val now: () -> Long = { Clock.System.now().toEpochMilliseconds() },
 ) {
     private val _state = MutableStateFlow<FeedState>(FeedState.Loading)
@@ -148,6 +153,12 @@ class FeedViewModel(
     // persistGroupLastViewed.
     private var forumsViewedDuringRefresh = emptySet<Long>()
 
+    // One-shot latch for the issue #381 restore. load() is also the error-retry and
+    // error-pull-to-refresh path, and those must keep today's behaviour (fall back to the
+    // default group) rather than re-applying a stale persisted destination — see
+    // consumeRestoredDestination.
+    private var lastDestinationRestored = false
+
     /**
      * Whether the drawer's group rows and "Posts" row should show a dot. Updated by
      * [refreshDrawerUnread] — see its doc for when that fires; a fetch failure leaves the
@@ -158,6 +169,31 @@ class FeedViewModel(
 
     private suspend fun loadGroupLastViewed(): Map<Long, Long> =
         groupLastViewed ?: (groupLastViewedStore.load() ?: emptyMap()).also { groupLastViewed = it }
+
+    /**
+     * Records [destination] as the feed the user is now on (issue #381), so the next app
+     * launch reopens there. [markGroupViewed]'s precedent: the UI has already switched
+     * synchronously, only the persist is deferred to [scope].
+     */
+    private fun persistLastDestination(destination: LastDestination) {
+        val store = lastDestinationStore ?: return
+        scope.launch { store.save(destination) }
+    }
+
+    /**
+     * The persisted destination to restore, exactly once per ViewModel (issue #381).
+     *
+     * One-shot because [load] is reused by the error screen's Retry and pull-to-refresh:
+     * re-applying the restore there could yank the user away from wherever they had
+     * navigated since (e.g. a stale "My Posts" overriding the group they were on when the
+     * refresh failed), and per the issue those paths keep today's default-group fallback.
+     * The latch is set before the read so even a failed first load consumes the restore.
+     */
+    private suspend fun consumeRestoredDestination(): LastDestination? {
+        if (lastDestinationRestored) return null
+        lastDestinationRestored = true
+        return lastDestinationStore?.load()
+    }
 
     /**
      * Persists [updated] as the new last-viewed map, merging rather than replacing: each
@@ -215,7 +251,7 @@ class FeedViewModel(
                 val viewing = (_state.value as? FeedState.Loaded)
                     ?: (_state.value as? FeedState.Refreshing)?.stale
                 _state.value = fetchFeed(
-                    selectedGroup = viewing?.selectedGroup,
+                    selectedGroupId = viewing?.selectedGroup?.id,
                     myPosts = viewing?.myPosts ?: false,
                 )
                 _joinState.value = JoinState.Idle
@@ -244,7 +280,7 @@ class FeedViewModel(
             try {
                 repository.leaveGroup(group.permalink)
                 val newSelection = if (current.selectedGroup?.id == group.id) null else current.selectedGroup
-                _state.value = fetchFeed(selectedGroup = newSelection, myPosts = current.myPosts)
+                _state.value = fetchFeed(selectedGroupId = newSelection?.id, myPosts = current.myPosts)
             } catch (e: SessionExpiredException) {
                 println("FiberSocial: leaveGroup session expired")
                 sessionExpirySignal.signal()
@@ -289,7 +325,28 @@ class FeedViewModel(
         scope.launch {
             println("FiberSocial: FeedViewModel.load() starting")
             _state.value = FeedState.Loading
-            _state.value = fetchFeed(selectedGroup = null) // null: fall back to the default group
+            // Restoring here — as part of the initial fetch — is what keeps notification
+            // deep links safe (issue #381): FeedScreen's deep-link effect only routes once
+            // the feed is loaded, so it always runs after this and the tap still wins.
+            val restored = consumeRestoredDestination()
+            println("FiberSocial: FeedViewModel.load() restored destination: $restored")
+            _state.value = when (restored) {
+                is LastDestination.Group -> fetchFeed(selectedGroupId = restored.id)
+                // myPostsNeedsGroups: a zero-groups user who once tapped Posts must not
+                // relaunch into the blank My Posts page forever (issue #456) — with no
+                // groups the restore falls back to the group feed, where the no-groups
+                // onboarding (#431) can show. Restore-only: in-session My Posts with zero
+                // groups stays reachable (posts in since-left groups are deliberate).
+                LastDestination.MyPosts ->
+                    fetchFeed(selectedGroupId = null, myPosts = true, myPostsNeedsGroups = true)
+                // Messages is a screen-level flag restored by FeedScreen; the feed
+                // underneath it — like a missing/corrupt destination — opens the default
+                // group. markViewed only when that group is actually on screen: under a
+                // restored Messages overlay it isn't, and marking it would clear its
+                // activity dot for topics the user never saw.
+                LastDestination.Messages, null ->
+                    fetchFeed(selectedGroupId = null, markViewed = restored == null)
+            }
             println("FiberSocial: FeedViewModel.load() -> ${_state.value::class.simpleName}")
         }
     }
@@ -361,7 +418,7 @@ class FeedViewModel(
         scope.launch {
             println("FiberSocial: FeedViewModel.refresh()")
             _state.value = FeedState.Refreshing(current)
-            _state.value = fetchFeed(selectedGroup = current.selectedGroup, myPosts = current.myPosts)
+            _state.value = fetchFeed(selectedGroupId = current.selectedGroup?.id, myPosts = current.myPosts)
             println("FiberSocial: FeedViewModel.refresh() -> ${_state.value::class.simpleName}")
         }
     }
@@ -500,6 +557,12 @@ class FeedViewModel(
      * Shows [group]'s topics. No-ops if the feed is not in [FeedState.Loaded].
      */
     fun selectGroup(group: Group) {
+        // Persisted BEFORE the not-Loaded no-op below (issue #381): the drawer tap has
+        // already dismissed the Messages overlay at the screen level, so even when the
+        // content switch no-ops (Refreshing/Error underneath), the store must not keep
+        // saying Messages — the user just navigated out of it, and this group is where
+        // the next launch should land.
+        persistLastDestination(LastDestination.Group(group.id))
         val current = _state.value as? FeedState.Loaded ?: return
         println("FiberSocial: FeedViewModel.selectGroup(${group.name})")
         // Opening a group is what clears its activity dot (issue #350 part 3).
@@ -549,6 +612,12 @@ class FeedViewModel(
      * [FeedState.Loaded] or My Posts is already showing.
      */
     fun selectMyPosts() {
+        // Persisted BEFORE both no-ops below (issue #381): tapping "Posts" while the
+        // Messages overlay covers an already-my-posts feed takes the already-showing
+        // return, and a tap while the feed is Refreshing/Error takes the not-Loaded one —
+        // in both cases the drawer tap already dismissed Messages at the screen level,
+        // so the user still navigated somewhere the next launch should reopen.
+        persistLastDestination(LastDestination.MyPosts)
         val current = _state.value as? FeedState.Loaded ?: return
         if (current.myPosts) return
         println("FiberSocial: FeedViewModel.selectMyPosts()")
@@ -649,13 +718,25 @@ class FeedViewModel(
     }
 
     /**
-     * @param selectedGroup Group to keep showing (a refresh), or `null` to open the
-     *   default group — the first in the stored order. A remembered selection survives
-     *   only while the user still belongs to that group. Ignored when [myPosts] is set.
+     * @param selectedGroupId Id of the group to show (a refresh's current selection, or
+     *   issue #381's restored destination), or `null` to open the default group — the
+     *   first in the stored order. An id survives only while the user still belongs to
+     *   that group: a stale id (group left since it was remembered) falls through to the
+     *   default via the same `firstOrNull` fallback. Ignored when [myPosts] is set.
      * @param myPosts Keep showing the cross-group "My Posts" feed instead of a group
-     *   (a refresh while it's selected).
+     *   (a refresh while it's selected, or a restored My Posts destination).
      */
-    private suspend fun fetchFeed(selectedGroup: Group?, myPosts: Boolean = false): FeedState = try {
+    private suspend fun fetchFeed(
+        selectedGroupId: Long?,
+        myPosts: Boolean = false,
+        // Restore-only (issue #456): fall back to the group feed when My Posts was
+        // requested but the user has no groups. Never set on in-session paths — a
+        // zero-groups user's My Posts can legitimately hold posts from since-left groups.
+        myPostsNeedsGroups: Boolean = false,
+        // False when the loaded group is hidden under a restored Messages overlay —
+        // marking it viewed would clear its activity dot for topics never seen.
+        markViewed: Boolean = true,
+    ): FeedState = try {
         val user = repository.getCurrentUser()
         println("FiberSocial: fetched user=${user.username}")
         val fetched = repository.getUserGroups(user.username)
@@ -666,7 +747,7 @@ class FeedViewModel(
         // issue #97 maintenance rules (joined groups appended, left groups pruned).
         val reconciledIds = groups.map { it.id }
         if (reconciledIds != storedOrder) groupOrderStore.save(reconciledIds)
-        if (myPosts) {
+        if (myPosts && !(myPostsNeedsGroups && groups.isEmpty())) {
             val page = repository.getMyPostsPage(groups, page = 1)
             println("FiberSocial: fetched ${page.items.size} my-posts items")
             FeedState.Loaded(
@@ -678,12 +759,14 @@ class FeedViewModel(
                 hasMore = page.hasMore,
             )
         } else {
-            val selected = selectedGroup?.let { s -> groups.firstOrNull { it.id == s.id } }
+            val selected = selectedGroupId?.let { id -> groups.firstOrNull { it.id == id } }
                 ?: groups.firstOrNull()
             // The group whose feed this load lands on is on screen, so it counts as viewed
             // (issue #350 part 3) — otherwise the default group would show a dot for
-            // activity the user is looking at right now.
-            selected?.let { markGroupViewed(it) }
+            // activity the user is looking at right now. With a restored group destination
+            // (issue #381) this marks the RESTORED group, not the drawer's first; with a
+            // restored Messages overlay the caller passes markViewed = false instead.
+            if (markViewed) selected?.let { markGroupViewed(it) }
             val page = selected?.let { repository.getFeedItemsPage(it, page = 1) }
             val items = page?.items ?: emptyList()
             println("FiberSocial: fetched ${items.size} feed items")

@@ -269,7 +269,10 @@ class FeedViewModelTest {
     @Test
     fun `load opens the stored order's first group rather than the fetched order's`() =
         runTest(UnconfinedTestDispatcher()) {
-            // Fetched order is [10, 11]; the user put Sock Society (11) first.
+            // Fetched order is [10, 11]; the user put Sock Society (11) first. No
+            // persisted last destination (the defaulted-null store) — with one, the
+            // restore would take precedence over the stored order's first group; see
+            // the issue #381 tests below.
             val store = FakeGroupOrderStore(listOf(11L, 10L))
             val vm = FeedViewModel(twoGroupRepo(), this, store, FakeGroupLastViewedStore())
             vm.load()
@@ -309,6 +312,322 @@ class FeedViewModelTest {
             val state = assertIs<FeedState.Loaded>(vm.state.value)
             assertEquals(null, state.selectedGroup)
             assertEquals(emptyList(), state.items)
+        }
+
+    // ---- Last-viewed destination restore (issue #381) ----
+
+    @Test
+    fun `load restores the persisted group instead of the stored order's first`() =
+        runTest(UnconfinedTestDispatcher()) {
+            // Stored order puts KAL Hub (10) first, but the user was last on Sock
+            // Society (11) — that's where the app must reopen.
+            val lastViewed = FakeGroupLastViewedStore()
+            val vm = FeedViewModel(
+                twoGroupRepo(),
+                this,
+                FakeGroupOrderStore(listOf(10L, 11L)),
+                lastViewed,
+                FakeLastDestinationStore(LastDestination.Group(11L)),
+            )
+            vm.load()
+            awaitChildren(coroutineContext[Job]!!)
+            val state = assertIs<FeedState.Loaded>(vm.state.value)
+            assertEquals(11L, state.selectedGroup?.id)
+            assertFalse(state.myPosts)
+            // The RESTORED group is the one landing on it marks viewed (its activity dot
+            // clears) — not the drawer's first.
+            assertEquals(setOf(11L), lastViewed.stored?.keys)
+        }
+
+    @Test
+    fun `load restores the My Posts feed when it was the last destination`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val vm = FeedViewModel(
+                myPostsRepo(),
+                this,
+                FakeGroupOrderStore(),
+                FakeGroupLastViewedStore(),
+                FakeLastDestinationStore(LastDestination.MyPosts),
+            )
+            vm.load()
+            awaitChildren(coroutineContext[Job]!!)
+            val state = assertIs<FeedState.Loaded>(vm.state.value)
+            assertTrue(state.myPosts)
+            assertNull(state.selectedGroup)
+            assertEquals(listOf(300L), state.items.map { it.id })
+        }
+
+    @Test
+    fun `load with a persisted Messages destination opens the default group underneath`() =
+        runTest(UnconfinedTestDispatcher()) {
+            // Messages is a screen-level flag restored by FeedScreen, not part of
+            // FeedState — the feed itself loads exactly as if nothing were persisted, so
+            // the drawer's "back out of Messages" destinations are populated underneath.
+            val vm = FeedViewModel(
+                twoGroupRepo(),
+                this,
+                FakeGroupOrderStore(listOf(11L, 10L)),
+                FakeGroupLastViewedStore(),
+                FakeLastDestinationStore(LastDestination.Messages),
+            )
+            vm.load()
+            awaitChildren(coroutineContext[Job]!!)
+            val state = assertIs<FeedState.Loaded>(vm.state.value)
+            assertEquals(11L, state.selectedGroup?.id)
+            assertFalse(state.myPosts)
+        }
+
+    @Test
+    fun `load falls back to the default group when the restored group was left`() =
+        runTest(UnconfinedTestDispatcher()) {
+            // Group 99 was left since last launch. The stale id flows through fetchFeed's
+            // existing firstOrNull fallback — not around it — landing on the stored
+            // order's first group.
+            val vm = FeedViewModel(
+                twoGroupRepo(),
+                this,
+                FakeGroupOrderStore(listOf(11L, 10L)),
+                FakeGroupLastViewedStore(),
+                FakeLastDestinationStore(LastDestination.Group(99L)),
+            )
+            vm.load()
+            awaitChildren(coroutineContext[Job]!!)
+            val state = assertIs<FeedState.Loaded>(vm.state.value)
+            assertEquals(11L, state.selectedGroup?.id)
+        }
+
+    @Test
+    fun `a second load does not re-apply the restored destination`() =
+        runTest(UnconfinedTestDispatcher()) {
+            // The error screen's Retry and error pull-to-refresh both reuse load(); the
+            // restore is a one-shot, so they keep today's default-group fallback instead
+            // of yanking the user back to a stale persisted destination.
+            val vm = FeedViewModel(
+                myPostsRepo(),
+                this,
+                FakeGroupOrderStore(),
+                FakeGroupLastViewedStore(),
+                FakeLastDestinationStore(LastDestination.MyPosts),
+            )
+            vm.load()
+            awaitChildren(coroutineContext[Job]!!)
+            assertTrue(assertIs<FeedState.Loaded>(vm.state.value).myPosts)
+
+            vm.load()
+            awaitChildren(coroutineContext[Job]!!)
+            val state = assertIs<FeedState.Loaded>(vm.state.value)
+            assertFalse(state.myPosts)
+            assertEquals(10L, state.selectedGroup?.id)
+        }
+
+    @Test
+    fun `refresh does not re-read the persisted destination`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val destinationStore = FakeLastDestinationStore(LastDestination.MyPosts)
+            val vm = FeedViewModel(
+                myPostsRepo(),
+                this,
+                FakeGroupOrderStore(),
+                FakeGroupLastViewedStore(),
+                destinationStore,
+            )
+            vm.load()
+            awaitChildren(coroutineContext[Job]!!)
+            assertTrue(assertIs<FeedState.Loaded>(vm.state.value).myPosts)
+
+            // The store moves on (e.g. the Messages drawer row wrote from FeedScreen) —
+            // pull-to-refresh must keep the current selection, not re-apply the store.
+            destinationStore.save(LastDestination.Group(10L))
+            vm.refresh()
+            awaitChildren(coroutineContext[Job]!!)
+            val state = assertIs<FeedState.Loaded>(vm.state.value)
+            assertTrue(state.myPosts)
+            assertNull(state.selectedGroup)
+        }
+
+    @Test
+    fun `selectGroup persists the group as the last destination`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val destinationStore = FakeLastDestinationStore()
+            val vm = FeedViewModel(
+                twoGroupRepo(),
+                this,
+                FakeGroupOrderStore(),
+                FakeGroupLastViewedStore(),
+                destinationStore,
+            )
+            vm.load()
+            awaitChildren(coroutineContext[Job]!!)
+            // load() only reads the store; navigation is what writes it.
+            assertNull(destinationStore.stored)
+
+            val sock = Group(id = 11L, name = "Sock Society", permalink = "sock", forumId = 43L)
+            vm.selectGroup(sock)
+            awaitChildren(coroutineContext[Job]!!)
+            assertEquals(LastDestination.Group(11L), destinationStore.stored)
+        }
+
+    @Test
+    fun `selectMyPosts persists My Posts as the last destination`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val destinationStore = FakeLastDestinationStore()
+            val vm = FeedViewModel(
+                myPostsRepo(),
+                this,
+                FakeGroupOrderStore(),
+                FakeGroupLastViewedStore(),
+                destinationStore,
+            )
+            vm.load()
+            awaitChildren(coroutineContext[Job]!!)
+
+            vm.selectMyPosts()
+            awaitChildren(coroutineContext[Job]!!)
+            assertEquals(LastDestination.MyPosts, destinationStore.stored)
+        }
+
+    @Test
+    fun `selectMyPosts records the destination even when My Posts is already showing`() =
+        runTest(UnconfinedTestDispatcher()) {
+            // The drawer's Posts row calls selectMyPosts while the Messages overlay may
+            // cover an already-my-posts feed; the call no-ops as a switch, but the user
+            // still navigated somewhere the next launch must reopen.
+            val destinationStore = FakeLastDestinationStore()
+            val vm = FeedViewModel(
+                myPostsRepo(),
+                this,
+                FakeGroupOrderStore(),
+                FakeGroupLastViewedStore(),
+                destinationStore,
+            )
+            vm.load()
+            awaitChildren(coroutineContext[Job]!!)
+            vm.selectMyPosts()
+            awaitChildren(coroutineContext[Job]!!)
+
+            // The user opens Messages (persisted by FeedScreen's drawer callback)...
+            destinationStore.save(LastDestination.Messages)
+            // ...then taps Posts again: a no-op switch that must still be recorded.
+            vm.selectMyPosts()
+            awaitChildren(coroutineContext[Job]!!)
+            assertEquals(LastDestination.MyPosts, destinationStore.stored)
+        }
+
+    @Test
+    fun `selectMyPosts records the destination even when the feed is not loaded`() =
+        runTest(UnconfinedTestDispatcher()) {
+            // The drawer tap has already dismissed the Messages overlay at the screen
+            // level; if the feed underneath is Error (or Refreshing) the switch no-ops,
+            // but the store must not keep saying Messages.
+            val destinationStore = FakeLastDestinationStore(LastDestination.Messages)
+            val vm = FeedViewModel(
+                myPostsRepo(),
+                this,
+                FakeGroupOrderStore(),
+                FakeGroupLastViewedStore(),
+                destinationStore,
+            )
+            vm.forceError()
+            vm.selectMyPosts()
+            awaitChildren(coroutineContext[Job]!!)
+            assertEquals(LastDestination.MyPosts, destinationStore.stored)
+        }
+
+    @Test
+    fun `selectGroup records the destination even when the feed is not loaded`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val destinationStore = FakeLastDestinationStore(LastDestination.Messages)
+            val vm = FeedViewModel(
+                twoGroupRepo(),
+                this,
+                FakeGroupOrderStore(),
+                FakeGroupLastViewedStore(),
+                destinationStore,
+            )
+            vm.forceError()
+            vm.selectGroup(Group(id = 11L, name = "Sock Society", permalink = "sock", forumId = 43L))
+            awaitChildren(coroutineContext[Job]!!)
+            assertEquals(LastDestination.Group(11L), destinationStore.stored)
+        }
+
+    @Test
+    fun `load with restored My Posts and no groups falls back to the group feed`() =
+        runTest(UnconfinedTestDispatcher()) {
+            // Issue #456: a zero-groups user who once tapped Posts must not relaunch into
+            // the blank My Posts page forever — the restore falls back to the group feed,
+            // where the no-groups onboarding (#431) can show.
+            val vm = FeedViewModel(
+                FeedRepository(routingApiClient { path ->
+                    when {
+                        path.contains("/current_user") -> CURRENT_USER_JSON
+                        path.contains("memberships") -> "<html><body>no groups</body></html>"
+                        else -> error("Unexpected: $path")
+                    }
+                }),
+                this,
+                FakeGroupOrderStore(),
+                FakeGroupLastViewedStore(),
+                FakeLastDestinationStore(LastDestination.MyPosts),
+            )
+            vm.load()
+            awaitChildren(coroutineContext[Job]!!)
+            val state = assertIs<FeedState.Loaded>(vm.state.value)
+            assertFalse(state.myPosts)
+            assertTrue(state.groups.isEmpty())
+        }
+
+    @Test
+    fun `load with a restored Messages destination does not mark the default group viewed`() =
+        runTest(UnconfinedTestDispatcher()) {
+            // The default group loads hidden UNDER the restored Messages overlay — marking
+            // it viewed would clear its activity dot for topics the user never saw.
+            val lastViewed = FakeGroupLastViewedStore()
+            val vm = FeedViewModel(
+                twoGroupRepo(),
+                this,
+                FakeGroupOrderStore(listOf(11L, 10L)),
+                lastViewed,
+                FakeLastDestinationStore(LastDestination.Messages),
+            )
+            vm.load()
+            awaitChildren(coroutineContext[Job]!!)
+            assertIs<FeedState.Loaded>(vm.state.value)
+            assertTrue(lastViewed.stored.isNullOrEmpty())
+        }
+
+    @Test
+    fun `a failed first load still consumes the restore`() =
+        runTest(UnconfinedTestDispatcher()) {
+            // Pins consumeRestoredDestination's documented invariant: the latch is set
+            // before the read, so Retry after an error-first-launch keeps the default
+            // fallback instead of re-applying a stale persisted destination.
+            var fail = true
+            val vm = FeedViewModel(
+                FeedRepository(routingApiClient { path ->
+                    if (fail) error("boom")
+                    when {
+                        path.contains("/current_user") -> CURRENT_USER_JSON
+                        path.contains("memberships") -> MEMBERSHIPS_HTML
+                        path.contains("/groups/search") -> GROUPS_JSON
+                        path.contains("/forums/") -> topicsJson(100L)
+                        path.contains("/topics/") -> topicDetailJson(100L)
+                        else -> error("Unexpected: $path")
+                    }
+                }),
+                this,
+                FakeGroupOrderStore(),
+                FakeGroupLastViewedStore(),
+                FakeLastDestinationStore(LastDestination.MyPosts),
+            )
+            vm.load()
+            awaitChildren(coroutineContext[Job]!!)
+            assertIs<FeedState.Error>(vm.state.value)
+
+            fail = false
+            vm.load()
+            awaitChildren(coroutineContext[Job]!!)
+            val state = assertIs<FeedState.Loaded>(vm.state.value)
+            assertFalse(state.myPosts)
         }
 
     @Test

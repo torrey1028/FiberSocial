@@ -20,6 +20,7 @@ import com.myhobbyislearning.fibersocial.profile.UserProfileViewModel
 import com.myhobbyislearning.fibersocial.projects.ProjectPageViewModel
 import com.myhobbyislearning.fibersocial.projects.ProjectPhotoPickerViewModel
 import com.myhobbyislearning.fibersocial.storage.AUTH_PREFS_NAME
+import com.myhobbyislearning.fibersocial.storage.LAST_DESTINATION_PREFS_NAME
 import com.myhobbyislearning.fibersocial.storage.NOTIFICATION_STATE_PREFS_NAME
 import com.myhobbyislearning.fibersocial.storage.encryptedKeyValueStore
 import com.myhobbyislearning.fibersocial.storage.plainKeyValueStore
@@ -44,6 +45,10 @@ class FeedAndroidViewModel(app: Application) : AndroidViewModel(app), FeedScreen
         viewModelScope,
         AndroidGroupOrderStore(app),
         AndroidGroupLastViewedStore(app),
+        // Common KeyValueStore-backed (not another SharedPreferences-direct store, per
+        // issue #381) — the same store MainActivity hands FeedScreen for the Messages leg;
+        // both wrap the same prefs file.
+        KeyValueLastDestinationStore(plainKeyValueStore(app, LAST_DESTINATION_PREFS_NAME)),
     )
     override val topicDetail = TopicDetailViewModel(apiClient, viewModelScope)
     override val newTopic = NewTopicViewModel(apiClient, viewModelScope)

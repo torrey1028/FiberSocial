@@ -51,6 +51,7 @@ const val TERMS_ACCEPTANCE_STORE_NAME = "terms_acceptance"
 const val GROUP_ORDER_STORE_NAME = "group_order"
 const val GROUP_LAST_VIEWED_STORE_NAME = "group_last_viewed"
 const val BLOCKED_USERS_STORE_NAME = "blocked_users"
+const val LAST_DESTINATION_STORE_NAME = "last_destination"
 
 /**
  * `NSUserDefaults`-backed [KeyValueStore] for non-secret state and settings — the iOS
