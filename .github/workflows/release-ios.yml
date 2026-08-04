@@ -125,7 +125,7 @@ jobs:
             exit 1
           fi
           if [ -z "${{ vars.IOS_TESTFLIGHT_QA_GROUP_NAME }}" ]; then
-            echo "::error::Missing required repo variable IOS_TESTFLIGHT_QA_GROUP_NAME (the External Testing group in App Store Connect that QA testers belong to). Add it at Settings > Secrets and variables > Actions > Variables."
+            echo "::error::Missing required repo variable IOS_TESTFLIGHT_QA_GROUP_NAME (the Internal Testing group in App Store Connect that QA testers belong to). Add it at Settings > Secrets and variables > Actions > Variables."
             exit 1
           fi
 
@@ -305,7 +305,20 @@ jobs:
               "in_house": False,
           }, open(os.environ["RUNNER_TEMP"] + "/asc_api_key.json", "w"))
           '
-          fastlane run pilot \
+          # pilot's own beta-group-assignment call
+          # (spaceship's add_beta_groups_to_build) fails with "Builds cannot
+          # be assigned to this internal group. - Cannot add internal group
+          # to a build." for any manually-managed (non-"Automatic for Xcode
+          # Builds") internal group, even though the assignment itself
+          # succeeds -- a long-standing, still-open Apple/fastlane API quirk
+          # (fastlane/fastlane#22051; confirmed by many independent reporters
+          # across 2024-2026 that the build shows up for the group despite
+          # the error). Tolerate exactly that one error text so it doesn't
+          # fail the job; any other failure still does. QA's own TestFlight
+          # install during the manual checklist is the real confirmation
+          # that the assignment actually took effect.
+          set +e
+          FASTLANE_OUTPUT=$(fastlane run pilot \
             api_key_path:"$RUNNER_TEMP/asc_api_key.json" \
             app_identifier:"com.myhobbyislearning.fibersocial" \
             app_platform:"ios" \
@@ -313,7 +326,16 @@ jobs:
             distribute_external:false \
             submit_beta_review:false \
             groups:"$IOS_TESTFLIGHT_QA_GROUP_NAME" \
-            build_number:"$BUILD_NUMBER"
+            build_number:"$BUILD_NUMBER" 2>&1)
+          STATUS=$?
+          echo "$FASTLANE_OUTPUT"
+          if [ $STATUS -ne 0 ]; then
+            if echo "$FASTLANE_OUTPUT" | grep -q "Cannot add internal group to a build"; then
+              echo "::warning::pilot reported 'Cannot add internal group to a build' -- known benign fastlane/Apple API quirk (fastlane/fastlane#22051), treating as non-fatal. Confirm the build actually reached QA testers during the manual TestFlight check."
+            else
+              exit $STATUS
+            fi
+          fi
 
       # The `ios-release` environment (configured with required reviewers in
       # Settings > Environments) is what actually pauses the `promote` job
