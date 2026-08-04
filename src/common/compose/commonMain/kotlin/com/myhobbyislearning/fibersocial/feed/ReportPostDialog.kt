@@ -143,10 +143,24 @@ internal fun ReportPostDialog(
 /** One-shot confirmation shown after a successful report (issue #409). */
 @Composable
 internal fun ReportSentDialog(onDismiss: () -> Unit) {
+    OneShotDialog(
+        title = "Report sent",
+        message = "Thanks — this post has been reported to the group's moderators.",
+        onDismiss = onDismiss,
+    )
+}
+
+/**
+ * One-shot acknowledgement modal — a title, a message, and a single OK button that
+ * dismisses it. Shared by [ReportSentDialog] and [TopicDetailScreen]'s post-action
+ * error dialog so the acknowledge-only shape stays consistent.
+ */
+@Composable
+internal fun OneShotDialog(title: String, message: String, onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Report sent") },
-        text = { Text("Thanks — this post has been reported to the group's moderators.") },
+        title = { Text(title) },
+        text = { Text(message) },
         confirmButton = { TextButton(onClick = onDismiss) { Text("OK") } },
     )
 }

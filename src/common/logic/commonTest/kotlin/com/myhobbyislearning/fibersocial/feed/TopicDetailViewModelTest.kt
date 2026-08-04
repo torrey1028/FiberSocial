@@ -1822,6 +1822,62 @@ class TopicDetailViewModelTest {
     }
 
     @Test
+    fun `a cancelled deletePost is not misreported as an error`() =
+        runTest(UnconfinedTestDispatcher()) {
+            // The path #419 item 2 actually fixed: the PLAIN runPostOp ops (sendReply/
+            // deletePost/editPost) had no CancellationException rethrow before the
+            // refactor, so cancelling a delete mid-flight (user backs out, scope torn
+            // down) flipped deleteState to Error("Job was cancelled"). The report ops
+            // always had a local rethrow — this test pins the newly-central one on a
+            // path that was genuinely broken.
+            val releaseDelete = CompletableDeferred<Unit>()
+            val engine = MockEngine { request ->
+                when {
+                    request.url.encodedPath.contains("/forum_posts/") -> {
+                        releaseDelete.await()
+                        respond("", HttpStatusCode.Found,
+                            headersOf(HttpHeaders.Location, "/discuss/some-group/1"))
+                    }
+                    else -> respond(TOKEN_PAGE_HTML, HttpStatusCode.OK, headersOf("Content-Type", "text/html"))
+                }
+            }
+            val httpClient = HttpClient(engine) {
+                install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+            }
+            val vm = TopicDetailViewModel(RavelryApiClient(httpClient, FakeFeedTokenStorage()), this)
+            val ownerJob = coroutineContext[Job]!!
+            val before = ownerJob.children.toList()
+            vm.deletePost(reportedPost)
+            assertIs<DeleteState.Deleting>(vm.deleteState.value)
+            val deleteJob = ownerJob.children.toList().first { it !in before }
+
+            deleteJob.cancel()
+            deleteJob.join()
+            releaseDelete.complete(Unit)
+            assertIs<DeleteState.Deleting>(vm.deleteState.value)
+        }
+
+    @Test
+    fun `a cancelled report-form fetch is not misreported as LoadError`() =
+        runTest(UnconfinedTestDispatcher()) {
+            // Note: the report ops already rethrew CancellationException locally before
+            // the refactor — this pins that the SHARED runPostOp path preserves it.
+            val releaseForm = CompletableDeferred<Unit>()
+            val vm = TopicDetailViewModel(gatedReportClient(releaseForm = releaseForm), this)
+            val ownerJob = coroutineContext[Job]!!
+            val before = ownerJob.children.toList()
+            vm.openReportDialog(reportedPost)
+            assertIs<ReportState.LoadingForm>(vm.reportState.value)
+            val fetchJob = ownerJob.children.toList().first { it !in before }
+
+            fetchJob.cancel()
+            fetchJob.join()
+            // Unblock the parked MockEngine handler so nothing lingers after the test.
+            releaseForm.complete(Unit)
+            assertIs<ReportState.LoadingForm>(vm.reportState.value)
+        }
+
+    @Test
     fun `openReportDialog session expiry signals sessionExpired and resets to Idle`() =
         runTest(UnconfinedTestDispatcher()) {
             val vm = TopicDetailViewModel(sessionExpiredApiClient(), this)
