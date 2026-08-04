@@ -8,8 +8,11 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.DropdownMenuItem
@@ -38,6 +41,12 @@ import com.myhobbyislearning.fibersocial.feed.models.Group
 import com.myhobbyislearning.fibersocial.feed.models.Topic
 import com.myhobbyislearning.fibersocial.ui.ErrorText
 import com.myhobbyislearning.fibersocial.ui.SendingSpinner
+
+/**
+ * Floor for the post body field inside the scrollable form (issue #432) — same role
+ * as NewMessageScreen's body floor; keep the two composers' floors in step.
+ */
+private val BODY_MIN_HEIGHT = 200.dp
 
 /**
  * Full-screen composer for starting a new topic in one of the user's groups.
@@ -118,11 +127,22 @@ fun NewTopicScreen(
             )
         },
     ) { padding ->
+        // Scrollable so the form degrades gracefully when the keyboard halves the screen
+        // (issue #432): without it the weighted body field collapsed to zero height and
+        // the attach row sat where the field should be.
+        val scrollState = rememberScrollState()
+        // The error renders at the top of the scrollable form, but typing auto-scrolls
+        // down to the body cursor — without this a failed post can surface entirely
+        // above the fold, looking like the Post button did nothing.
+        LaunchedEffect(state) {
+            if (state is NewTopicState.Error) scrollState.animateScrollTo(0)
+        }
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
                 .imePadding()
+                .verticalScroll(scrollState)
                 .padding(horizontal = 16.dp, vertical = 8.dp),
         ) {
             if (state is NewTopicState.Error) {
@@ -189,10 +209,15 @@ fun NewTopicScreen(
                 label = { Text("Your post") },
                 placeholder = { Text("Write your post…") },
                 enabled = !sending,
+                // A minimum rather than weight(1f): weight is illegal inside a scrollable
+                // column (unbounded height), and a fixed floor keeps the field usable
+                // however little room the keyboard leaves. The field grows with its text.
+                // padding before heightIn so the floor bounds the field itself, not
+                // field-plus-padding (the other order silently shaves 8.dp off it).
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(1f)
-                    .padding(top = 8.dp),
+                    .padding(top = 8.dp)
+                    .heightIn(min = BODY_MIN_HEIGHT),
             )
 
             Row(verticalAlignment = Alignment.CenterVertically) {

@@ -34,12 +34,10 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -76,6 +74,7 @@ import com.myhobbyislearning.fibersocial.feed.html.parseSummaryDocument
 import com.myhobbyislearning.fibersocial.feed.models.FeedItem
 import com.myhobbyislearning.fibersocial.feed.models.Post
 import com.myhobbyislearning.fibersocial.moderation.BlockUserConfirmDialog
+import com.myhobbyislearning.fibersocial.moderation.containsUsername
 import com.myhobbyislearning.fibersocial.ui.Avatar
 import com.myhobbyislearning.fibersocial.profile.UsernameLink
 import com.myhobbyislearning.fibersocial.ui.DeleteConfirmDialog
@@ -774,19 +773,11 @@ private suspend fun LazyListState.snapTargetToBottom(index: Int) {
 /**
  * Purely client-side block filter (issue #410), mirroring [filterUnread]'s shape: no new
  * API call, just hides posts whose author is on the local blocked-users list. Compared
- * case-insensitively, matching [com.myhobbyislearning.fibersocial.moderation.isBlocked].
- * A post with no known author ([Post.user] `null`) is never filtered — there's no username
- * to have blocked.
+ * case-insensitively via [containsUsername]. A post with no known author ([Post.user]
+ * `null`) is never filtered — there's no username to have blocked.
  */
 internal fun filterBlockedPosts(posts: List<Post>, blockedUsernames: Set<String>): List<Post> =
-    if (blockedUsernames.isEmpty()) {
-        posts
-    } else {
-        posts.filterNot { post ->
-            val username = post.user?.username ?: return@filterNot false
-            blockedUsernames.any { it.equals(username, ignoreCase = true) }
-        }
-    }
+    posts.filterNot { blockedUsernames.containsUsername(it.user?.username) }
 
 @Composable
 internal fun ReplyItem(
@@ -954,11 +945,10 @@ private fun EditBar(
 /** One-shot modal for a failed post operation; shows the real failure reason. */
 @Composable
 private fun PostActionErrorDialog(title: String, message: String, onDismiss: () -> Unit) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(title) },
-        text = { Text(message.ifBlank { "Check your connection and try again." }) },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("OK") } },
+    OneShotDialog(
+        title = title,
+        message = message.ifBlank { "Check your connection and try again." },
+        onDismiss = onDismiss,
     )
 }
 
