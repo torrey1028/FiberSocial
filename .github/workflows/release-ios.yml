@@ -1,12 +1,11 @@
 name: Release iOS
 
-# This used to be the `ios-release` job inside release.yml, uploading
-# straight to App Store Connect on every tag push with no automated tests and
-# no QA gate. It's now split out into its own workflow: a build-rc job (test,
-# archive, upload) and a promote job gated on manual QA sign-off (#265).
-# release.yml still covers Android only, unchanged (a follow-up PR is
-# expected to bring Android onto the same RC/QA-gated shape once its Play
-# Console setup is ready).
+# See the twin file release-android.yml: this used to be the `ios-release`
+# job inside release.yml, uploading straight to App Store Connect on every
+# tag push with no automated tests and no QA gate. It's now split into a
+# build-rc job (test, archive, upload) and a promote job gated on manual QA
+# sign-off (#265). QA testers get each build via the Internal Testing
+# group's App Store Connect "Automatic distribution" — no CI step needed.
 on:
   push:
     tags: ["v[0-9]+.[0-9]+.[0-9]+"]
