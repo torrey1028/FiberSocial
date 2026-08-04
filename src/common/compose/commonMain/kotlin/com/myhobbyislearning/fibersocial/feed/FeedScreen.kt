@@ -608,10 +608,11 @@ fun FeedScreen(
         // would cover the event they actually asked for.
         pendingDeepLinkTopicId = null
         pendingDeepLinkEventGroup = null
-        // This path closes both composers without going through their onBack
+        // This path closes the composers without going through their onBack
         // handlers, so their attachment flows must be reset here too.
         viewModel.replyImage.reset()
         viewModel.newTopicImage.reset()
+        viewModel.feedbackImage.reset()
         viewModel.newEvent.reset()
         viewModel.projectPicker.dismiss()
         viewModel.projectPage.dismiss()
@@ -939,6 +940,7 @@ fun FeedScreen(
     // backing out returns to the still-open settings screen.
     if (sendingFeedback) {
         val feedbackState by viewModel.feedback.state.collectAsState()
+        val feedbackAttachment by viewModel.feedbackImage.state.collectAsState()
         val uriHandler = LocalUriHandler.current
         FeedbackScreen(
             state = feedbackState,
@@ -946,15 +948,20 @@ fun FeedScreen(
             onBack = {
                 sendingFeedback = false
                 viewModel.feedback.reset()
+                viewModel.feedbackImage.reset()
             },
             onSend = { title, description, details -> viewModel.feedback.send(title, description, details) },
             onSent = {
                 sendingFeedback = false
                 viewModel.feedback.acknowledgeSent()
+                viewModel.feedbackImage.reset()
             },
             onOpenSupportGroup = {
                 uriHandler.openUri("https://www.ravelry.com/groups/${SupportGroup.PERMALINK}")
             },
+            attachment = feedbackAttachment,
+            onImagePicked = { uri -> viewModel.attachFeedbackImage(uri) },
+            onAttachmentInserted = { viewModel.feedbackImage.acknowledgeInserted() },
         )
         return
     }
@@ -1459,6 +1466,12 @@ fun FeedScreen(
                 joinState = joinState,
                 onSendFeedback = {
                     scope.launch { drawerState.close() }
+                    // Reset on open as well as on close (the ImageAttachmentViewModel
+                    // contract, same as onNewTopicClick): the composer can unmount
+                    // without any close callback firing — e.g. session expiry swapping
+                    // FeedScreen for login mid-upload — and the platform models outlive
+                    // logout, so a stale Error/Ready would greet the next feedback draft.
+                    viewModel.feedbackImage.reset()
                     sendingFeedback = true
                 },
                 onJoinFeedbackGroup = { viewModel.feed.joinSupportGroup(SupportGroup.PERMALINK) },

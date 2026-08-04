@@ -32,8 +32,8 @@ expect fun rememberImagePicker(onImagePicked: (String) -> Unit): () -> Unit
 
 /**
  * Inserts a [ImageAttachmentState.Ready] attachment's markdown into the host composer's
- * draft and acknowledges it. Shared by both composers so the insert-then-acknowledge
- * handshake can't drift between them. [onInsert] is re-read on every recomposition
+ * draft and acknowledges it. Shared by the composers (new topic, reply, feedback) so
+ * the insert-then-acknowledge handshake can't drift between them. [onInsert] is re-read on every recomposition
  * (not captured at effect launch), so it always sees the draft's latest text even if a
  * keystroke lands between the Ready state arriving and this effect running.
  */
@@ -54,7 +54,7 @@ internal fun InsertAttachmentEffect(
 }
 
 /**
- * Attach-image control shared by the two composers. Swaps to a progress spinner while
+ * Attach-image control shared by the composers. Swaps to a progress spinner while
  * an upload is in flight. With [onPickFromProjects] provided, tapping opens a menu
  * offering a device upload (needs Ravelry Extras to post) or a photo from the user's
  * projects (free); without it, tapping launches the system photo picker directly.

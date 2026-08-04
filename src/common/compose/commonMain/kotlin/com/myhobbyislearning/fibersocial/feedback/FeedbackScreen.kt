@@ -8,6 +8,7 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -43,6 +44,10 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.myhobbyislearning.fibersocial.feed.AttachImageButton
+import com.myhobbyislearning.fibersocial.feed.ImageAttachmentState
+import com.myhobbyislearning.fibersocial.feed.InsertAttachmentEffect
+import com.myhobbyislearning.fibersocial.feed.appendImageMarkdown
 
 /**
  * "Send feedback" screen (issue #57, reduced scope): posts the user's report as a topic in
@@ -56,6 +61,10 @@ import androidx.compose.ui.unit.dp
  * @param onSent Acknowledge a successful send and close.
  * @param onOpenSupportGroup Open the group on Ravelry — shown when posting needs membership
  *   (stopgap until in-app join lands; see PR A / issue #57).
+ * @param attachment State of the attach-screenshot upload (issue #429); its markdown is
+ *   appended to the description via [InsertAttachmentEffect], same as the topic composers.
+ * @param onImagePicked A device image was picked; receives the platform URI string.
+ * @param onAttachmentInserted The ready markdown landed in the draft (acknowledge upstream).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -66,6 +75,9 @@ fun FeedbackScreen(
     onSend: (title: String, description: String, details: String) -> Unit,
     onSent: () -> Unit,
     onOpenSupportGroup: () -> Unit,
+    attachment: ImageAttachmentState = ImageAttachmentState.Idle,
+    onImagePicked: (String) -> Unit = {},
+    onAttachmentInserted: () -> Unit = {},
 ) {
     var title by rememberSaveable { mutableStateOf("") }
     var description by rememberSaveable { mutableStateOf("") }
@@ -77,6 +89,12 @@ fun FeedbackScreen(
     // away would never surface (reset() is a no-op mid-send, but that only protects
     // the ViewModel's state — not whether anyone's still observing it).
     BackHandler(enabled = !sending, onBack = onBack)
+
+    InsertAttachmentEffect(
+        attachment = attachment,
+        onInsert = { description = appendImageMarkdown(description, it) },
+        onInserted = onAttachmentInserted,
+    )
 
     Scaffold(
         topBar = {
@@ -142,6 +160,30 @@ fun FeedbackScreen(
                     .heightIn(min = 160.dp),
             )
 
+            // Screenshot uploads reuse the topic composers' attach-image flow (issue
+            // #429). Device-only — no "From your projects" leg here, since feedback
+            // wants screenshots, not project photos.
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                AttachImageButton(
+                    attachment = attachment,
+                    enabled = !sending,
+                    onImagePicked = onImagePicked,
+                )
+                Text(
+                    text = when (attachment) {
+                        is ImageAttachmentState.Error -> attachment.message
+                        is ImageAttachmentState.Uploading -> "Uploading screenshot…"
+                        else -> "Attach a screenshot"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (attachment is ImageAttachmentState.Error) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                )
+            }
+
             OutlinedTextField(
                 value = details,
                 onValueChange = { details = it },
@@ -173,7 +215,11 @@ fun FeedbackScreen(
 
             Button(
                 onClick = { onSend(title, description, details) },
-                enabled = !sending && title.isNotBlank() && description.isNotBlank(),
+                // Gated on the upload too: sending mid-upload would post the feedback
+                // without the screenshot, and the markdown would land in a draft that
+                // no longer exists (mirrors NewTopicScreen's Post gate).
+                enabled = !sending && title.isNotBlank() && description.isNotBlank() &&
+                    attachment !is ImageAttachmentState.Uploading,
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 if (sending) {
