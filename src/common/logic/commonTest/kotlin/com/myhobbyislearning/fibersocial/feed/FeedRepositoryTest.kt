@@ -467,6 +467,8 @@ class FeedRepositoryTest {
         }
         val item = repo.getMyPostsPage(twoGroups, page = 1).items.single()
         assertEquals("KAL Hub", item.groupName)
+        // The kept pin retains its sticky flag, so My Posts still renders its label.
+        assertTrue(item.sticky)
     }
 
     @Test
@@ -788,7 +790,37 @@ class FeedRepositoryTest {
             ]}""",
         )
 
-        assertFalse(repo.getYourPostsUnread())
+        assertFalse(repo.getYourPostsUnread(setOf(42L)))
+    }
+
+    @Test
+    fun `getYourPostsUnread ignores an injected pin so the dot can't be lit by a hidden topic`() = runTest {
+        // The pin (sticky, forum matches no group, never read) is dropped from the My
+        // Posts page (issue #458) — counting it here would leave the dot permanently
+        // stuck, since only reading a topic clears it and this one can't be opened.
+        val repo = drawerRepo(
+            topicsByForumId = emptyMap(),
+            postingJson = """{"topics":[
+                {"id":9,"title":"CFOM July 2026","forum_id":999,"sticky":true,
+                 "forum_posts_count":50,"last_read":0},
+                {"id":1,"title":"A","forum_id":42,"forum_posts_count":3,"last_read":3}
+            ]}""",
+        )
+
+        assertFalse(repo.getYourPostsUnread(setOf(42L)))
+    }
+
+    @Test
+    fun `getYourPostsUnread still counts an unread sticky topic in the user's own group`() = runTest {
+        val repo = drawerRepo(
+            topicsByForumId = emptyMap(),
+            postingJson = """{"topics":[
+                {"id":2,"title":"Pinned here","forum_id":42,"sticky":true,
+                 "forum_posts_count":5,"last_read":1}
+            ]}""",
+        )
+
+        assertTrue(repo.getYourPostsUnread(setOf(42L)))
     }
 
     // ---- the messages leg (issue #372) ----

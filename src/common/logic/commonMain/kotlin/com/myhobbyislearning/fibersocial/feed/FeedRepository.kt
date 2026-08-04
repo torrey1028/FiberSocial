@@ -133,7 +133,7 @@ class FeedRepository(private val apiClient: RavelryApiClient) {
         groupLastViewed: Map<Long, Long>,
         now: Long,
     ): DrawerUnreadResult = coroutineScope {
-        val posting = async { getYourPostsUnread() }
+        val posting = async { getYourPostsUnread(groups.map { it.forumId }.toSet()) }
         val messages = async { getMessagesUnreadOrNone() }
         val activity = async { getGroupActivity(groups) }
         val dots = resolveGroupDots(
@@ -157,9 +157,17 @@ class FeedRepository(private val apiClient: RavelryApiClient) {
      * "Posts" dot on its own, without the per-group fan-out. Exposed separately so
      * re-checking that dot after a read costs one request instead of a full
      * [getDrawerUnread] pass.
+     *
+     * Injected pins ([isInjectedPin], issue #458) are excluded: [getMyPostsPage] hides
+     * them, so counting them here would leave the dot lit by a topic the user cannot
+     * see — and, since only reading advances the marker, cannot ever clear.
+     *
+     * @param userForumIds Forum ids of the user's groups, for the pin exclusion.
      */
-    suspend fun getYourPostsUnread(): Boolean =
-        apiClient.getMyTopics(pageSize = UNREAD_SCAN_PAGE_SIZE).topics.any { it.hasUnread }
+    suspend fun getYourPostsUnread(userForumIds: Set<Long>): Boolean =
+        apiClient.getMyTopics(pageSize = UNREAD_SCAN_PAGE_SIZE).topics
+            .filterNot { it.isInjectedPin(userForumIds) }
+            .any { it.hasUnread }
 
     /**
      * Whether the message inbox holds anything unread — the "Messages" dot on its own,
@@ -302,9 +310,13 @@ class FeedRepository(private val apiClient: RavelryApiClient) {
      * `status=posting` filter — and that set contains Ravelry's main site forums (which
      * correspond to no group), so their pinned topics (confirmed on-device: the main
      * Crochet forum's monthly "CFOM" thread) leak in as sticky topics whose forum matches
-     * none of the user's groups. The cost is that the user's own post in a *pinned* topic
-     * of a since-left group is dropped too (indistinguishable from an injected pin);
-     * their posts in ordinary topics of since-left groups still show unattributed.
+     * none of the user's groups. The cost is that the user's own post in a *pinned*
+     * unattributable topic is dropped too (indistinguishable from an injected pin) —
+     * that covers pinned topics of since-left groups AND genuine participation in a
+     * pinned main-forum thread (the CFOM thread is itself a participation thread, so a
+     * user who posts their project there never sees it in My Posts, while their posts
+     * in ordinary main-forum topics still show unattributed). The list gives no
+     * "user posted here" signal to tell those apart without extra requests.
      *
      * @param groups The user's groups, for forum-to-group attribution.
      * @param page 1-based page number.
@@ -410,3 +422,15 @@ class FeedRepository(private val apiClient: RavelryApiClient) {
     }
 
 }
+
+/**
+ * The injected-pin signature (issue #458) on a raw `filtered_topics` LIST entry: sticky
+ * and attributable to none of the user's forums. Shared by every consumer of that list
+ * except the My Posts page itself — [FeedRepository.getMyPostsPage] reads the flag from
+ * the topic DETAIL it already fetches (the verified-populated source); the dot scan and
+ * the notification planner have only the list entry, whose [Topic.sticky] defaults false
+ * when absent, so if Ravelry omits it here the filter keeps the topic — failing toward
+ * the pre-#458 behavior rather than dropping anything real.
+ */
+internal fun Topic.isInjectedPin(userForumIds: Set<Long>): Boolean =
+    sticky && forumId !in userForumIds
