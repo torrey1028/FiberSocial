@@ -143,9 +143,9 @@ httpClient.submitForm(
 ```
 
 - `fetchAuthenticityToken()` scrapes `<meta name="authenticity-token">` (selector also accepts `meta#authenticity-token` / `meta[name=csrf-token]`) via Ksoup and **caches it in `cachedAuthenticityToken`** (session-stable, so repeated writes don't re-fetch the homepage).
-- **Ktor does NOT follow redirects for POST**, so the 3xx surfaces directly. Both success and expired-session look like a redirect — the `Location` path is the only discriminator. **TRAP:** match on the redirect's URL `encodedPath` (`Url(location).encodedPath` starting with `/login` or `/account`), NOT a raw substring of the whole Location string — else a real permalink containing "login"/"account" (a group literally named `login-fanatics`) false-positives as expiry. On a rejection, null out `cachedAuthenticityToken` so a retry re-scrapes a fresh one.
+- **Ktor does NOT follow redirects for POST**, so the 3xx surfaces directly. Both success and expired-session look like a redirect — the `Location` path is the only discriminator. **Use the shared `isLoginRedirect(response)` helper in `RavelryApiClient` — do NOT hand-inline the check** (`if (isLoginRedirect(response)) throw SessionExpiredException(...)`). The helper encodes the trap: it matches the redirect's URL `encodedPath` (starting with `/login` or `/account`), NOT a raw substring of the whole Location string — else a real permalink containing "login"/"account" (a group literally named `login-fanatics`) false-positives as expiry. A hand-inlined copy gets missed when the redirect shapes change. On a rejection, null out `cachedAuthenticityToken` so a retry re-scrapes a fresh one (only relevant for endpoints using the cached token).
 
-See `joinGroup`/`leaveGroup` (`membershipAction`), `deletePost`, and `setEventAttendance` for the three worked examples.
+See `joinGroup`/`leaveGroup` (`membershipAction`), `deletePost`, and `setEventAttendance` for the worked examples.
 
 ### GOTCHA: the session cookie does NOT auto-refresh (issue #61, open)
 
