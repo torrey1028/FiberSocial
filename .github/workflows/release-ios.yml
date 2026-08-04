@@ -3,8 +3,9 @@ name: Release iOS
 # See the twin file release-android.yml: this used to be the `ios-release`
 # job inside release.yml, uploading straight to App Store Connect on every
 # tag push with no automated tests and no QA gate. It's now split into a
-# build-rc job (test, archive, upload, add to a QA TestFlight group) and a
-# promote job gated on manual QA sign-off (#265).
+# build-rc job (test, archive, upload) and a promote job gated on manual QA
+# sign-off (#265). QA testers get each build via the Internal Testing
+# group's App Store Connect "Automatic distribution" — no CI step needed.
 on:
   push:
     tags: ["v[0-9]+.[0-9]+.[0-9]+"]
@@ -122,10 +123,6 @@ jobs:
             echo "::error::Missing required repo secret(s)/variable(s):$missing. Add them at Settings > Secrets and variables > Actions before pushing a release tag."
             exit 1
           fi
-          if [ -z "${{ vars.IOS_TESTFLIGHT_QA_GROUP_NAME }}" ]; then
-            echo "::error::Missing required repo variable IOS_TESTFLIGHT_QA_GROUP_NAME (the External Testing group in App Store Connect that QA testers belong to). Add it at Settings > Secrets and variables > Actions > Variables."
-            exit 1
-          fi
 
       # Same pattern as local.properties elsewhere: secrets go through env +
       # printf %s, never ${{ }} inside the script, so a secret containing
@@ -208,10 +205,10 @@ jobs:
 
       # destination: upload (Xcode 13+) makes -exportArchive upload straight
       # to App Store Connect in the same step — no separate altool/notarytool
-      # call needed. This already lands the build in TestFlight internal
-      # testing with no App Review needed; the fastlane step below is what
-      # additionally gets it in front of the QA testers specifically (the
-      # named internal group), not just anyone with a role on the account.
+      # call needed. QA testers already reach this build with no further CI
+      # step: the QA internal TestFlight group is configured in App Store
+      # Connect (Internal Testing group settings) to auto-distribute every
+      # new build, so there's nothing left to automate here.
       - name: Write exportOptions.plist
         env:
           APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
@@ -256,71 +253,22 @@ jobs:
             -authenticationKeyID "$IOS_ASC_KEY_ID" \
             -authenticationKeyIssuerID "$IOS_ASC_ISSUER_ID"
 
-      # Adds this exact build to the QA internal TestFlight group so QA
-      # testers get it without anyone touching App Store Connect by hand.
-      # Internal (not external): QA is an internal team, and internal groups
-      # skip Apple's one-time Beta App Review + Beta App Description
-      # requirement that external groups need -- external distribution
-      # failed a real dry run with "Beta App Description is missing," which
-      # is App Store Connect metadata, not something CI can satisfy.
-      # `distribute_only` skips re-uploading (the build is already there from
-      # the export step above) and just manages the beta-group relationship.
-      # `fastlane run pilot` needs no Fastfile for a one-off CLI invocation.
-      # `app_platform` is required in non-interactive CI: without it, pilot's
-      # build-processing check tries to prompt "enter the app's platform
-      # (appletvos, ios, osx, xros)" on stdin and crashes with
-      # FastlaneCrash: "Could not retrieve response as fastlane runs in
-      # non-interactive mode" instead of just using the one obvious answer.
-      - name: Install fastlane
-        run: gem install fastlane --no-document
-
-      - name: Add build to QA internal TestFlight group
-        env:
-          IOS_ASC_API_KEY_BASE64: ${{ secrets.IOS_ASC_API_KEY_BASE64 }}
-          IOS_ASC_KEY_ID: ${{ secrets.IOS_ASC_KEY_ID }}
-          IOS_ASC_ISSUER_ID: ${{ secrets.IOS_ASC_ISSUER_ID }}
-          # Same reasoning as "Write Config.local.xcconfig": route through env +
-          # a shell variable rather than ${{ }} inside the script, so a value
-          # containing shell metacharacters can't inject commands here.
-          IOS_TESTFLIGHT_QA_GROUP_NAME: ${{ vars.IOS_TESTFLIGHT_QA_GROUP_NAME }}
-          BUILD_NUMBER: ${{ steps.version.outputs.build_number }}
-        run: |
-          python3 -c '
-          import base64, json, os
-          key = base64.b64decode(os.environ["IOS_ASC_API_KEY_BASE64"]).decode()
-          json.dump({
-              "key_id": os.environ["IOS_ASC_KEY_ID"],
-              "issuer_id": os.environ["IOS_ASC_ISSUER_ID"],
-              "key": key,
-              "in_house": False,
-          }, open(os.environ["RUNNER_TEMP"] + "/asc_api_key.json", "w"))
-          '
-          fastlane run pilot \
-            api_key_path:"$RUNNER_TEMP/asc_api_key.json" \
-            app_identifier:"com.myhobbyislearning.fibersocial" \
-            app_platform:"ios" \
-            distribute_only:true \
-            distribute_external:false \
-            groups:"$IOS_TESTFLIGHT_QA_GROUP_NAME" \
-            build_number:"$BUILD_NUMBER"
-
       # The `ios-release` environment (configured with required reviewers in
       # Settings > Environments) is what actually pauses the `promote` job
       # below — this summary just tells the approving reviewer what to check
       # before they click Approve.
       - name: Write QA summary
         env:
-          # Same reasoning as "Add build to QA TestFlight group": route through
-          # env rather than ${{ }} inside the script, so a value containing
-          # shell metacharacters can't inject commands into this step.
+          # Same reasoning as "Write Config.local.xcconfig": route through env
+          # rather than ${{ }} inside the script, so a value containing shell
+          # metacharacters can't inject commands into this step.
           BUILD_NUMBER: ${{ steps.version.outputs.build_number }}
           MARKETING_VERSION: ${{ steps.version.outputs.marketing_version }}
-          IOS_TESTFLIGHT_QA_GROUP_NAME: ${{ vars.IOS_TESTFLIGHT_QA_GROUP_NAME }}
         run: |
           {
             echo "## Release candidate build $BUILD_NUMBER ($MARKETING_VERSION) is ready for QA"
             echo ""
-            echo "- Install via TestFlight — QA testers were just added to the **$IOS_TESTFLIGHT_QA_GROUP_NAME** internal group."
+            echo "- Install via TestFlight — the QA internal group is configured in App Store Connect to auto-distribute every new build, so no manual step is needed to get it there."
             echo "- Run through [docs/ios-device-checklist.md]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/blob/main/docs/ios-device-checklist.md)."
             echo "- Once QA passes, approve the \`ios-release\` environment on the \`promote\` job of this run. Note: that job cannot submit to the App Store for you (Apple review can't be API-triggered) — it's a reminder gate, not an automatic publish."
           } >> "$GITHUB_STEP_SUMMARY"

@@ -527,30 +527,22 @@ class TopicDetailViewModel(
      * email report always available alongside or instead of it).
      */
     fun openReportDialog(post: Post) {
-        _reportState.value = ReportState.LoadingForm(post)
-        val generation = topicGeneration
+        // runPostOp's topic-generation guard stops a topic switch mid-fetch from
+        // resurrecting a dialog for a post that's no longer on screen — and separately,
+        // isStale stops a dismiss (or opening the dialog again for a different post)
+        // mid-fetch from resurrecting/clobbering it, even though the topic hasn't changed.
         val requestGeneration = ++reportRequestGeneration
-        scope.launch {
-            val result = try {
-                ReportState.Ready(post, apiClient.getFlagPostForm(post.id))
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: SessionExpiredException) {
-                println("FiberSocial: TopicDetailViewModel.openReportDialog session expired")
-                sessionExpirySignal.signal()
-                ReportState.Idle
-            } catch (e: Exception) {
-                println("FiberSocial: TopicDetailViewModel.openReportDialog failed: ${e.message}")
-                ReportState.LoadError(post, e.message ?: "Couldn't load the report form")
-            }
-            // A topic switch mid-fetch must not resurrect a dialog for a post that's no
-            // longer on screen (same generation guard as runPostOp) — and separately, a
-            // dismiss (or opening the dialog again for a different post) mid-fetch must
-            // not resurrect/clobber it either, even though the topic hasn't changed.
-            if (generation == topicGeneration && requestGeneration == reportRequestGeneration) {
-                _reportState.value = result
-            }
-        }
+        runPostOp(
+            logLabel = "openReportDialog",
+            onInFlight = { _reportState.value = ReportState.LoadingForm(post) },
+            operation = { apiClient.getFlagPostForm(post.id) },
+            onSuccess = { form -> _reportState.value = ReportState.Ready(post, form) },
+            onSessionExpired = { _reportState.value = ReportState.Idle },
+            onError = { message ->
+                _reportState.value = ReportState.LoadError(post, message ?: "Couldn't load the report form")
+            },
+            isStale = { requestGeneration != reportRequestGeneration },
+        )
     }
 
     /**
@@ -561,33 +553,27 @@ class TopicDetailViewModel(
     fun submitReport(reasonId: String, escalate: Boolean) {
         val ready = _reportState.value as? ReportState.Ready ?: return
         if (ready.submitting) return
-        _reportState.value = ready.copy(submitting = true, error = null)
-        val generation = topicGeneration
         val requestGeneration = reportRequestGeneration
-        scope.launch {
-            val result = try {
-                when (val flagResult = apiClient.flagPost(ready.form, reasonId, escalate)) {
+        runPostOp(
+            logLabel = "submitReport",
+            onInFlight = { _reportState.value = ready.copy(submitting = true, error = null) },
+            operation = { apiClient.flagPost(ready.form, reasonId, escalate) },
+            onSuccess = { flagResult ->
+                _reportState.value = when (flagResult) {
                     is FlagPostResult.Success -> ReportState.Sent
                     is FlagPostResult.ValidationFailed ->
                         ready.copy(submitting = false, error = flagResult.errors.joinToString("; "))
                 }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: SessionExpiredException) {
-                println("FiberSocial: TopicDetailViewModel.submitReport session expired")
-                sessionExpirySignal.signal()
-                // error = null: session expiry isn't a validation failure, so `ready`'s
-                // already-cleared error (captured above) must not reappear here — every
-                // other branch sets its own fresh error instead of falling back to it.
-                ready.copy(submitting = false, error = null)
-            } catch (e: Exception) {
-                println("FiberSocial: TopicDetailViewModel.submitReport failed: ${e.message}")
-                ready.copy(submitting = false, error = e.message ?: "Failed to report post")
-            }
-            if (generation == topicGeneration && requestGeneration == reportRequestGeneration) {
-                _reportState.value = result
-            }
-        }
+            },
+            // error = null: session expiry isn't a validation failure, so `ready`'s
+            // already-cleared error (captured above) must not reappear here — every
+            // other branch sets its own fresh error instead of falling back to it.
+            onSessionExpired = { _reportState.value = ready.copy(submitting = false, error = null) },
+            onError = { message ->
+                _reportState.value = ready.copy(submitting = false, error = message ?: "Failed to report post")
+            },
+            isStale = { requestGeneration != reportRequestGeneration },
+        )
     }
 
     /** Closes the report dialog. No-op while a submission is in flight. */
@@ -662,6 +648,15 @@ class TopicDetailViewModel(
      * neither [onSuccess] nor [onError]/[onSessionExpired] touches state in that case,
      * matching the original in-flight-outlives-its-topic contract. Session expiry always
      * signals [sessionExpired] regardless of generation.
+     *
+     * [isStale] is an extra per-operation staleness check, ANDed with the topic-generation
+     * guard: the report dialog's open/dismiss lifecycle doesn't advance the topic, so
+     * [openReportDialog]/[submitReport] thread their own [reportRequestGeneration]
+     * comparison through here. Defaults to never-stale for the plain post operations.
+     *
+     * Cancellation is rethrown, not treated as a failure: without the [CancellationException]
+     * rethrow, tearing down [scope] mid-flight would surface a bogus [onError] instead of
+     * cancelling quietly.
      */
     private inline fun <R> runPostOp(
         logLabel: String,
@@ -670,21 +665,24 @@ class TopicDetailViewModel(
         crossinline onSuccess: (R) -> Unit,
         crossinline onSessionExpired: () -> Unit,
         crossinline onError: (String?) -> Unit,
+        crossinline isStale: () -> Boolean = { false },
     ) {
         onInFlight()
         val generation = topicGeneration
         scope.launch {
             try {
                 val result = operation()
-                if (generation != topicGeneration) return@launch
+                if (generation != topicGeneration || isStale()) return@launch
                 onSuccess(result)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: SessionExpiredException) {
                 println("FiberSocial: TopicDetailViewModel.$logLabel session expired")
-                if (generation == topicGeneration) onSessionExpired()
+                if (generation == topicGeneration && !isStale()) onSessionExpired()
                 sessionExpirySignal.signal()
             } catch (e: Exception) {
                 println("FiberSocial: TopicDetailViewModel.$logLabel error: ${e.message}")
-                if (generation == topicGeneration) onError(e.message)
+                if (generation == topicGeneration && !isStale()) onError(e.message)
             }
         }
     }

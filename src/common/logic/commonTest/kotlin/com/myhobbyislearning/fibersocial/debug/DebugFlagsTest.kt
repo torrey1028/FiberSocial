@@ -48,6 +48,21 @@ class DebugFlagsTest {
     }
 
     @Test
+    fun `turning cookie logging off scrubs the debug log buffer`() {
+        // Lines buffered while the flag was on contain the raw cookie value; the panel
+        // promises that switching the flag off contains the exposure, so a later
+        // "share log" must not export what was captured earlier in the session.
+        DebugLog.clear()
+        DebugFlags.initDebugBuild(true)
+        DebugFlags.setSessionCookieLogging(true)
+        DebugLog.log("cookie _ravelry_session=live-credential")
+
+        DebugFlags.setSessionCookieLogging(false)
+
+        assertEquals("", DebugLog.dump())
+    }
+
+    @Test
     fun `a release build refuses to enable cookie logging`() {
         DebugFlags.initDebugBuild(false)
 

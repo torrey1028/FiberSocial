@@ -14,8 +14,16 @@ struct ComposeView: UIViewControllerRepresentable {
 struct ContentView: View {
     var body: some View {
         ComposeView()
-            // Compose applies its own IME insets; without this the keyboard would
-            // squash the Compose hierarchy a second time.
-            .ignoresSafeArea(.keyboard)
+            // Compose owns every inset, so the host must hand it the full screen —
+            // the iOS counterpart of MainActivity's enableEdgeToEdge(). Material3's
+            // Scaffold/TopAppBar pad for the status bar and home indicator
+            // themselves, and Compose applies its own IME insets. Respecting the
+            // container safe area here made SwiftUI push the Compose view below
+            // the status bar while the TopAppBar padded for it again, stacking a
+            // blank status-bar-sized band above the top bar (issue #433). The
+            // full ignore also covers the keyboard region, which previously had
+            // to be ignored on its own to stop the keyboard squashing the
+            // hierarchy a second time.
+            .ignoresSafeArea()
     }
 }

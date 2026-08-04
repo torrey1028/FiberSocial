@@ -110,6 +110,35 @@ class RavelryApiClientTest {
     }
 
     @Test
+    fun `getUserGroups throws SessionExpiredException when redirected to the login page`() = runTest {
+        // An expired session cookie doesn't 401 on www.ravelry.com — it 302s to the login
+        // page, which Ktor follows to a 200 with zero group links. Returning emptyList()
+        // here would report a long-time member as group-less, and the feed trusts
+        // groups.isEmpty() to mean exactly that (it shows the no-groups onboarding, #431).
+        val client = htmlApiClient(MockEngine { request ->
+            if (request.url.encodedPath.startsWith("/people/")) {
+                respond("", HttpStatusCode.Found,
+                    headersOf(HttpHeaders.Location, "https://www.ravelry.com/account/login"))
+            } else {
+                respond("<html><body>please log in</body></html>", HttpStatusCode.OK,
+                    headersOf("Content-Type", ContentType.Text.Html.toString()))
+            }
+        })
+        assertFailsWith<SessionExpiredException> { client.getUserGroups("yarnie") }
+    }
+
+    @Test
+    fun `getUserGroups throws ForbiddenException on 403 rather than bouncing to login`() = runTest {
+        val client = htmlApiClient(MockEngine { _ ->
+            respond("", HttpStatusCode.Forbidden)
+        })
+        val e = assertFailsWith<ForbiddenException> { client.getUserGroups("yarnie") }
+        val message = e.message ?: ""
+        assertFalse(message.contains("403"))
+        assertFalse(message.contains("401"))
+    }
+
+    @Test
     fun `getUserGroups returns empty list when memberships page has no group links`() = runTest {
         val client = routingApiClient { path ->
             when {
@@ -1219,6 +1248,34 @@ class RavelryApiClientTest {
     }
 
     @Test
+    fun `setEventAttendance throws SessionExpiredException when redirected to login`() = runTest {
+        // Same expired-cookie shape as deletePost/membershipAction. Without the shared
+        // isLoginRedirect check this read as a plain `false`, the caller's
+        // SessionExpiredException branch was dead code, and the RSVP toggle silently
+        // snapped back with no re-login prompt.
+        val engine = MockEngine {
+            respond("", HttpStatusCode.Found,
+                headersOf(HttpHeaders.Location, "https://www.ravelry.com/account/login"))
+        }
+        assertFailsWith<SessionExpiredException> {
+            htmlApiClient(engine).setEventAttendance("cozy-meetup", attending = true, csrfToken = "t")
+        }
+    }
+
+    @Test
+    fun `getStatesForCountry throws SessionExpiredException when redirected to login`() = runTest {
+        // Without the check the login page's body fed parseStateOptions and rendered
+        // as "this country has no states" mid-way through the create-event form.
+        val engine = MockEngine {
+            respond("", HttpStatusCode.Found,
+                headersOf(HttpHeaders.Location, "https://www.ravelry.com/login"))
+        }
+        assertFailsWith<SessionExpiredException> {
+            htmlApiClient(engine).getStatesForCountry(229L, "FORM_TOKEN")
+        }
+    }
+
+    @Test
     fun `getTopicDetail parses the read marker from last_read`() = runTest {
         // Issue #185: the detail's last_read drives the feed's unread count.
         val client = routingApiClient { topicDetailJson(100L, postsCount = 8, lastRead = 3) }
@@ -1521,9 +1578,9 @@ class RavelryApiClientTest {
 
     @Test
     fun `deletePost throws SessionExpiredException when the redirect names account but not login`() = runTest {
-        // Covers the other half of the redirectPath.startsWith("/login") ||
-        // startsWith("/account") check — Ravelry's own account-locked/logged-out
-        // redirects don't all say "login".
+        // Covers the other half of the shared isLoginRedirect helper's
+        // startsWith("/login") || startsWith("/account") check — Ravelry's own
+        // account-locked/logged-out redirects don't all say "login".
         val engine = MockEngine { request ->
             if (request.method.value == "POST") {
                 respond("", HttpStatusCode.Found,
@@ -1936,8 +1993,9 @@ class RavelryApiClientTest {
     @Test
     fun `flagPost throws SessionExpiredException when the redirect is account slash login`() = runTest {
         // Mirrors deletePost's equivalent test: this and the plain "/login" case above
-        // are the two independent sides of flagPost's own
-        // startsWith("/login") || startsWith("/account") check.
+        // are the two sides of the shared isLoginRedirect helper. Per-site tests are
+        // kept (rather than testing the helper once) so each call site's WIRING of the
+        // helper stays covered — that's what can regress now, not the check itself.
         val engine = MockEngine {
             respond("", HttpStatusCode.Found, headersOf(HttpHeaders.Location, "https://www.ravelry.com/account/login"))
         }
