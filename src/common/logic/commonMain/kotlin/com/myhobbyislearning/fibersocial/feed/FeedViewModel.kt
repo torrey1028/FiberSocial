@@ -427,7 +427,9 @@ class FeedViewModel(
         scope.launch {
             try {
                 _drawerUnread.value = _drawerUnread.value.copy(
-                    yourPostsHasUnread = repository.getYourPostsUnread(),
+                    yourPostsHasUnread = repository.getYourPostsUnread(
+                        current.groups.map { it.forumId }.toSet(),
+                    ),
                 )
                 println(
                     "FiberSocial: your-posts dot after reading -> " +

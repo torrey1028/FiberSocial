@@ -1,5 +1,6 @@
 package com.myhobbyislearning.fibersocial.notifications
 
+import com.myhobbyislearning.fibersocial.feed.isInjectedPin
 import com.myhobbyislearning.fibersocial.feed.models.Topic
 import kotlin.time.Duration.Companion.days
 import kotlinx.serialization.Serializable
@@ -82,11 +83,16 @@ object MyPostsNotificationPlanner {
         nowMs: Long,
         mutedTopics: Set<Long> = emptySet(),
     ): MyPostsPlan {
+        // Injected forum pins (issue #458) never belong here: My Posts hides them, so a
+        // "new replies" notification for one would deep-link to a topic that isn't on
+        // the page (a dead tap), for a thread the user never posted in. Filtered before
+        // seeding too, so a pin never enters knownTopics at all.
+        val ownTopics = myTopics.filterNot { it.isInjectedPin(groupNamesByForumId.keys) }
         val known = knownTopics ?: emptyMap()
         val notifications = if (known.isEmpty()) {
             emptyList()
         } else {
-            myTopics.mapNotNull { topic ->
+            ownTopics.mapNotNull { topic ->
                 if (topic.id in mutedTopics) return@mapNotNull null
                 val prior = known[topic.id] ?: return@mapNotNull null
                 val baseline = maxOf(prior.postCount, topic.lastRead)
@@ -107,7 +113,7 @@ object MyPostsNotificationPlanner {
         // Every currently-seen topic gets its count and last-seen stamp refreshed; one
         // that stays off the first page for the whole retention window is forgotten and
         // re-seeds silently on return.
-        val newKnownTopics = retained + myTopics.associate { topic ->
+        val newKnownTopics = retained + ownTopics.associate { topic ->
             topic.id to KnownTopicActivity(postCount = topic.postsCount, lastSeenMs = nowMs)
         }
         return MyPostsPlan(notifications = notifications, newKnownTopics = newKnownTopics)

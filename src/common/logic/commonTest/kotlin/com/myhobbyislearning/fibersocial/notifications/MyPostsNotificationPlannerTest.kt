@@ -57,6 +57,46 @@ class MyPostsNotificationPlannerTest {
     }
 
     @Test
+    fun `an injected pin with growth never notifies`() {
+        // Sticky + attributable to none of the user's forums = the issue #458 injected
+        // pin. My Posts hides it, so a "new replies" notification would dead-end on tap.
+        val pin = topic(9L, postsCount = 50, forumId = 999L).copy(sticky = true)
+        val plan = MyPostsNotificationPlanner.plan(
+            knownTopics = mapOf(9L to KnownTopicActivity(postCount = 40, lastSeenMs = NOW_MS - 1)),
+            myTopics = listOf(pin),
+            groupNamesByForumId = GROUPS,
+            nowMs = NOW_MS,
+        )
+        assertTrue(plan.notifications.isEmpty())
+    }
+
+    @Test
+    fun `an injected pin is never seeded into the known map`() {
+        // A pin that was never known must not enter knownTopics at all — otherwise a
+        // sticky flag Ravelry later drops would fire the accrued backlog as "new".
+        val pin = topic(9L, postsCount = 50, forumId = 999L).copy(sticky = true)
+        val plan = MyPostsNotificationPlanner.plan(
+            knownTopics = null,
+            myTopics = listOf(pin, topic(1L, postsCount = 7)),
+            groupNamesByForumId = GROUPS,
+            nowMs = NOW_MS,
+        )
+        assertTrue(9L !in plan.newKnownTopics)
+        assertTrue(1L in plan.newKnownTopics)
+    }
+
+    @Test
+    fun `a sticky topic in the user's own forum still notifies`() {
+        val plan = MyPostsNotificationPlanner.plan(
+            knownTopics = mapOf(1L to KnownTopicActivity(postCount = 3, lastSeenMs = NOW_MS - 1)),
+            myTopics = listOf(topic(1L, postsCount = 6, lastRead = 3).copy(sticky = true)),
+            groupNamesByForumId = GROUPS,
+            nowMs = NOW_MS,
+        )
+        assertEquals(1, plan.notifications.size)
+    }
+
+    @Test
     fun `already-read growth stays quiet`() {
         // The user's own reply grows the count but advances their read marker.
         val plan = MyPostsNotificationPlanner.plan(
