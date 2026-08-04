@@ -1,5 +1,6 @@
 package com.myhobbyislearning.fibersocial.auth
 
+import io.ktor.http.HttpStatusCode
 import io.ktor.serialization.JsonConvertException
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -42,6 +43,37 @@ class RavelryOAuthClientTest {
         val client = mockOAuthClient(TOKEN_JSON_NO_REFRESH)
         val token = client.exchangeAuthCode("code", "verifier", "https://redirect")
         assertEquals("", token.refreshToken)
+    }
+
+    @Test
+    fun `an oauth rejection surfaces its status and error body rather than a decode error`() = runTest {
+        // Without the status check, a 401 {"error":"invalid_client"} sailed into the
+        // JSON decoder and surfaced as "Field 'access_token' is required" — hiding the
+        // status and OAuth error code, the two things the exported login trace needs.
+        val client = RavelryOAuthClient(
+            mockHttpClient("""{"error":"invalid_client"}""", HttpStatusCode.Unauthorized),
+            "client-id",
+            "client-secret",
+        )
+
+        val e = assertFailsWith<IllegalStateException> {
+            client.exchangeAuthCode("code", "verifier", "https://redirect")
+        }
+        assertTrue(e.message!!.contains("401"), e.message)
+        assertTrue(e.message!!.contains("invalid_client"), e.message)
+    }
+
+    @Test
+    fun `a refresh rejection surfaces its status the same way`() = runTest {
+        val client = RavelryOAuthClient(
+            mockHttpClient("""{"error":"invalid_grant"}""", HttpStatusCode.BadRequest),
+            "client-id",
+            "client-secret",
+        )
+
+        val e = assertFailsWith<IllegalStateException> { client.refreshAccessToken("stale") }
+        assertTrue(e.message!!.contains("400"), e.message)
+        assertTrue(e.message!!.contains("invalid_grant"), e.message)
     }
 
     @Test

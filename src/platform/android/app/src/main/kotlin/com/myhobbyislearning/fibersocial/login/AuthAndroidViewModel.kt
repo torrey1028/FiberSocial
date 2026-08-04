@@ -7,6 +7,7 @@ import com.myhobbyislearning.fibersocial.BuildConfig
 import com.myhobbyislearning.fibersocial.auth.AuthViewModel
 import com.myhobbyislearning.fibersocial.auth.KeyValueTokenStorage
 import com.myhobbyislearning.fibersocial.auth.RavelryAuthManager
+import com.myhobbyislearning.fibersocial.debug.DebugLog
 import com.myhobbyislearning.fibersocial.net.ravelryAuthRepository
 import com.myhobbyislearning.fibersocial.net.ravelryHttpClient
 import com.myhobbyislearning.fibersocial.storage.AUTH_PREFS_NAME
@@ -35,8 +36,10 @@ class AuthAndroidViewModel(app: Application) : AndroidViewModel(app) {
             "RAVELRY_CLIENT_SECRET".takeIf { BuildConfig.RAVELRY_CLIENT_SECRET.isBlank() },
         )
         if (missing.isNotEmpty()) {
-            println(
-                "FiberSocial: WARNING — ${missing.joinToString(" and ")} " +
+            // Through DebugLog, not bare println, so the exported log names the cause of
+            // the token-exchange failure it will otherwise only show the symptom of.
+            DebugLog.log(
+                "WARNING — ${missing.joinToString(" and ")} " +
                     "${if (missing.size == 1) "is" else "are"} blank. OAuth login will " +
                     "fail with invalid_client. Set ravelry.client_id/ravelry.client_secret " +
                     "in local.properties (or CI secrets) and rebuild with ./gradlew clean."
@@ -51,7 +54,7 @@ class AuthAndroidViewModel(app: Application) : AndroidViewModel(app) {
         // Reject a redirect whose state doesn't match the one we issued before exchanging
         // the code — login-CSRF defense (issue #149).
         if (!authManager.validateState(state)) {
-            println("FiberSocial: OAuth state mismatch — rejecting login (possible CSRF)")
+            DebugLog.log("OAuth state mismatch — rejecting login (possible CSRF)")
             auth.failLogin("Login could not be verified. Please try again.")
             return
         }

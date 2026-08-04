@@ -77,6 +77,7 @@ import com.myhobbyislearning.fibersocial.feed.PostBody
 import com.myhobbyislearning.fibersocial.feed.html.HtmlPostParser
 import com.myhobbyislearning.fibersocial.feed.html.MarkdownPostParser
 import com.myhobbyislearning.fibersocial.feed.relativeTime
+import com.myhobbyislearning.fibersocial.moderation.containsUsername
 import com.myhobbyislearning.fibersocial.ui.Avatar
 import com.myhobbyislearning.fibersocial.ui.DeleteConfirmDialog
 import com.myhobbyislearning.fibersocial.ui.MessageComposer
@@ -359,7 +360,7 @@ private fun CommentsSection(
             // Blocked authors' comments are filtered out here too — fully hidden, not
             // greyed or collapsed, same as feed cards/topic replies/messages (issue #410).
             val visibleComments = commentsState.comments.filterNot { comment ->
-                blockedUsernames.any { it.equals(comment.user?.username, ignoreCase = true) }
+                blockedUsernames.containsUsername(comment.user?.username)
             }
             if (visibleComments.isEmpty()) {
                 Text(

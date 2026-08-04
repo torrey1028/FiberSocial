@@ -3,6 +3,7 @@ package com.myhobbyislearning.fibersocial.app
 import com.myhobbyislearning.fibersocial.auth.AuthViewModel
 import com.myhobbyislearning.fibersocial.auth.KeyValueTokenStorage
 import com.myhobbyislearning.fibersocial.auth.RavelryAuthManager
+import com.myhobbyislearning.fibersocial.debug.DebugLog
 import com.myhobbyislearning.fibersocial.events.EventDetailViewModel
 import com.myhobbyislearning.fibersocial.events.EventsViewModel
 import com.myhobbyislearning.fibersocial.events.NewEventViewModel
@@ -63,8 +64,10 @@ class IosAuthModel(scope: CoroutineScope) {
             "RAVELRY_CLIENT_SECRET".takeIf { ravelryClientSecret().isBlank() },
         )
         if (missing.isNotEmpty()) {
-            println(
-                "FiberSocial: WARNING — ${missing.joinToString(" and ")} " +
+            // Through DebugLog, not bare println: on an OTA build this warning names the
+            // actual cause of the token-exchange failure the tester will export.
+            DebugLog.log(
+                "WARNING — ${missing.joinToString(" and ")} " +
                     "${if (missing.size == 1) "is" else "are"} blank. OAuth login will " +
                     "fail with invalid_client. Set them in Config.local.xcconfig " +
                     "(see src/platform/ios/README.md) and rebuild."
@@ -79,7 +82,7 @@ class IosAuthModel(scope: CoroutineScope) {
         // Reject a redirect whose state doesn't match the one we issued before exchanging
         // the code — login-CSRF defense (issue #149), same as Android.
         if (!authManager.validateState(state)) {
-            println("FiberSocial: OAuth state mismatch — rejecting login (possible CSRF)")
+            DebugLog.log("OAuth state mismatch — rejecting login (possible CSRF)")
             auth.failLogin("Login could not be verified. Please try again.")
             return
         }
