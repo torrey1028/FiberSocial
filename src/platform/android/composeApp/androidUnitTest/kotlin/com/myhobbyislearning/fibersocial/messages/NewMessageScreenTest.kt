@@ -1,7 +1,12 @@
 package com.myhobbyislearning.fibersocial.messages
 
 import androidx.activity.ComponentActivity
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.test.assertHeightIsAtLeast
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsDisplayed
@@ -12,6 +17,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import com.myhobbyislearning.fibersocial.feed.models.UserSearchResult
 import org.junit.Assert.assertEquals
@@ -329,9 +335,50 @@ class NewMessageScreenTest {
         )
         compose.onNodeWithTag("MessageBodyField").performTextInput("Interested?")
 
+        // The form is scrollable (issue #432) and typing auto-scrolled the body field into
+        // view, so scroll each assert target back into view first.
+        compose.onNodeWithTag("SendMessageError").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("This person isn't accepting messages.")
+            .performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Interested?").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun `an error arriving after typing scrolls itself into view`() {
+        var sendState by mutableStateOf<SendMessageState>(SendMessageState.Idle)
+        compose.setContent {
+            NewMessageScreen(
+                sendState = sendState,
+                searchState = RESULTS,
+                onQueryChange = {},
+                onSend = { _, _, _ -> },
+                onSent = {},
+                onBack = {},
+            )
+        }
+        compose.onNodeWithTag("MessageBodyField").performTextInput("Interested?")
+        compose.runOnIdle {
+            sendState = SendMessageState.Error(
+                "This person isn't accepting messages.",
+                messagingBlocked = true,
+            )
+        }
+        compose.waitForIdle()
+
+        // No performScrollTo: typing auto-scrolled down to the body cursor, and the
+        // error's arrival must scroll the form back to the top — a failed send must
+        // never look like the Send button did nothing.
         compose.onNodeWithTag("SendMessageError").assertIsDisplayed()
-        compose.onNodeWithText("This person isn't accepting messages.").assertIsDisplayed()
-        compose.onNodeWithText("Interested?").assertIsDisplayed()
+    }
+
+    @Test
+    fun `the body field keeps its floor inside the scrollable form`() {
+        setScreen()
+
+        // 200.dp mirrors BODY_MIN_HEIGHT (issue #432): inside the scrollable column an
+        // empty field would otherwise collapse to one-line intrinsic height and the
+        // layout below would ride up — the original bug, on every screen size.
+        compose.onNodeWithTag("MessageBodyField").assertHeightIsAtLeast(200.dp)
     }
 
     @Test
