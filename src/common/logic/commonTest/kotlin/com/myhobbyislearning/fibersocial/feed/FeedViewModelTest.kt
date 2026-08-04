@@ -514,6 +514,123 @@ class FeedViewModelTest {
         }
 
     @Test
+    fun `selectMyPosts records the destination even when the feed is not loaded`() =
+        runTest(UnconfinedTestDispatcher()) {
+            // The drawer tap has already dismissed the Messages overlay at the screen
+            // level; if the feed underneath is Error (or Refreshing) the switch no-ops,
+            // but the store must not keep saying Messages.
+            val destinationStore = FakeLastDestinationStore(LastDestination.Messages)
+            val vm = FeedViewModel(
+                myPostsRepo(),
+                this,
+                FakeGroupOrderStore(),
+                FakeGroupLastViewedStore(),
+                destinationStore,
+            )
+            vm.forceError()
+            vm.selectMyPosts()
+            awaitChildren(coroutineContext[Job]!!)
+            assertEquals(LastDestination.MyPosts, destinationStore.stored)
+        }
+
+    @Test
+    fun `selectGroup records the destination even when the feed is not loaded`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val destinationStore = FakeLastDestinationStore(LastDestination.Messages)
+            val vm = FeedViewModel(
+                twoGroupRepo(),
+                this,
+                FakeGroupOrderStore(),
+                FakeGroupLastViewedStore(),
+                destinationStore,
+            )
+            vm.forceError()
+            vm.selectGroup(Group(id = 11L, name = "Sock Society", permalink = "sock", forumId = 43L))
+            awaitChildren(coroutineContext[Job]!!)
+            assertEquals(LastDestination.Group(11L), destinationStore.stored)
+        }
+
+    @Test
+    fun `load with restored My Posts and no groups falls back to the group feed`() =
+        runTest(UnconfinedTestDispatcher()) {
+            // Issue #456: a zero-groups user who once tapped Posts must not relaunch into
+            // the blank My Posts page forever — the restore falls back to the group feed,
+            // where the no-groups onboarding (#431) can show.
+            val vm = FeedViewModel(
+                FeedRepository(routingApiClient { path ->
+                    when {
+                        path.contains("/current_user") -> CURRENT_USER_JSON
+                        path.contains("memberships") -> "<html><body>no groups</body></html>"
+                        else -> error("Unexpected: $path")
+                    }
+                }),
+                this,
+                FakeGroupOrderStore(),
+                FakeGroupLastViewedStore(),
+                FakeLastDestinationStore(LastDestination.MyPosts),
+            )
+            vm.load()
+            awaitChildren(coroutineContext[Job]!!)
+            val state = assertIs<FeedState.Loaded>(vm.state.value)
+            assertFalse(state.myPosts)
+            assertTrue(state.groups.isEmpty())
+        }
+
+    @Test
+    fun `load with a restored Messages destination does not mark the default group viewed`() =
+        runTest(UnconfinedTestDispatcher()) {
+            // The default group loads hidden UNDER the restored Messages overlay — marking
+            // it viewed would clear its activity dot for topics the user never saw.
+            val lastViewed = FakeGroupLastViewedStore()
+            val vm = FeedViewModel(
+                twoGroupRepo(),
+                this,
+                FakeGroupOrderStore(listOf(11L, 10L)),
+                lastViewed,
+                FakeLastDestinationStore(LastDestination.Messages),
+            )
+            vm.load()
+            awaitChildren(coroutineContext[Job]!!)
+            assertIs<FeedState.Loaded>(vm.state.value)
+            assertTrue(lastViewed.stored.isNullOrEmpty())
+        }
+
+    @Test
+    fun `a failed first load still consumes the restore`() =
+        runTest(UnconfinedTestDispatcher()) {
+            // Pins consumeRestoredDestination's documented invariant: the latch is set
+            // before the read, so Retry after an error-first-launch keeps the default
+            // fallback instead of re-applying a stale persisted destination.
+            var fail = true
+            val vm = FeedViewModel(
+                FeedRepository(routingApiClient { path ->
+                    if (fail) error("boom")
+                    when {
+                        path.contains("/current_user") -> CURRENT_USER_JSON
+                        path.contains("memberships") -> MEMBERSHIPS_HTML
+                        path.contains("/groups/search") -> GROUPS_JSON
+                        path.contains("/forums/") -> topicsJson(100L)
+                        path.contains("/topics/") -> topicDetailJson(100L)
+                        else -> error("Unexpected: $path")
+                    }
+                }),
+                this,
+                FakeGroupOrderStore(),
+                FakeGroupLastViewedStore(),
+                FakeLastDestinationStore(LastDestination.MyPosts),
+            )
+            vm.load()
+            awaitChildren(coroutineContext[Job]!!)
+            assertIs<FeedState.Error>(vm.state.value)
+
+            fail = false
+            vm.load()
+            awaitChildren(coroutineContext[Job]!!)
+            val state = assertIs<FeedState.Loaded>(vm.state.value)
+            assertFalse(state.myPosts)
+        }
+
+    @Test
     fun `forceError drops the feed into the Error state`() = runTest(UnconfinedTestDispatcher()) {
         val vm = FeedViewModel(successRepo(), this, FakeGroupOrderStore(), FakeGroupLastViewedStore())
         vm.forceError()
