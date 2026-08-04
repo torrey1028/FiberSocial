@@ -1466,6 +1466,12 @@ fun FeedScreen(
                 joinState = joinState,
                 onSendFeedback = {
                     scope.launch { drawerState.close() }
+                    // Reset on open as well as on close (the ImageAttachmentViewModel
+                    // contract, same as onNewTopicClick): the composer can unmount
+                    // without any close callback firing — e.g. session expiry swapping
+                    // FeedScreen for login mid-upload — and the platform models outlive
+                    // logout, so a stale Error/Ready would greet the next feedback draft.
+                    viewModel.feedbackImage.reset()
                     sendingFeedback = true
                 },
                 onJoinFeedbackGroup = { viewModel.feed.joinSupportGroup(SupportGroup.PERMALINK) },
