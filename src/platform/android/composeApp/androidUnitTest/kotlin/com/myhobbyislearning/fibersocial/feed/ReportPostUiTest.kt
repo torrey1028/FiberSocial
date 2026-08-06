@@ -210,6 +210,58 @@ class ReportPostUiTest {
         compose.onNodeWithText("Report to Ravelry on the web").assertIsDisplayed()
     }
 
+    /** Ravelry's real shape: two named sections of one radio group, "Other" pre-checked. */
+    private val groupedFlagForm = flagForm.copy(
+        reasonFieldName = "flagging[flag_id]",
+        reasons = listOf(
+            FlagReason("15", "Group rule violation", "Report to group moderators"),
+            FlagReason("19", "Other", "Report to group moderators"),
+            FlagReason("54", "Abusive or harmful", "Escalate to Ravelry staff"),
+        ),
+        escalateField = null,
+        defaultReasonId = "19",
+    )
+
+    @Test
+    fun `grouped reasons show their section headings instead of the moderators-only line`() {
+        compose.setContent {
+            TopicDetailScreen(
+                topic = topic,
+                postsState = TopicDetailState.Loaded(listOf(post)),
+                onBack = {},
+                onVote = { _, _ -> },
+                reportState = ReportState.Ready(post, groupedFlagForm),
+            )
+        }
+        compose.onNodeWithText("Report to group moderators").assertIsDisplayed()
+        compose.onNodeWithText("Escalate to Ravelry staff").assertIsDisplayed()
+        // The blanket "this goes to the group's moderators" line would be a lie here.
+        assertEquals(
+            0,
+            compose.onAllNodes(
+                androidx.compose.ui.test.hasText("This is sent privately to the group's moderators."),
+            ).fetchSemanticsNodes().size,
+        )
+    }
+
+    @Test
+    fun `the form's own pre-selected reason is what submits by default`() {
+        var submitted: String? = null
+        compose.setContent {
+            TopicDetailScreen(
+                topic = topic,
+                postsState = TopicDetailState.Loaded(listOf(post)),
+                onBack = {},
+                onVote = { _, _ -> },
+                reportState = ReportState.Ready(post, groupedFlagForm),
+                onSubmitReport = { reasonId, _, _ -> submitted = reasonId },
+            )
+        }
+        compose.onNodeWithText("Report").performClick()
+        // "19" (Other), the form's checked option — not "15", the first one listed.
+        compose.runOnIdle { assertEquals("19", submitted) }
+    }
+
     @Test
     fun `cancel dismisses the dialog without submitting`() {
         var dismissed = false

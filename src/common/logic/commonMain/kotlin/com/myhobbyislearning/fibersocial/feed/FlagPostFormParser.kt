@@ -12,13 +12,28 @@ import com.fleeksoft.ksoup.nodes.Element
  * ([unescapeRjsPayload]) before it's parsed as HTML.
  *
  * The parse is deliberately shape-agnostic: it takes the *form's own* action, hidden
- * inputs and control names rather than expecting particular Rails field names, because
- * the real markup is login-walled and can't be captured here. Guessing those names is
- * exactly what issue #467 was — the shipped code POSTed invented field names at an
- * invented URL. Anything the form doesn't offer (an escalate checkbox, a comment box)
- * comes back null rather than being assumed; if no form on the page has a
+ * inputs and control names rather than expecting particular Rails field names. Guessing
+ * those names is exactly what issue #467 was — the shipped code POSTed invented field
+ * names at an invented URL. Anything the form doesn't offer (an escalate checkbox, a
+ * comment box) comes back null rather than being assumed; if no form on the page has a
  * reason-shaped control at all, [parse] returns null so the caller can fall back to the
  * other reporting channels instead of silently sending nothing.
+ *
+ * The shape observed on device (August 2026, post 241683005) — kept verbatim as a test
+ * fixture in `FlagPostFormParserTest`, and matched here without being required:
+ *
+ * ```
+ * <form action="https://www.ravelry.com/forum_posts/{id}/flag" id="flagging_form" method="post">
+ *   <input name="authenticity_token" type="hidden" value="…">
+ *   <fieldset><strong>Report to group moderators</strong>   … radios: flagging[flag_id] …
+ *   <fieldset><strong>Escalate to Ravelry staff</strong>    … more of the same radios …
+ *   <fieldset><textarea name="flagging[comment]">           … optional free text …
+ * ```
+ *
+ * Two things that shape teaches: escalation is a *section of the reason radios*, not a
+ * separate toggle (so the section headings are the only thing telling the user who reads
+ * the report — see [FlagReason.group]), and the form pre-checks one option of its own
+ * (see [FlagPostForm.defaultReasonId]).
  */
 object FlagPostFormParser {
 
@@ -65,6 +80,7 @@ object FlagPostFormParser {
             reasons = reason.second,
             commentFieldName = commentFieldName(form),
             escalateField = escalateField(form),
+            defaultReasonId = defaultReasonId(form, reason.first),
         )
     }
 
@@ -85,7 +101,8 @@ object FlagPostFormParser {
             val name = select.attr("name").ifEmpty { return@mapNotNull null }
             val options = select.select("option").mapNotNull { option ->
                 val value = option.attr("value")
-                if (value.isBlank()) null else FlagReason(value, option.text().trim().ifEmpty { value })
+                if (value.isBlank()) return@mapNotNull null
+                FlagReason(value, option.text().trim().ifEmpty { value }, optionGroup(option))
             }
             name to options
         }
@@ -97,7 +114,8 @@ object FlagPostFormParser {
             .map { (name, inputs) ->
                 name to inputs.mapNotNull { input ->
                     val value = input.attr("value")
-                    if (value.isBlank()) null else FlagReason(value, radioLabel(form, input) ?: value)
+                    if (value.isBlank()) return@mapNotNull null
+                    FlagReason(value, radioLabel(form, input) ?: value, sectionHeading(input))
                 }
             }
 
@@ -111,6 +129,44 @@ object FlagPostFormParser {
             ?.takeIf { it.tagName() == "label" }
             ?.text()
             ?.trim()
+            ?.ifEmpty { null }
+    }
+
+    /**
+     * The heading of the `<fieldset>` a radio sits in — Ravelry splits its reasons into
+     * "Report to group moderators" and "Escalate to Ravelry staff" sections that share one
+     * radio field, so without the heading the two destinations are indistinguishable.
+     */
+    private fun sectionHeading(input: Element): String? = input.parents()
+        .firstOrNull { it.tagName() == "fieldset" }
+        ?.selectFirst("legend, strong, h1, h2, h3, h4")
+        ?.text()
+        ?.trim()
+        ?.ifEmpty { null }
+
+    /** An `<optgroup>` label, the `<select>` equivalent of [sectionHeading]. */
+    private fun optionGroup(option: Element): String? = option.parent()
+        ?.takeIf { it.tagName() == "optgroup" }
+        ?.attr("label")
+        ?.trim()
+        ?.ifEmpty { null }
+
+    /**
+     * The option the form itself pre-selects, if any. Matched by walking the elements
+     * rather than by CSS: real field names contain brackets (`flagging[flag_id]`), which
+     * an interpolated attribute selector can't carry.
+     */
+    private fun defaultReasonId(form: Element, fieldName: String): String? {
+        form.select("input[type=radio]")
+            .firstOrNull { it.attr("name") == fieldName && it.hasAttr("checked") }
+            ?.attr("value")
+            ?.ifEmpty { null }
+            ?.let { return it }
+        return form.select("select")
+            .firstOrNull { it.attr("name") == fieldName }
+            ?.select("option")
+            ?.firstOrNull { it.hasAttr("selected") }
+            ?.attr("value")
             ?.ifEmpty { null }
     }
 

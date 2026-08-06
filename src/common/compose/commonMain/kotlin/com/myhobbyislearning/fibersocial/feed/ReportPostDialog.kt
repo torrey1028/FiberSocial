@@ -38,6 +38,9 @@ import com.myhobbyislearning.fibersocial.ui.SendingSpinner
 private const val RAVELRY_REPORT_VIOLATION_URL =
     "https://www.ravelry.com/contact?question=i_want_to_report_a_violation_of_the_ravelry_community_guidelines"
 
+/** Label of the optional free-text box, when Ravelry's form offers one. */
+internal const val COMMENT_LABEL = "Anything the moderators should know? (optional)"
+
 /**
  * "Report post" dialog (issue #409 — Apple Guideline 1.2's "flag objectionable content"
  * mechanism). Driven by [ReportState]: shows a spinner while [TopicDetailViewModel.openReportDialog]
@@ -73,7 +76,7 @@ internal fun ReportPostDialog(
     // (same post, same form) keeps the user's picks instead of resetting them, while
     // opening the dialog for a DIFFERENT post starts from a clean slate.
     var selectedReasonId by rememberSaveable(ready?.post?.id ?: -1L) {
-        mutableStateOf(ready?.form?.reasons?.firstOrNull()?.id)
+        mutableStateOf(ready?.form?.initialReasonId)
     }
     var escalate by rememberSaveable(ready?.post?.id ?: -1L) { mutableStateOf(false) }
     var comment by rememberSaveable(ready?.post?.id ?: -1L) { mutableStateOf("") }
@@ -96,11 +99,24 @@ internal fun ReportPostDialog(
                     ) { CircularProgressIndicator() }
 
                     is ReportState.Ready -> {
-                        Text(
-                            text = "This is sent privately to the group's moderators.",
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
+                        // Only claim the report goes to the group's moderators when the
+                        // form doesn't say otherwise itself: Ravelry's real form splits
+                        // its reasons into "Report to group moderators" and "Escalate to
+                        // Ravelry staff" sections, and those headings are the only thing
+                        // telling the user which one they picked.
+                        if (!state.form.hasGroupedReasons) {
+                            Text(
+                                text = "This is sent privately to the group's moderators.",
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                        }
+                        var lastGroup: String? = null
                         state.form.reasons.forEach { reason ->
+                            val group = reason.group
+                            if (group != null && group != lastGroup) {
+                                Text(text = group, style = MaterialTheme.typography.titleSmall)
+                            }
+                            lastGroup = group
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier
@@ -119,7 +135,7 @@ internal fun ReportPostDialog(
                             OutlinedTextField(
                                 value = comment,
                                 onValueChange = { comment = it },
-                                label = { Text("Anything the moderators should know? (optional)") },
+                                label = { Text(COMMENT_LABEL) },
                                 enabled = !state.submitting,
                                 modifier = Modifier.fillMaxWidth(),
                             )

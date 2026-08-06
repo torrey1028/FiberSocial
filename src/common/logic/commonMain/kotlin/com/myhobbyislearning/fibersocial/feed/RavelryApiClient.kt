@@ -1178,10 +1178,12 @@ class RavelryApiClient(
      * request must look like an XHR (`ajax = true`) and the response is a JavaScript
      * payload carrying the form's markup rather than a page.
      *
-     * Issue #467: this previously requested `/forum_posts/{postId}/flag`, a route that
-     * doesn't exist — every report died on "returned 404 Not Found" before the user
-     * could pick a reason. The form's own action/field names are now read off the
-     * fetched markup ([FlagPostFormParser]) instead of guessed.
+     * Issue #467: this previously requested `/forum_posts/{postId}/flag`, which exists
+     * only as a POST target — the GET 404s, so every report died on "returned 404 Not
+     * Found" before the user could pick a reason. The form's own action/field names are
+     * now read off the fetched markup ([FlagPostFormParser]) instead of guessed;
+     * device-verified against a real session (see [FlagPostFormParser] for the observed
+     * shape).
      *
      * @throws ForbiddenException on 403 — valid session, but no permission for this page.
      * @throws SessionExpiredException if the session cookie is rejected (401, or a
@@ -1196,10 +1198,13 @@ class RavelryApiClient(
             "Flag form for post $postId",
             ajax = true,
         )
-        // The exact markup can't be captured off a logged-in session from here, so log
-        // it: if a future Ravelry change breaks the parse again, the on-device trace is
-        // what identifies the new shape. No session data is in this body.
-        println("FiberSocial: getFlagPostForm($postId) body: ${body.take(2000)}")
+        // Logged in full (chunked — logcat truncates long lines, and the real payload is
+        // ~4 KB) because this markup is only observable from a logged-in session: if a
+        // Ravelry change breaks the parse again, the device trace is what identifies the
+        // new shape. No session data is in this body.
+        body.take(4000).chunked(1000).forEachIndexed { i, chunk ->
+            println("FiberSocial: getFlagPostForm($postId) body[$i]: $chunk")
+        }
         val form = FlagPostFormParser.parse(postId, WWW_URL, body)
             ?: error("Flag form for post $postId didn't contain the expected form")
         // Rails embeds the CSRF token in every form, but if this one relies on the
@@ -1221,7 +1226,9 @@ class RavelryApiClient(
      * its own hidden [FlagPostForm.fields] (CSRF token, any `_method` verb tunnel), its own
      * control names — sent with the XHR headers Ravelry's Prototype.js UI would send, since
      * that's the shape the route rendered its form for. Nothing about Rails' field naming is
-     * assumed here; that assumption is what issue #467 was.
+     * assumed here; that assumption is what issue #467 was. (For the record, the observed
+     * form posts back to `/forum_posts/{id}/flag` with `flagging[flag_id]` and
+     * `flagging[comment]` — but the app reads that off the form rather than encoding it.)
      *
      * Success/failure detection mirrors [deletePost] — Ktor doesn't follow redirects for
      * POST, so an accepted report's redirect and a login-page redirect (expired session)

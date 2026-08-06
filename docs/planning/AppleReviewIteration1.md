@@ -158,6 +158,24 @@ Tier 2 is now wired up as well: a load failure offers Ravelry's public
 `?question=i_want_to_report_a_violation_of_the_ravelry_community_guidelines` contact form
 in the browser, alongside the developer-email tier.
 
+**Verified on device (2026-08-05), full round trip.** The captured form (kept verbatim as
+a test fixture) posts back to `POST /forum_posts/{id}/flag` — the same path whose *GET*
+404s, which is what made the original guess look plausible — with:
+
+- `flagging[flag_id]`: one radio group split across two `<fieldset>`s, **"Report to group
+  moderators"** (Group rule violation / Spam / Other) and **"Escalate to Ravelry staff"**
+  (Abusive or harmful / Misinformation, hoax / Suspicious or spam). Escalation is a
+  *reason*, not a separate checkbox — so the app renders the section headings; without
+  them the user can't tell who reads the report.
+- `flagging[comment]`: optional free text, offered in the dialog.
+- `authenticity_token`: the usual Rails CSRF hidden field.
+- "Other" arrives pre-checked; the dialog honours the form's own default.
+
+A live submission returned HTTP 200, the app showed "Report sent", and re-fetching
+`prepare_flag` for that post came back with the comment pre-filled in the textarea —
+i.e. Ravelry stored the flagging, which is the server-side confirmation a 200 alone
+isn't.
+
 ### 3c. Block abusive users — PR 4: `feat/block-users` (issue #410)
 - Ravelry has **no block/mute API** (confirmed during the DM epic, #365), so
   blocking is client-side:

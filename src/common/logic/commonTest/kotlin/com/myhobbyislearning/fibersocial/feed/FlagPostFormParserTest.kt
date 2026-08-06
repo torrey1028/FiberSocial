@@ -54,6 +54,103 @@ class FlagPostFormParserTest {
     }
 
     @Test
+    fun `parses Ravelry's real prepare_flag form (captured on device, issue #467)`() {
+        // Verbatim from a device trace of GET /forum_posts/241683005/prepare_flag, with
+        // only style/onsubmit attributes stripped. This is the shape the shipped guess
+        // got wrong on every count: the form posts to /forum_posts/{id}/flag (POST-only —
+        // the GET the app used 404s), the reason field is `flagging[flag_id]` carrying
+        // numeric IDs, escalation is a second section of that same radio group rather
+        // than a checkbox, and the comment box is `flagging[comment]`.
+        val html = """
+            <form action="https://www.ravelry.com/forum_posts/241683005/flag" id="flagging_form" method="post">
+            <div><input name="authenticity_token" type="hidden" value="tok-real" /></div>
+            <fieldset>
+            <strong>Report to group moderators</strong>
+            <label for="flag_15"><input id="flag_15" name="flagging[flag_id]" type="radio" value="15" /><span>Group rule violation</span></label>
+            <label for="flag_12"><input id="flag_12" name="flagging[flag_id]" type="radio" value="12" /><span>Spam</span></label>
+            <label for="flag_19"><input checked="checked" id="flag_19" name="flagging[flag_id]" type="radio" value="19" /><span>Other</span></label>
+            </fieldset>
+            <fieldset>
+            <strong>Escalate to Ravelry staff</strong>
+            <label for="flag_54"><input id="flag_54" name="flagging[flag_id]" type="radio" value="54" /><span>Abusive or harmful</span></label>
+            <label for="flag_60"><input id="flag_60" name="flagging[flag_id]" type="radio" value="60" /><span>Misinformation, hoax</span></label>
+            <label for="flag_53"><input id="flag_53" name="flagging[flag_id]" type="radio" value="53" /><span>Suspicious or spam</span></label>
+            </fieldset>
+            <fieldset>
+            <div class="field">Comments (optional)</div>
+            <div class="field"><textarea cols="40" id="flagging_comment" name="flagging[comment]" rows="20"></textarea></div>
+            </fieldset>
+            <fieldset class="rsp_hidden">
+            <a class="form_submit__cancel" href="#">cancel</a>
+            <button class="clicker_v2" type="submit">save changes</button>
+            </fieldset>
+            </form>
+        """.trimIndent()
+
+        val form = FlagPostFormParser.parse(241683005L, base, html)
+
+        assertEquals("https://www.ravelry.com/forum_posts/241683005/flag", form?.submitUrl)
+        assertEquals("tok-real", form?.authenticityToken)
+        assertEquals("flagging[flag_id]", form?.reasonFieldName)
+        assertEquals("flagging[comment]", form?.commentFieldName)
+        assertEquals(
+            listOf(
+                FlagReason("15", "Group rule violation", "Report to group moderators"),
+                FlagReason("12", "Spam", "Report to group moderators"),
+                FlagReason("19", "Other", "Report to group moderators"),
+                FlagReason("54", "Abusive or harmful", "Escalate to Ravelry staff"),
+                FlagReason("60", "Misinformation, hoax", "Escalate to Ravelry staff"),
+                FlagReason("53", "Suspicious or spam", "Escalate to Ravelry staff"),
+            ),
+            form?.reasons,
+        )
+        // Escalation is a reason section here, not a separate toggle…
+        assertNull(form?.escalateField)
+        assertTrue(form?.hasGroupedReasons == true)
+        // …and the form's own pre-checked option wins over "just take the first".
+        assertEquals("19", form?.defaultReasonId)
+        assertEquals("19", form?.initialReasonId)
+        // The unnamed submit button contributes nothing to the POST, as in a browser.
+        assertEquals(mapOf("authenticity_token" to "tok-real"), form?.fields)
+    }
+
+    @Test
+    fun `falls back to the first option when the form marks no default`() {
+        val html = """
+            <form action="/flaggings" method="post">
+              <select name="flag[code]">
+                <option value="spam">Spam</option>
+                <option value="other" selected="selected">Other</option>
+              </select>
+            </form>
+        """.trimIndent()
+        assertEquals("other", FlagPostFormParser.parse(555L, base, html)?.initialReasonId)
+
+        val noDefault = html.replace(""" selected="selected"""", "")
+        assertEquals("spam", FlagPostFormParser.parse(555L, base, noDefault)?.initialReasonId)
+    }
+
+    @Test
+    fun `groups select options by their optgroup label`() {
+        val html = """
+            <form action="/flaggings" method="post">
+              <select name="flag[code]">
+                <optgroup label="Report to group moderators"><option value="spam">Spam</option></optgroup>
+                <optgroup label="Escalate to Ravelry staff"><option value="abuse">Abusive</option></optgroup>
+              </select>
+            </form>
+        """.trimIndent()
+
+        assertEquals(
+            listOf(
+                FlagReason("spam", "Spam", "Report to group moderators"),
+                FlagReason("abuse", "Abusive", "Escalate to Ravelry staff"),
+            ),
+            FlagPostFormParser.parse(555L, base, html)?.reasons,
+        )
+    }
+
+    @Test
     fun `unescapes an RJS payload before parsing it as HTML`() {
         // What the prepare_flag route actually returns: markup inside a JS string literal.
         val rjs = """Element.update("prepare_flag_contents", """ +
