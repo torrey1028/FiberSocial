@@ -1,4 +1,4 @@
-name: iOS Debug Build
+name: iOS Device Build
 
 # On-demand (workflow_dispatch only, no automatic trigger — every run costs a
 # macOS runner, the most expensive tier). Run it from whatever branch you want
@@ -6,7 +6,8 @@ name: iOS Debug Build
 # <branch>`, or use the "Run workflow" button in the Actions tab and pick the
 # branch there.
 #
-# Builds a Debug-configuration archive, signs it Ad Hoc (same Apple
+# Builds an archive in the requested configuration (Debug by default), signs it
+# Ad Hoc (same Apple
 # Distribution certificate release.yml's ios-release job already uses — Ad
 # Hoc profiles are signed with a Distribution cert, just scoped to specific
 # registered devices, so no new certificate is needed), and publishes an
@@ -21,6 +22,17 @@ name: iOS Debug Build
 #     repo secret.
 on:
   workflow_dispatch:
+    inputs:
+      configuration:
+        description: >-
+          Xcode build configuration. Release is what compile-time feature gates
+          see as shipped (FeatureFlags.messagesEnabled is Platform.isDebugBinary,
+          so Messages is present in Debug and absent in Release) — pick it to
+          test the app as users will get it. Release also takes noticeably longer:
+          it builds a Kotlin/Native release framework.
+        type: choice
+        options: [Debug, Release]
+        default: Debug
 
 # Shares release.yml's ios-release job's macOS toolchain setup pattern, but
 # is otherwise independent — no test suites, no App Store Connect upload, no
@@ -134,12 +146,12 @@ jobs:
       # CFBundleVersion just needs to be a number that identifies this build;
       # ad hoc/OTA installs aren't subject to TestFlight's strictly-increasing
       # build-number rule, so the run number is enough.
-      - name: Archive (Debug configuration)
+      - name: Archive (${{ inputs.configuration }} configuration)
         env:
           APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
         run: |
           xcodebuild -project src/platform/ios/FiberSocial.xcodeproj -scheme FiberSocial \
-            -configuration Debug -archivePath "$RUNNER_TEMP/FiberSocial.xcarchive" \
+            -configuration "${{ inputs.configuration }}" -archivePath "$RUNNER_TEMP/FiberSocial.xcarchive" \
             -destination 'generic/platform=iOS' \
             CODE_SIGN_STYLE=Manual \
             CODE_SIGN_IDENTITY="Apple Distribution" \
@@ -212,7 +224,7 @@ jobs:
                   <key>kind</key>
                   <string>software</string>
                   <key>title</key>
-                  <string>FiberSocial (Debug)</string>
+                  <string>FiberSocial (${{ inputs.configuration }})</string>
                 </dict>
               </dict>
             </array>
@@ -221,17 +233,26 @@ jobs:
           PLIST
 
       - name: Write install page
+        env:
+          CONFIGURATION: ${{ inputs.configuration }}
         run: |
+          # Release binaries are what the feature gates treat as shipped, so say
+          # so on the page — "why is Messages missing?" is otherwise a puzzle.
+          EXTRA_NOTE=""
+          if [ "$CONFIGURATION" = "Release" ]; then
+            EXTRA_NOTE=" — feature-gated the same as an App Store build, so Messages is not present."
+          fi
           cat > "$RUNNER_TEMP/install.html" <<HTML
           <!DOCTYPE html>
           <html>
-          <head><meta charset="utf-8"><title>FiberSocial debug build</title></head>
+          <head><meta charset="utf-8"><title>FiberSocial $CONFIGURATION build</title></head>
           <body>
-            <h1>FiberSocial debug build</h1>
+            <h1>FiberSocial $CONFIGURATION build</h1>
             <p>Build #$GITHUB_RUN_NUMBER from commit ${GITHUB_SHA:0:7}, built $(date -u +%Y-%m-%dT%H:%M:%SZ).</p>
+            <p>Configuration: <strong>$CONFIGURATION</strong>$EXTRA_NOTE</p>
             <p>Open this page in <strong>Safari</strong> on a registered iPhone (this link
             won't work in Chrome or any other browser) and tap the button below.</p>
-            <p><a href="itms-services://?action=download-manifest&url=https://torrey1028.github.io/FiberSocial/ios-debug/manifest.plist">Install FiberSocial (Debug)</a></p>
+            <p><a href="itms-services://?action=download-manifest&url=https://torrey1028.github.io/FiberSocial/ios-debug/manifest.plist">Install FiberSocial ($CONFIGURATION)</a></p>
             <p>If nothing happens: your iPhone's UDID must be registered and included in
             the Ad Hoc provisioning profile this build was signed with. See
             docs/ios-debug-builds.md for setup and troubleshooting.</p>
@@ -279,7 +300,7 @@ jobs:
       - name: Write summary
         run: |
           {
-            echo "## Debug build #$GITHUB_RUN_NUMBER published"
+            echo "## ${{ inputs.configuration }} build #$GITHUB_RUN_NUMBER published"
             echo ""
             echo "Open on your registered iPhone, in Safari:"
             echo "https://torrey1028.github.io/FiberSocial/ios-debug/"
