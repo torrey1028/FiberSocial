@@ -1198,15 +1198,19 @@ class RavelryApiClient(
             "Flag form for post $postId",
             ajax = true,
         )
-        // Logged in full (chunked — logcat truncates long lines, and the real payload is
-        // ~4 KB) because this markup is only observable from a logged-in session: if a
-        // Ravelry change breaks the parse again, the device trace is what identifies the
-        // new shape. No session data is in this body.
-        body.take(4000).chunked(1000).forEachIndexed { i, chunk ->
-            println("FiberSocial: getFlagPostForm($postId) body[$i]: $chunk")
-        }
         val form = FlagPostFormParser.parse(postId, WWW_URL, body)
             ?: error("Flag form for post $postId didn't contain the expected form")
+        // What the parse *decided*, not the raw payload. Which control was taken as the
+        // reason picker is the thing that drifts silently (it's matched by shape, not by a
+        // fixed name — issue #470), so it's the diagnostic worth having, while the payload
+        // itself must not go to logcat: it carries the CSRF token, and for a post the user
+        // already reported Ravelry pre-fills the textarea with their own earlier comment.
+        println(
+            "FiberSocial: getFlagPostForm($postId) -> ${form.submitUrl} " +
+                "reason=${form.reasonFieldName} options=${form.reasons.size} " +
+                "grouped=${form.hasGroupedReasons} comment=${form.commentFieldName} " +
+                "escalate=${form.escalateField?.name} hidden=${form.fields.keys}",
+        )
         // Rails embeds the CSRF token in every form, but if this one relies on the
         // page-level `meta[name=authenticity-token]` instead (as the delete flow does),
         // fill it in rather than posting a request Rails will bounce.
@@ -1234,7 +1238,10 @@ class RavelryApiClient(
      * POST, so an accepted report's redirect and a login-page redirect (expired session)
      * both surface as a 3xx, matched on the redirect path — plus one extra check for the
      * XHR shape: Rails re-renders a rejected form with its error banner at HTTP 200, so a
-     * 2xx response carrying `ul.brief_error_messages` is a rejection, not a success.
+     * 2xx response carrying `ul.brief_error_messages` is a rejection, not a success. A 2xx
+     * carrying *neither* is still read as success, which is an inference rather than
+     * evidence — see issue #469, which the response-shape line logged below exists to
+     * settle from a device trace.
      *
      * @param comment Optional free-text detail for the moderators; sent only when the
      *   form has a comment field ([FlagPostForm.commentFieldName]).
@@ -1254,7 +1261,12 @@ class RavelryApiClient(
                 form.fields.forEach { (name, value) -> append(name, value) }
                 append(form.reasonFieldName, reasonId)
                 form.commentFieldName?.let { append(it, comment) }
-                form.escalateField?.takeIf { escalate }?.let { append(it.name, it.value) }
+                // A checkbox is simply omitted when unchecked, as a browser does; a radio
+                // pair always submits one side, so send its off-value instead of nothing.
+                form.escalateField?.let { field ->
+                    val value = if (escalate) field.value else field.offValue
+                    value?.let { append(field.name, it) }
+                }
             },
         ) {
             header(HttpHeaders.Cookie, cookie)
@@ -1264,16 +1276,28 @@ class RavelryApiClient(
             header(HttpHeaders.Origin, WWW_URL)
             header(HttpHeaders.Referrer, "$WWW_URL/forum_posts/${form.postId}")
         }
-        println("FiberSocial: flagPost(postId=${form.postId}, reason=$reasonId, escalate=$escalate) -> ${response.status}")
         if (isLoginRedirect(response)) {
             throw SessionExpiredException("Flag of post ${form.postId} redirected to login")
         }
         if (response.status == HttpStatusCode.Forbidden) {
             throw ForbiddenException(forbiddenMessage(response))
         }
-        if (response.status.value in 300..399) return FlagPostResult.Success
+        if (response.status.value in 300..399) {
+            println("FiberSocial: flagPost(postId=${form.postId}, reason=$reasonId, escalate=$escalate) -> ${response.status}")
+            return FlagPostResult.Success
+        }
         val body = unescapeRjsPayload(response.bodyAsText())
         val errors = EventCreateResponseParser.parseErrors(body)
+        // Shape of the 2xx body, not its content: a success here is inferred from the
+        // *absence* of Ravelry's error banner, and whether an accepted report also
+        // re-renders the form is still unobserved (issue #469). These booleans answer that
+        // from a device trace without logging the body, which can carry the user's own
+        // free-text report back to them pre-filled.
+        println(
+            "FiberSocial: flagPost(postId=${form.postId}, reason=$reasonId, escalate=$escalate) -> " +
+                "${response.status} (${body.length} chars, errorBanner=${errors.isNotEmpty()}, " +
+                "redisplaysForm=${body.contains(form.reasonFieldName)})",
+        )
         if (response.status.isSuccess() && errors.isEmpty()) return FlagPostResult.Success
         return FlagPostResult.ValidationFailed(
             errors.ifEmpty { listOf("Ravelry rejected the report (HTTP ${response.status.value}).") },

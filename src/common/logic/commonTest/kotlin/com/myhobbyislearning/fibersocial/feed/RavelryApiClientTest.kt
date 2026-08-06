@@ -2012,7 +2012,7 @@ class RavelryApiClientTest {
     }
 
     @Test
-    fun `flagPost replays the fetched form — its own URL, hidden fields and control names`() = runTest {
+    fun `flagPost replays the fetched form — its own URL and hidden fields and control names`() = runTest {
         data class Captured(val method: String, val path: String, val form: io.ktor.http.Parameters?)
         var captured: Captured? = null
         val engine = MockEngine { request ->
@@ -2072,6 +2072,33 @@ class RavelryApiClientTest {
 
         client.flagPost(flagForm(), "spam", false, "ignored — this form has no comment box")
         assertNull(capturedForm?.get("flag[comment]"))
+    }
+
+    @Test
+    fun `flagPost submits a radio-shaped escalate field's off-value rather than omitting it`() = runTest {
+        // A browser always sends one side of a radio pair. Omitting the field — right for
+        // an unchecked checkbox — would post a shape no browser produces, which Rails can
+        // read as nil and reject, failing a report the user filled in correctly.
+        var capturedForm: io.ktor.http.Parameters? = null
+        val engine = MockEngine { request ->
+            capturedForm = (request.body as? io.ktor.client.request.forms.FormDataContent)?.formData
+            respond("", HttpStatusCode.Found, headersOf(HttpHeaders.Location, "/discuss/some-group/1234"))
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val client = RavelryApiClient(httpClient, FakeFeedTokenStorage())
+        val radioPair = flagForm(escalateField = FlagEscalateField("flag[escalate]", "1", offValue = "0"))
+
+        client.flagPost(radioPair, "spam", escalate = false)
+        assertEquals("0", capturedForm?.get("flag[escalate]"))
+
+        client.flagPost(radioPair, "spam", escalate = true)
+        assertEquals("1", capturedForm?.get("flag[escalate]"))
+
+        // A checkbox still disappears when unchecked, exactly as a browser leaves it out.
+        client.flagPost(flagForm(escalateField = FlagEscalateField("flag[escalate]", "1")), "spam", false)
+        assertNull(capturedForm?.get("flag[escalate]"))
     }
 
     @Test

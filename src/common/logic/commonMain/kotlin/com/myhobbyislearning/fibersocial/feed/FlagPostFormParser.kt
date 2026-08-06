@@ -170,12 +170,21 @@ object FlagPostFormParser {
             ?.ifEmpty { null }
     }
 
-    /** The free-text control's name — a textarea, or a comment-ish text input. */
-    private fun commentFieldName(form: Element): String? =
-        form.selectFirst("textarea[name]")?.attr("name")?.ifEmpty { null }
-            ?: form.select("input[type=text][name]")
-                .map { it.attr("name") }
-                .firstOrNull { COMMENT_NAME_REGEX.containsMatchIn(it) }
+    /**
+     * The free-text control's name — a textarea, or a comment-ish text input.
+     *
+     * A comment-shaped *name* wins over document order in both cases: the user's free-text
+     * account of the abuse is the one field here that must not land somewhere it wasn't
+     * meant to, and a fragment that grew a second textarea (a preview pane, a hidden
+     * template) would otherwise capture it by sitting earlier in the markup.
+     */
+    private fun commentFieldName(form: Element): String? {
+        val named = form.select("textarea[name], input[type=text][name]")
+            .map { it.attr("name") }
+            .filter { it.isNotEmpty() }
+        return named.firstOrNull { COMMENT_NAME_REGEX.containsMatchIn(it) }
+            ?: form.selectFirst("textarea[name]")?.attr("name")?.ifEmpty { null }
+    }
 
     /**
      * The "escalate to Ravelry staff" control, when the form has one — a checkbox, or the
@@ -187,12 +196,19 @@ object FlagPostFormParser {
             .firstOrNull { ESCALATE_NAME_REGEX.containsMatchIn(it.attr("name")) }
             ?.let { return FlagEscalateField(it.attr("name"), it.attr("value").ifEmpty { "1" }) }
 
-        return form.select("input[type=radio][name]")
+        val radios = form.select("input[type=radio][name]")
             .filter { ESCALATE_NAME_REGEX.containsMatchIn(it.attr("name")) }
-            .firstOrNull { radio ->
-                STAFF_OPTION_REGEX.containsMatchIn("${radio.attr("value")} ${radioLabel(form, radio).orEmpty()}")
-            }
-            ?.let { FlagEscalateField(it.attr("name"), it.attr("value")) }
+        val staffSide = radios.firstOrNull { radio ->
+            STAFF_OPTION_REGEX.containsMatchIn("${radio.attr("value")} ${radioLabel(form, radio).orEmpty()}")
+        } ?: return null
+        // Carry the other side of the pair too: a browser submits one value of a radio
+        // group either way, so a non-escalated report has to send the "moderators" value
+        // rather than nothing (see [FlagEscalateField.offValue]).
+        val offValue = radios
+            .firstOrNull { it.attr("name") == staffSide.attr("name") && it !== staffSide }
+            ?.attr("value")
+            ?.ifEmpty { null }
+        return FlagEscalateField(staffSide.attr("name"), staffSide.attr("value"), offValue)
     }
 
     /** Resolves a form `action` (absolute, root-relative or bare) against [baseUrl]. */

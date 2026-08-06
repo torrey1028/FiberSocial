@@ -11,7 +11,7 @@ class FlagPostFormParserTest {
     private val base = "https://www.ravelry.com"
 
     @Test
-    fun `takes the form's own action, hidden fields and control names`() {
+    fun `takes the form's own action and its own hidden fields and control names`() {
         // Issue #467: nothing here is a guess about Rails' naming — whatever the form
         // says is what gets replayed, so a Ravelry-side rename can't 404/422 the report.
         val html = """
@@ -54,7 +54,7 @@ class FlagPostFormParserTest {
     }
 
     @Test
-    fun `parses Ravelry's real prepare_flag form (captured on device, issue #467)`() {
+    fun `parses the real prepare_flag form captured on device for issue 467`() {
         // Verbatim from a device trace of GET /forum_posts/241683005/prepare_flag, with
         // only style/onsubmit attributes stripped. This is the shape the shipped guess
         // got wrong on every count: the form posts to /forum_posts/{id}/flag (POST-only —
@@ -252,8 +252,101 @@ class FlagPostFormParserTest {
 
         assertEquals("flag[code]", form?.reasonFieldName)
         assertEquals(listOf(FlagReason("spam", "Spam")), form?.reasons)
-        // …and the staff side of that pair is what escalation submits.
-        assertEquals(FlagEscalateField("flag[escalate]", "1"), form?.escalateField)
+        // …the staff side of that pair is what escalation submits, and the moderators side
+        // is carried alongside it: a browser always submits one value of a radio group, so
+        // a non-escalated report has to send "0" rather than omitting the field.
+        assertEquals(FlagEscalateField("flag[escalate]", "1", offValue = "0"), form?.escalateField)
+    }
+
+    @Test
+    fun `an escalate checkbox has no off-value — a browser omits an unchecked box`() {
+        val html = """
+            <html><body>
+            <form action="/flaggings" method="post">
+              <input id="esc" name="flag[escalate]" type="checkbox" value="1">
+              <label for="esc">Escalate to Ravelry staff</label>
+              <select name="flag[code]"><option value="spam">Spam</option></select>
+            </form>
+            </body></html>
+        """.trimIndent()
+
+        assertEquals(
+            FlagEscalateField("flag[escalate]", "1", offValue = null),
+            FlagPostFormParser.parse(555L, base, html)?.escalateField,
+        )
+    }
+
+    @Test
+    fun `prefers a comment-shaped textarea name over an earlier unrelated textarea`() {
+        // The user's free-text account of the abuse is the one field that must not land
+        // somewhere it wasn't meant to, so the name wins over document order.
+        val html = """
+            <html><body>
+            <form action="/flaggings" method="post">
+              <textarea name="flagging[preview]"></textarea>
+              <textarea name="flagging[comment]"></textarea>
+              <select name="flag[code]"><option value="spam">Spam</option></select>
+            </form>
+            </body></html>
+        """.trimIndent()
+
+        assertEquals("flagging[comment]", FlagPostFormParser.parse(555L, base, html)?.commentFieldName)
+    }
+
+    @Test
+    fun `still takes a lone textarea whose name reads like nothing in particular`() {
+        val html = """
+            <html><body>
+            <form action="/flaggings" method="post">
+              <textarea name="flagging[blurb]"></textarea>
+              <select name="flag[code]"><option value="spam">Spam</option></select>
+            </form>
+            </body></html>
+        """.trimIndent()
+
+        assertEquals("flagging[blurb]", FlagPostFormParser.parse(555L, base, html)?.commentFieldName)
+    }
+
+    @Test
+    fun `a blank pre-checked option is no default at all`() {
+        val html = """
+            <html><body>
+            <form action="/flaggings" method="post">
+              <label><input type="radio" name="flag[code]" value="" checked> Choose one</label>
+              <label><input type="radio" name="flag[code]" value="spam"> Spam</label>
+            </form>
+            </body></html>
+        """.trimIndent()
+
+        val form = FlagPostFormParser.parse(555L, base, html)
+
+        assertNull(form?.defaultReasonId)
+        assertEquals("spam", form?.initialReasonId)
+    }
+
+    @Test
+    fun `falls back to the first option when the marked default isn't one of them`() {
+        // The default and the option list come from separate walks of the form, so they
+        // can disagree — here a stray checked radio shares the select's name. Preselecting
+        // an id no radio button carries would leave the dialog with nothing selected and
+        // the Report button dead, so the mismatch has to fall back rather than propagate.
+        val html = """
+            <html><body>
+            <form action="/flaggings" method="post">
+              <input type="radio" name="flag[code]" value="stale" checked>
+              <select name="flag[code]">
+                <option value="spam">Spam</option>
+                <option value="other">Other</option>
+              </select>
+            </form>
+            </body></html>
+        """.trimIndent()
+
+        val form = FlagPostFormParser.parse(555L, base, html)
+
+        assertEquals(listOf("spam", "other"), form?.reasons?.map { it.id })
+        assertEquals("stale", form?.defaultReasonId)
+        assertEquals("spam", form?.initialReasonId)
     }
 
     @Test
@@ -277,7 +370,7 @@ class FlagPostFormParserTest {
     }
 
     @Test
-    fun `carries a named submit button along, as a browser would`() {
+    fun `carries a named submit button along as a browser would`() {
         val html = """
             <html><body>
             <form action="/flaggings" method="post">
@@ -325,7 +418,7 @@ class FlagPostFormParserTest {
     }
 
     @Test
-    fun `takes a comment-ish text input as the comment field, ignoring unrelated ones`() {
+    fun `takes a comment-ish text input as the comment field and ignores unrelated ones`() {
         val html = """
             <html><body>
             <form action="/flaggings" method="post">

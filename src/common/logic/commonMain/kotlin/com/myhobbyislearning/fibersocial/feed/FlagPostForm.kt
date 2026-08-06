@@ -10,8 +10,16 @@ package com.myhobbyislearning.fibersocial.feed
  */
 data class FlagReason(val id: String, val label: String, val group: String? = null)
 
-/** The form control that escalates a report beyond the group's own moderators. */
-data class FlagEscalateField(val name: String, val value: String)
+/**
+ * The form control that escalates a report beyond the group's own moderators.
+ *
+ * @property value The value submitted when the user *does* escalate.
+ * @property offValue The value submitted when they don't, for the radio-pair shape — a
+ *   browser always sends one side of a radio group, so omitting the field entirely (which
+ *   is correct for an unchecked *checkbox*) would post a form no browser would. Null for
+ *   the checkbox shape, where omission is exactly what a browser does.
+ */
+data class FlagEscalateField(val name: String, val value: String, val offValue: String? = null)
 
 /**
  * Everything needed to render and submit Ravelry's "report a post" flag form for a
@@ -40,9 +48,11 @@ data class FlagEscalateField(val name: String, val value: String)
  *   rather than hardcoded so the app can't drift from Ravelry's own categories.
  * @property commentFieldName Name of the free-text "what's wrong" control, when the form
  *   has one (`flagging[comment]` on the observed form), else null.
- * @property escalateField A separate "escalate to Ravelry staff" checkbox, when the form
- *   has one, else null. Ravelry's real form instead models escalation as reasons under an
- *   "Escalate to Ravelry staff" heading (see [FlagReason.group]), so this stays null there.
+ * @property escalateField A separate "escalate to Ravelry staff" control, when the form
+ *   has one, else null — a checkbox, or one side of a radio pair (which also carries its
+ *   [FlagEscalateField.offValue]). Ravelry's real form instead models escalation as
+ *   reasons under an "Escalate to Ravelry staff" heading (see [FlagReason.group]), so this
+ *   stays null there.
  * @property defaultReasonId The option the form itself pre-selects, when it marks one.
  */
 data class FlagPostForm(

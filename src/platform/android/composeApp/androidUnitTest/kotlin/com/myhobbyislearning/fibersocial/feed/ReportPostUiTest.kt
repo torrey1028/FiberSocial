@@ -44,7 +44,9 @@ class ReportPostUiTest {
         escalateField = FlagEscalateField("flag[escalate]", "1"),
     )
 
-    private val commentLabel = "Anything the moderators should know? (optional)"
+    // The dialog's own constant, not a copy of the literal — a copy silently stops
+    // matching the moment the label is reworded, and the test then asserts nothing.
+    private val commentLabel = COMMENT_LABEL
 
     /** A form shape offering neither a comment box nor escalation — both are optional. */
     private val minimalFlagForm = flagForm.copy(commentFieldName = null, escalateField = null)
