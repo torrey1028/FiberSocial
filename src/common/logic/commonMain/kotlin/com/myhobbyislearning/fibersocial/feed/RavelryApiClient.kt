@@ -684,21 +684,15 @@ class RavelryApiClient(
         return states
     }
 
-    private val JS_UNICODE_ESCAPE_REGEX = Regex("""\\u([0-9a-fA-F]{4})""")
-
     /**
      * Extracts the state `<option>`s from the states response — an
      * `Element.update("state_options", "...")` script whose HTML payload is a JS string
      * literal with its markup escaped: angle brackets as JS unicode escapes (backslash-u003C
      * / -u003E) and quotes as backslash-quote, confirmed on-device. It must be unescaped
-     * before it parses as HTML at all.
+     * ([unescapeRjsPayload]) before it parses as HTML at all.
      */
     private fun parseStateOptions(raw: String): List<EventState> {
-        val html = raw
-            .replace(JS_UNICODE_ESCAPE_REGEX) { it.groupValues[1].toInt(16).toChar().toString() }
-            .replace("\\\"", "\"")
-            .replace("\\n", "\n")
-            .replace("\\/", "/")
+        val html = unescapeRjsPayload(raw)
         return Ksoup.parse(html).select("option").mapNotNull { option ->
             val id = option.attr("value").toLongOrNull() ?: return@mapNotNull null
             val name = option.text().trim()
@@ -719,11 +713,26 @@ class RavelryApiClient(
      *   to the login page, not an error status. Redirects within the prefix (permalink
      *   canonicalization) are fine.
      * @throws IllegalStateException on any other non-2xx response.
+     *
+     * @param ajax Requests the endpoint the way Ravelry's own Prototype.js
+     *   `Ajax.Request` would — `X-Requested-With` plus Prototype's `Accept` — for routes
+     *   that only render for XHR (Rails `request.xhr?` gating). The response is then a
+     *   JavaScript payload rather than a page; see [unescapeRjsPayload].
      */
-    private suspend fun scrapeHtml(url: String, expectedPathPrefix: String, what: String): String {
+    private suspend fun scrapeHtml(
+        url: String,
+        expectedPathPrefix: String,
+        what: String,
+        ajax: Boolean = false,
+    ): String {
         val response = httpClient.get(url) {
             header(HttpHeaders.Cookie, sessionCookie())
-            header(HttpHeaders.Accept, "text/html")
+            if (ajax) {
+                header("X-Requested-With", "XMLHttpRequest")
+                header(HttpHeaders.Accept, "text/javascript, text/html, application/xml, text/xml, */*")
+            } else {
+                header(HttpHeaders.Accept, "text/html")
+            }
         }
         when {
             // 403 means the cookie is valid but this page is off-limits (permission), not
@@ -1163,8 +1172,18 @@ class RavelryApiClient(
     /**
      * Fetches Ravelry's "report a post" flag form for [postId] (issue #409 — Apple
      * Guideline 1.2's required "flag objectionable content" mechanism). There is no
-     * flag/report API — this scrapes the website's own form (see [FlagPostForm] for the
-     * URL-shape assumption this makes, unverified against a real session).
+     * flag/report API — this replays what Ravelry's own "report" link does:
+     * `R.forums.prepareFlag(id)` in its JS bundle issues
+     * `new Ajax.Request('/forum_posts/'+id+'/prepare_flag', {method:'get'})`, so the
+     * request must look like an XHR (`ajax = true`) and the response is a JavaScript
+     * payload carrying the form's markup rather than a page.
+     *
+     * Issue #467: this previously requested `/forum_posts/{postId}/flag`, which exists
+     * only as a POST target — the GET 404s, so every report died on "returned 404 Not
+     * Found" before the user could pick a reason. The form's own action/field names are
+     * now read off the fetched markup ([FlagPostFormParser]) instead of guessed;
+     * device-verified against a real session (see [FlagPostFormParser] for the observed
+     * shape).
      *
      * @throws ForbiddenException on 403 — valid session, but no permission for this page.
      * @throws SessionExpiredException if the session cookie is rejected (401, or a
@@ -1173,56 +1192,113 @@ class RavelryApiClient(
      *   loaded but didn't contain the expected form.
      */
     suspend fun getFlagPostForm(postId: Long): FlagPostForm {
-        val html = scrapeHtml(
-            "$WWW_URL/forum_posts/$postId/flag",
+        val body = scrapeHtml(
+            "$WWW_URL/forum_posts/$postId/prepare_flag",
             "/forum_posts/",
             "Flag form for post $postId",
+            ajax = true,
         )
-        return FlagPostFormParser.parse(postId, html)
+        val form = FlagPostFormParser.parse(postId, WWW_URL, body)
             ?: error("Flag form for post $postId didn't contain the expected form")
+        // What the parse *decided*, not the raw payload. Which control was taken as the
+        // reason picker is the thing that drifts silently (it's matched by shape, not by a
+        // fixed name — issue #470), so it's the diagnostic worth having, while the payload
+        // itself must not go to logcat: it carries the CSRF token, and for a post the user
+        // already reported Ravelry pre-fills the textarea with their own earlier comment.
+        println(
+            "FiberSocial: getFlagPostForm($postId) -> ${form.submitUrl} " +
+                "reason=${form.reasonFieldName} options=${form.reasons.size} " +
+                "grouped=${form.hasGroupedReasons} comment=${form.commentFieldName} " +
+                "escalate=${form.escalateField?.name} hidden=${form.fields.keys}",
+        )
+        // Rails embeds the CSRF token in every form, but if this one relies on the
+        // page-level `meta[name=authenticity-token]` instead (as the delete flow does),
+        // fill it in rather than posting a request Rails will bounce.
+        return if (form.authenticityToken.isNullOrEmpty()) {
+            form.copy(fields = form.fields + ("authenticity_token" to fetchAuthenticityToken()))
+        } else {
+            form
+        }
     }
 
     /**
      * Submits a report ("flag") of the post [form] was fetched for, reaching the post's
-     * group's volunteer moderators (and, when [escalate] is set, Ravelry staff too — see
-     * [FlagPostForm.supportsEscalate]). Issue #409's primary reporting channel.
+     * group's volunteer moderators (and, when [escalate] is set and the form offers it,
+     * Ravelry staff too). Issue #409's primary reporting channel.
      *
-     * PROTOCOL ASSUMPTION (unverified — see [FlagPostForm]'s KDoc and the PR's "Needs
-     * on-device verification" section): a plain POST (Rails' default "create" verb for a
-     * new sub-resource, unlike the `_method=put/delete` tunnel [deletePost]/[joinGroup]
-     * use for updating/removing an existing one) to the same
-     * `/forum_posts/{postId}/flag` path the form was fetched from, with
-     * `post_flag[reason]`/`post_flag[escalate]` fields. Success/failure detection mirrors
-     * [deletePost]: Ktor doesn't follow redirects for POST, so a login-page redirect
-     * (expired session) and an accepted report's own redirect both surface as a 3xx here
-     * — matched on the redirect path, same as every other website write in this client.
+     * The request is a verbatim replay of the fetched form — its own [FlagPostForm.submitUrl],
+     * its own hidden [FlagPostForm.fields] (CSRF token, any `_method` verb tunnel), its own
+     * control names — sent with the XHR headers Ravelry's Prototype.js UI would send, since
+     * that's the shape the route rendered its form for. Nothing about Rails' field naming is
+     * assumed here; that assumption is what issue #467 was. (For the record, the observed
+     * form posts back to `/forum_posts/{id}/flag` with `flagging[flag_id]` and
+     * `flagging[comment]` — but the app reads that off the form rather than encoding it.)
      *
+     * Success/failure detection mirrors [deletePost] — Ktor doesn't follow redirects for
+     * POST, so an accepted report's redirect and a login-page redirect (expired session)
+     * both surface as a 3xx, matched on the redirect path — plus one extra check for the
+     * XHR shape: Rails re-renders a rejected form with its error banner at HTTP 200, so a
+     * 2xx response carrying `ul.brief_error_messages` is a rejection, not a success. A 2xx
+     * carrying *neither* is still read as success, which is an inference rather than
+     * evidence — see issue #469, which the response-shape line logged below exists to
+     * settle from a device trace.
+     *
+     * @param comment Optional free-text detail for the moderators; sent only when the
+     *   form has a comment field ([FlagPostForm.commentFieldName]).
      * @throws ForbiddenException on 403.
      * @throws SessionExpiredException if the session cookie is rejected.
      */
-    suspend fun flagPost(form: FlagPostForm, reasonId: String, escalate: Boolean): FlagPostResult {
+    suspend fun flagPost(
+        form: FlagPostForm,
+        reasonId: String,
+        escalate: Boolean,
+        comment: String = "",
+    ): FlagPostResult {
         val cookie = sessionCookie()
         val response = httpClient.submitForm(
-            url = "$WWW_URL/forum_posts/${form.postId}/flag",
+            url = form.submitUrl,
             formParameters = parameters {
-                append("authenticity_token", form.authenticityToken)
-                append("post_flag[reason]", reasonId)
-                if (escalate) append("post_flag[escalate]", "1")
+                form.fields.forEach { (name, value) -> append(name, value) }
+                append(form.reasonFieldName, reasonId)
+                form.commentFieldName?.let { append(it, comment) }
+                // A checkbox is simply omitted when unchecked, as a browser does; a radio
+                // pair always submits one side, so send its off-value instead of nothing.
+                form.escalateField?.let { field ->
+                    val value = if (escalate) field.value else field.offValue
+                    value?.let { append(field.name, it) }
+                }
             },
         ) {
             header(HttpHeaders.Cookie, cookie)
+            header("X-Requested-With", "XMLHttpRequest")
+            header(HttpHeaders.Accept, "text/javascript, text/html, application/xml, text/xml, */*")
+            form.authenticityToken?.let { header("X-CSRF-Token", it) }
+            header(HttpHeaders.Origin, WWW_URL)
+            header(HttpHeaders.Referrer, "$WWW_URL/forum_posts/${form.postId}")
         }
-        println("FiberSocial: flagPost(postId=${form.postId}, reason=$reasonId, escalate=$escalate) -> ${response.status}")
         if (isLoginRedirect(response)) {
             throw SessionExpiredException("Flag of post ${form.postId} redirected to login")
         }
         if (response.status == HttpStatusCode.Forbidden) {
             throw ForbiddenException(forbiddenMessage(response))
         }
-        if (response.status.isSuccess() || response.status.value in 300..399) {
+        if (response.status.value in 300..399) {
+            println("FiberSocial: flagPost(postId=${form.postId}, reason=$reasonId, escalate=$escalate) -> ${response.status}")
             return FlagPostResult.Success
         }
-        val errors = EventCreateResponseParser.parseErrors(response.bodyAsText())
+        val body = unescapeRjsPayload(response.bodyAsText())
+        val errors = EventCreateResponseParser.parseErrors(body)
+        // Shape of the 2xx body, not its content: a success here is inferred from the
+        // *absence* of Ravelry's error banner, and whether an accepted report also
+        // re-renders the form is still unobserved (issue #469). These booleans answer that
+        // from a device trace without logging the body, which can carry the user's own
+        // free-text report back to them pre-filled.
+        println(
+            "FiberSocial: flagPost(postId=${form.postId}, reason=$reasonId, escalate=$escalate) -> " +
+                "${response.status} (${body.length} chars, errorBanner=${errors.isNotEmpty()}, " +
+                "redisplaysForm=${body.contains(form.reasonFieldName)})",
+        )
+        if (response.status.isSuccess() && errors.isEmpty()) return FlagPostResult.Success
         return FlagPostResult.ValidationFailed(
             errors.ifEmpty { listOf("Ravelry rejected the report (HTTP ${response.status.value}).") },
         )

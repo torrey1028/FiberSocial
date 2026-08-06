@@ -1277,7 +1277,9 @@ fun FeedScreen(
             onEditErrorShown = { viewModel.topicDetail.acknowledgeEditError() },
             reportState = reportState,
             onReportPost = { post -> viewModel.topicDetail.openReportDialog(post) },
-            onSubmitReport = { reasonId, escalate -> viewModel.topicDetail.submitReport(reasonId, escalate) },
+            onSubmitReport = { reasonId, escalate, comment ->
+                viewModel.topicDetail.submitReport(reasonId, escalate, comment)
+            },
             onDismissReport = { viewModel.topicDetail.dismissReport() },
             onReportSent = { viewModel.topicDetail.acknowledgeReportSent() },
             // Secondary channel (issue #409): a private, pre-addressed email — same
@@ -1795,7 +1797,7 @@ internal fun TopicDetailRoute(
     onEditErrorShown: () -> Unit = {},
     reportState: ReportState = ReportState.Idle,
     onReportPost: (Post) -> Unit = {},
-    onSubmitReport: (reasonId: String, escalate: Boolean) -> Unit = { _, _ -> },
+    onSubmitReport: (reasonId: String, escalate: Boolean, comment: String) -> Unit = { _, _, _ -> },
     onDismissReport: () -> Unit = {},
     onReportSent: () -> Unit = {},
     onReportToDeveloper: (Post) -> Unit = {},

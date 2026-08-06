@@ -105,7 +105,7 @@ fun TopicDetailScreen(
     // secondary "report to app developer" email fallback.
     reportState: ReportState = ReportState.Idle,
     onReportPost: (Post) -> Unit = {},
-    onSubmitReport: (reasonId: String, escalate: Boolean) -> Unit = { _, _ -> },
+    onSubmitReport: (reasonId: String, escalate: Boolean, comment: String) -> Unit = { _, _, _ -> },
     onDismissReport: () -> Unit = {},
     onReportSent: () -> Unit = {},
     onReportToDeveloper: (Post) -> Unit = {},

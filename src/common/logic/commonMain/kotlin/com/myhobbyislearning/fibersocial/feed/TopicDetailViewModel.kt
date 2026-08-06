@@ -546,18 +546,19 @@ class TopicDetailViewModel(
     }
 
     /**
-     * Submits the currently open report with [reasonId] (a [FlagPostForm.reasons] ID)
-     * and whether to [escalate] to Ravelry staff. No-op unless [reportState] is
-     * [ReportState.Ready] and idle.
+     * Submits the currently open report with [reasonId] (a [FlagPostForm.reasons] ID),
+     * whether to [escalate] to Ravelry staff, and an optional free-text [comment] for the
+     * moderators (sent only when Ravelry's form has a comment field). No-op unless
+     * [reportState] is [ReportState.Ready] and idle.
      */
-    fun submitReport(reasonId: String, escalate: Boolean) {
+    fun submitReport(reasonId: String, escalate: Boolean, comment: String = "") {
         val ready = _reportState.value as? ReportState.Ready ?: return
         if (ready.submitting) return
         val requestGeneration = reportRequestGeneration
         runPostOp(
             logLabel = "submitReport",
             onInFlight = { _reportState.value = ready.copy(submitting = true, error = null) },
-            operation = { apiClient.flagPost(ready.form, reasonId, escalate) },
+            operation = { apiClient.flagPost(ready.form, reasonId, escalate, comment.trim()) },
             onSuccess = { flagResult ->
                 _reportState.value = when (flagResult) {
                     is FlagPostResult.Success -> ReportState.Sent

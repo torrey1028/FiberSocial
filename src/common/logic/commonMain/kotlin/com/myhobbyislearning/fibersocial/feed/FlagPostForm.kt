@@ -1,41 +1,86 @@
 package com.myhobbyislearning.fibersocial.feed
 
-/** A selectable reason option on Ravelry's "report a post" flag form. */
-data class FlagReason(val id: String, val label: String)
+/**
+ * A selectable reason option on Ravelry's "report a post" flag form.
+ *
+ * @property group The heading of the section this option sits under, when the form groups
+ *   its reasons. Ravelry's real form has two: "Report to group moderators" and "Escalate
+ *   to Ravelry staff" — same radio field, different destinations, so the heading is the
+ *   only thing telling the user who will read the report.
+ */
+data class FlagReason(val id: String, val label: String, val group: String? = null)
+
+/**
+ * The form control that escalates a report beyond the group's own moderators.
+ *
+ * @property value The value submitted when the user *does* escalate.
+ * @property offValue The value submitted when they don't, for the radio-pair shape — a
+ *   browser always sends one side of a radio group, so omitting the field entirely (which
+ *   is correct for an unchecked *checkbox*) would post a form no browser would. Null for
+ *   the checkbox shape, where omission is exactly what a browser does.
+ */
+data class FlagEscalateField(val name: String, val value: String, val offValue: String? = null)
 
 /**
  * Everything needed to render and submit Ravelry's "report a post" flag form for a
  * single post (issue #409 — Apple Guideline 1.2 "flag objectionable content").
  *
- * PROTOCOL ASSUMPTION — unverified against a real logged-in session (login-walled; see
- * the PR's "Needs on-device verification" section): scraped fresh from
- * `www.ravelry.com/forum_posts/{postId}/flag`, mirroring the same
- * fetch-a-form-then-POST shape as
- * [com.myhobbyislearning.fibersocial.events.NewEventForm]/`NewEventFormParser`, and the
- * same nested-member-action URL convention already used for
- * [RavelryApiClient.joinGroup]/[RavelryApiClient.leaveGroup]
- * (`/groups/{permalink}/{action}`) and event RSVPs (`/events/{permalink}/attend`) —
- * i.e. a member action nested under the post resource, rather than a separate
- * top-level `/flags` resource.
+ * Fetched from `www.ravelry.com/forum_posts/{postId}/prepare_flag`, which is what
+ * Ravelry's own "report" link calls — its JS bundle's
+ * `R.forums.prepareFlag(id)` does `new Ajax.Request('/forum_posts/'+id+'/prepare_flag',
+ * {method:'get'})`. (Issue #467: the original implementation guessed
+ * `/forum_posts/{postId}/flag` instead, which is not a route — every report failed with
+ * "returned 404 Not Found" on device.)
+ *
+ * Everything about the *submission* is read off the fetched form rather than assumed:
+ * [submitUrl] is the form's own `action`, [fields] its own hidden inputs, and
+ * [reasonFieldName]/[commentFieldName]/[escalateField] the names of its own controls.
+ * Replaying the form as the browser would is the only shape that can't 404 or 422 on a
+ * naming guess a second time — see [FlagPostFormParser] for the markup Ravelry actually
+ * serves, which the parser matches without requiring.
  *
  * @property postId The post being reported.
- * @property authenticityToken Rails CSRF token from the flag form.
- * @property reasons The report-reason options Ravelry currently offers (e.g. "Off
- *   topic", "Spam", "Abusive"), scraped fresh rather than hardcoded — see
- *   [FlagPostFormParser] — so the app can't drift from whatever categories Ravelry
- *   currently offers (mirrors [com.myhobbyislearning.fibersocial.events.NewEventForm]'s
- *   dropdown scraping).
- * @property supportsEscalate Whether the form exposes an "Escalate to Ravelry staff"
- *   option (per the plan doc's investigation, every group's flag form does — kept as a
- *   flag rather than assumed so a form shape that omits it degrades gracefully instead
- *   of crashing).
+ * @property submitUrl Absolute URL the form posts to (its resolved `action`).
+ * @property fields The form's hidden inputs verbatim — the CSRF `authenticity_token`,
+ *   any Rails `_method` verb tunnel, and whatever identifies the flagged object.
+ * @property reasonFieldName Name of the reason control (a `<select>` or radio group).
+ * @property reasons The report-reason options Ravelry currently offers, scraped fresh
+ *   rather than hardcoded so the app can't drift from Ravelry's own categories.
+ * @property commentFieldName Name of the free-text "what's wrong" control, when the form
+ *   has one (`flagging[comment]` on the observed form), else null.
+ * @property escalateField A separate "escalate to Ravelry staff" control, when the form
+ *   has one, else null — a checkbox, or one side of a radio pair (which also carries its
+ *   [FlagEscalateField.offValue]). Ravelry's real form instead models escalation as
+ *   reasons under an "Escalate to Ravelry staff" heading (see [FlagReason.group]), so this
+ *   stays null there.
+ * @property defaultReasonId The option the form itself pre-selects, when it marks one.
  */
 data class FlagPostForm(
     val postId: Long,
-    val authenticityToken: String,
+    val submitUrl: String,
+    val fields: Map<String, String>,
+    val reasonFieldName: String,
     val reasons: List<FlagReason>,
-    val supportsEscalate: Boolean,
-)
+    val commentFieldName: String? = null,
+    val escalateField: FlagEscalateField? = null,
+    val defaultReasonId: String? = null,
+) {
+    /** Rails CSRF token, when the form carried one (see [RavelryApiClient.getFlagPostForm]). */
+    val authenticityToken: String? get() = fields["authenticity_token"]
+
+    /** Whether the form exposes an "Escalate to Ravelry staff" option. */
+    val supportsEscalate: Boolean get() = escalateField != null
+
+    /** Whether the form takes a free-text comment alongside the reason. */
+    val supportsComment: Boolean get() = commentFieldName != null
+
+    /** Whether the form sorts its reasons into named sections (see [FlagReason.group]). */
+    val hasGroupedReasons: Boolean get() = reasons.any { it.group != null }
+
+    /** The option to select when the dialog opens: the form's own default, else the first. */
+    val initialReasonId: String?
+        get() = defaultReasonId?.takeIf { id -> reasons.any { it.id == id } } ?: reasons.firstOrNull()?.id
+}
 
 /** Result of submitting a [FlagPostForm] via [RavelryApiClient.flagPost]. */
 sealed class FlagPostResult {
