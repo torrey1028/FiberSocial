@@ -142,6 +142,22 @@ instant anyway.
   report-by-email alone. Apple's wording ("a mechanism for users to flag
   objectionable content") does not require the backend to be ours.
 
+**Protocol investigation, resolved (issue #467).** PR #409 shipped with the URL and
+field names *guessed* rather than investigated, and every report on device failed with
+"Flag form for post NNN returned 404 Not Found". What Ravelry actually does, from its
+own public JS bundle (`R.forums.prepareFlag`):
+`new Ajax.Request('/forum_posts/' + id + '/prepare_flag', {method:'get'})` — an XHR GET
+(the route is `request.xhr?`-gated) answered with an RJS payload that injects the form's
+markup. `/forum_posts/{id}/flag`, what the app was requesting, is not a route at all
+(unauthenticated it 404s, where every real route 302s to `/account/login`). The submit
+side stays unguessed: the app now replays the fetched form's own `action`, hidden inputs
+and control names. Ravelry's stylesheet corroborates the shape (`#prepare_flag_contents`,
+`#flagger_v2`, `#flag_code`, `#flag_comment`); the exact field names still can't be read
+without a logged-in session, which is precisely why nothing about them is hardcoded.
+Tier 2 is now wired up as well: a load failure offers Ravelry's public
+`?question=i_want_to_report_a_violation_of_the_ravelry_community_guidelines` contact form
+in the browser, alongside the developer-email tier.
+
 ### 3c. Block abusive users — PR 4: `feat/block-users` (issue #410)
 - Ravelry has **no block/mute API** (confirmed during the DM epic, #365), so
   blocking is client-side:

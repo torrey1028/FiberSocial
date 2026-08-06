@@ -16,6 +16,7 @@ import io.ktor.client.engine.mock.toByteArray
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.request.HttpRequestData
 import io.ktor.http.ContentType
+import io.ktor.http.Headers
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.formUrlEncode
@@ -1858,27 +1859,114 @@ class RavelryApiClientTest {
         assertEquals("tok-xyz", sentToken)
     }
 
-    // --- getFlagPostForm / flagPost (issue #409 — report a post) ---
+    // --- getFlagPostForm / flagPost (issue #409 — report a post; issue #467 — the
+    // form URL/field names are Ravelry's own, not this app's guesses) ---
 
+    /** The shape `/forum_posts/{id}/prepare_flag` injects: a form that names its own action and fields. */
     private val flagFormHtml = """
-        <form id="new_post_flag" action="/forum_posts/555/flag" method="post">
+        <form id="new_flag" action="/flaggings" method="post">
         <input name="authenticity_token" type="hidden" value="tok-flag">
-        <select name="post_flag[reason]">
+        <input name="flag[flaggable_type]" type="hidden" value="ForumPost">
+        <input name="flag[flaggable_id]" type="hidden" value="555">
+        <select name="flag[code]">
+        <option value="">Choose a reason</option>
         <option value="off_topic">Off topic</option>
         <option value="spam">Spam</option>
         </select>
-        <input type="checkbox" name="post_flag[escalate]" value="1">
+        <textarea name="flag[comment]"></textarea>
+        <input type="checkbox" name="flag[escalate]" value="1">
         </form>
     """.trimIndent()
 
+    private fun flagForm(
+        submitUrl: String = "https://www.ravelry.com/flaggings",
+        fields: Map<String, String> = mapOf(
+            "authenticity_token" to "tok-flag",
+            "flag[flaggable_id]" to "555",
+        ),
+        commentFieldName: String? = null,
+        escalateField: FlagEscalateField? = null,
+    ) = FlagPostForm(
+        postId = 555L,
+        submitUrl = submitUrl,
+        fields = fields,
+        reasonFieldName = "flag[code]",
+        reasons = listOf(FlagReason("spam", "Spam")),
+        commentFieldName = commentFieldName,
+        escalateField = escalateField,
+    )
+
     @Test
-    fun `getFlagPostForm scrapes the flag page and parses its reasons and token`() = runTest {
-        val client = routingApiClient { flagFormHtml }
+    fun `getFlagPostForm fetches prepare_flag and takes the form's own action and field names`() = runTest {
+        // Issue #467: the shipped version requested /forum_posts/{id}/flag — not a route
+        // — so every report died on a 404. prepare_flag is what Ravelry's own report link
+        // calls (R.forums.prepareFlag in its JS bundle).
+        var requestedPath: String? = null
+        val client = routingApiClientCapturing(onRequest = { requestedPath = it.encodedPath }) { flagFormHtml }
+
         val form = client.getFlagPostForm(555L)
+
+        assertEquals("/forum_posts/555/prepare_flag", requestedPath)
         assertEquals(555L, form.postId)
+        assertEquals("https://www.ravelry.com/flaggings", form.submitUrl)
         assertEquals("tok-flag", form.authenticityToken)
+        assertEquals("555", form.fields["flag[flaggable_id]"])
+        assertEquals("flag[code]", form.reasonFieldName)
         assertEquals(listOf("off_topic", "spam"), form.reasons.map { it.id })
+        assertEquals("flag[comment]", form.commentFieldName)
         assertTrue(form.supportsEscalate)
+    }
+
+    @Test
+    fun `getFlagPostForm requests prepare_flag as an XHR`() = runTest {
+        // The route renders its form for Prototype.js's Ajax.Request (Rails request.xhr?
+        // gating), so the headers are part of the protocol, not decoration.
+        var headers: Headers? = null
+        val engine = MockEngine { request ->
+            headers = request.headers
+            respond(flagFormHtml, HttpStatusCode.OK, headersOf("Content-Type", "text/javascript"))
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        RavelryApiClient(httpClient, FakeFeedTokenStorage()).getFlagPostForm(555L)
+        assertEquals("XMLHttpRequest", headers?.get("X-Requested-With"))
+        assertTrue(headers?.get(HttpHeaders.Accept)?.startsWith("text/javascript") == true)
+    }
+
+    @Test
+    fun `getFlagPostForm unescapes the JavaScript payload the route actually returns`() = runTest {
+        // Ravelry answers Ajax.Request with RJS — the markup arrives as a JS string
+        // literal: angle brackets as \u003C / \u003E escapes, quotes as \", slashes as \/,
+        // exactly like the states lookup. It does not parse as HTML until it is unescaped
+        // (Kotlin raw strings keep those sequences literal, which is the point here).
+        val rjs = """Element.update("prepare_flag_contents", """ +
+            """"\u003Cform action=\"/flaggings\" method=\"post\"\u003E""" +
+            """\u003Cinput type=\"hidden\" name=\"authenticity_token\" value=\"tok-rjs\"\u003E""" +
+            """\u003Cinput type=\"radio\" name=\"flag[code]\" value=\"spam\" id=\"r_spam\"\u003E""" +
+            """\u003Clabel for=\"r_spam\"\u003ESpam\u003C\/label\u003E""" +
+            """\u003C\/form\u003E");"""
+
+        val client = routingApiClient { rjs }
+
+        val form = client.getFlagPostForm(555L)
+
+        assertEquals("https://www.ravelry.com/flaggings", form.submitUrl)
+        assertEquals("tok-rjs", form.authenticityToken)
+        assertEquals(listOf(FlagReason("spam", "Spam")), form.reasons)
+    }
+
+    @Test
+    fun `getFlagPostForm falls back to the page authenticity token when the form carries none`() = runTest {
+        val tokenlessForm = """
+            <form action="/flaggings" method="post">
+            <select name="flag[code]"><option value="spam">Spam</option></select>
+            </form>
+        """.trimIndent()
+        val client = routingApiClient { path ->
+            if (path.contains("prepare_flag")) tokenlessForm else TOKEN_PAGE_HTML
+        }
+        assertEquals("tok-abc123", client.getFlagPostForm(555L).authenticityToken)
     }
 
     @Test
@@ -1924,7 +2012,7 @@ class RavelryApiClientTest {
     }
 
     @Test
-    fun `flagPost posts the authenticity token and chosen reason to the flag endpoint`() = runTest {
+    fun `flagPost replays the fetched form — its own URL, hidden fields and control names`() = runTest {
         data class Captured(val method: String, val path: String, val form: io.ktor.http.Parameters?)
         var captured: Captured? = null
         val engine = MockEngine { request ->
@@ -1936,20 +2024,21 @@ class RavelryApiClientTest {
             install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
         }
         val client = RavelryApiClient(httpClient, FakeFeedTokenStorage())
-        val form = FlagPostForm(555L, "tok-flag", listOf(FlagReason("spam", "Spam")), supportsEscalate = true)
+        val form = flagForm(escalateField = FlagEscalateField("flag[escalate]", "1"))
 
         val result = client.flagPost(form, reasonId = "spam", escalate = false)
 
         assertEquals(FlagPostResult.Success, result)
         assertEquals("POST", captured?.method)
-        assertEquals("/forum_posts/555/flag", captured?.path)
+        assertEquals("/flaggings", captured?.path)
         assertEquals("tok-flag", captured?.form?.get("authenticity_token"))
-        assertEquals("spam", captured?.form?.get("post_flag[reason]"))
-        assertNull(captured?.form?.get("post_flag[escalate]"))
+        assertEquals("555", captured?.form?.get("flag[flaggable_id]"))
+        assertEquals("spam", captured?.form?.get("flag[code]"))
+        assertNull(captured?.form?.get("flag[escalate]"))
     }
 
     @Test
-    fun `flagPost includes the escalate field only when escalating`() = runTest {
+    fun `flagPost includes the form's escalate field only when escalating`() = runTest {
         var capturedForm: io.ktor.http.Parameters? = null
         val engine = MockEngine { request ->
             capturedForm = (request.body as? io.ktor.client.request.forms.FormDataContent)?.formData
@@ -1959,11 +2048,30 @@ class RavelryApiClientTest {
             install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
         }
         val client = RavelryApiClient(httpClient, FakeFeedTokenStorage())
-        val form = FlagPostForm(555L, "tok-flag", listOf(FlagReason("spam", "Spam")), supportsEscalate = true)
+        val form = flagForm(escalateField = FlagEscalateField("flag[escalate]", "yes"))
 
         client.flagPost(form, reasonId = "spam", escalate = true)
 
-        assertEquals("1", capturedForm?.get("post_flag[escalate]"))
+        assertEquals("yes", capturedForm?.get("flag[escalate]"))
+    }
+
+    @Test
+    fun `flagPost sends the comment only when the form has a comment field`() = runTest {
+        var capturedForm: io.ktor.http.Parameters? = null
+        val engine = MockEngine { request ->
+            capturedForm = (request.body as? io.ktor.client.request.forms.FormDataContent)?.formData
+            respond("", HttpStatusCode.Found, headersOf(HttpHeaders.Location, "/discuss/some-group/1234"))
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val client = RavelryApiClient(httpClient, FakeFeedTokenStorage())
+
+        client.flagPost(flagForm(commentFieldName = "flag[comment]"), "spam", false, "they doxxed someone")
+        assertEquals("they doxxed someone", capturedForm?.get("flag[comment]"))
+
+        client.flagPost(flagForm(), "spam", false, "ignored — this form has no comment box")
+        assertNull(capturedForm?.get("flag[comment]"))
     }
 
     @Test
@@ -1973,8 +2081,27 @@ class RavelryApiClientTest {
             install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
         }
         val client = RavelryApiClient(httpClient, FakeFeedTokenStorage())
-        val form = FlagPostForm(555L, "tok-flag", listOf(FlagReason("spam", "Spam")), supportsEscalate = false)
-        assertEquals(FlagPostResult.Success, client.flagPost(form, "spam", false))
+        assertEquals(FlagPostResult.Success, client.flagPost(flagForm(), "spam", false))
+    }
+
+    @Test
+    fun `flagPost treats a 200 that re-renders the error banner as a rejection`() = runTest {
+        // The XHR shape doesn't have to fail with a 4xx: Rails re-renders the form with
+        // its banner at 200, which would otherwise read as "reported!" to the user.
+        val engine = MockEngine {
+            respond(
+                """Element.update("flagger", "<ul class=\"brief_error_messages\">""" +
+                    """<li>Reason is required</li></ul>");""",
+                HttpStatusCode.OK,
+                headersOf("Content-Type", "text/javascript"),
+            )
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val client = RavelryApiClient(httpClient, FakeFeedTokenStorage())
+        val result = client.flagPost(flagForm(), "spam", false)
+        assertEquals(listOf("Reason is required"), (result as FlagPostResult.ValidationFailed).errors)
     }
 
     @Test
@@ -1986,8 +2113,7 @@ class RavelryApiClientTest {
             install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
         }
         val client = RavelryApiClient(httpClient, FakeFeedTokenStorage())
-        val form = FlagPostForm(555L, "tok-flag", listOf(FlagReason("spam", "Spam")), supportsEscalate = false)
-        assertFailsWith<SessionExpiredException> { client.flagPost(form, "spam", false) }
+        assertFailsWith<SessionExpiredException> { client.flagPost(flagForm(), "spam", false) }
     }
 
     @Test
@@ -2003,8 +2129,7 @@ class RavelryApiClientTest {
             install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
         }
         val client = RavelryApiClient(httpClient, FakeFeedTokenStorage())
-        val form = FlagPostForm(555L, "tok-flag", listOf(FlagReason("spam", "Spam")), supportsEscalate = false)
-        assertFailsWith<SessionExpiredException> { client.flagPost(form, "spam", false) }
+        assertFailsWith<SessionExpiredException> { client.flagPost(flagForm(), "spam", false) }
     }
 
     @Test
@@ -2014,8 +2139,7 @@ class RavelryApiClientTest {
             install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
         }
         val client = RavelryApiClient(httpClient, FakeFeedTokenStorage())
-        val form = FlagPostForm(555L, "tok-flag", listOf(FlagReason("spam", "Spam")), supportsEscalate = false)
-        assertFailsWith<ForbiddenException> { client.flagPost(form, "spam", false) }
+        assertFailsWith<ForbiddenException> { client.flagPost(flagForm(), "spam", false) }
     }
 
     @Test
@@ -2031,9 +2155,8 @@ class RavelryApiClientTest {
             install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
         }
         val client = RavelryApiClient(httpClient, FakeFeedTokenStorage())
-        val form = FlagPostForm(555L, "tok-flag", listOf(FlagReason("spam", "Spam")), supportsEscalate = false)
 
-        val result = client.flagPost(form, "spam", false)
+        val result = client.flagPost(flagForm(), "spam", false)
 
         assertTrue(result is FlagPostResult.ValidationFailed)
         assertEquals(listOf("Reason is required"), (result as FlagPostResult.ValidationFailed).errors)
@@ -2046,9 +2169,8 @@ class RavelryApiClientTest {
             install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
         }
         val client = RavelryApiClient(httpClient, FakeFeedTokenStorage())
-        val form = FlagPostForm(555L, "tok-flag", listOf(FlagReason("spam", "Spam")), supportsEscalate = false)
 
-        val result = client.flagPost(form, "spam", false)
+        val result = client.flagPost(flagForm(), "spam", false)
 
         assertTrue(result is FlagPostResult.ValidationFailed)
         assertTrue((result as FlagPostResult.ValidationFailed).errors.single().contains("500"))

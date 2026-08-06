@@ -1674,21 +1674,27 @@ class TopicDetailViewModelTest {
 
     // --- Report a post (issue #409) ---
 
+    /**
+     * What `/forum_posts/{id}/prepare_flag` injects — the form names its own action and
+     * fields, and the client replays them verbatim (issue #467).
+     */
     private val flagFormHtml = """
-        <form id="new_post_flag" action="/forum_posts/1/flag" method="post">
+        <form id="new_flag" action="/flaggings" method="post">
         <input name="authenticity_token" type="hidden" value="tok-flag">
-        <select name="post_flag[reason]">
+        <input name="flag[flaggable_id]" type="hidden" value="1">
+        <select name="flag[code]">
         <option value="off_topic">Off topic</option>
         <option value="spam">Spam</option>
         </select>
-        <input type="checkbox" name="post_flag[escalate]" value="1">
+        <textarea name="flag[comment]"></textarea>
+        <input type="checkbox" name="flag[escalate]" value="1">
         </form>
     """.trimIndent()
 
     private fun reportRoutingClient(flagFormResponds: String = flagFormHtml) = routingApiClient { path ->
         when {
             path.contains("/posts.json") -> postsJson(1L, 2L)
-            path.contains("/flag") -> flagFormResponds
+            path.contains("prepare_flag") -> flagFormResponds
             else -> TOKEN_PAGE_HTML
         }
     }
@@ -1716,7 +1722,7 @@ class TopicDetailViewModelTest {
                     respond("", HttpStatusCode.Found,
                         headersOf(HttpHeaders.Location, "/discuss/some-group/1"))
                 }
-                path.contains("/flag") -> {
+                path.contains("prepare_flag") -> {
                     releaseForm?.await()
                     respond(flagFormHtml, HttpStatusCode.OK, headersOf("Content-Type", "text/html"))
                 }
@@ -1761,7 +1767,7 @@ class TopicDetailViewModelTest {
             val engine = MockEngine { request ->
                 val path = request.url.encodedPath
                 when {
-                    path.contains("/flag") -> {
+                    path.contains("prepare_flag") -> {
                         formFetches++
                         if (formFetches == 1) releaseFirstForm.await() else releaseSecondForm.await()
                         respond(flagFormHtml, HttpStatusCode.OK, headersOf("Content-Type", "text/html"))
@@ -1912,7 +1918,7 @@ class TopicDetailViewModelTest {
                     path.contains("/posts.json") -> postsJson(1L)
                     path.contains("/flag") && request.method == HttpMethod.Post ->
                         """<ul class="brief_error_messages"><li>Reason is required</li></ul>"""
-                    path.contains("/flag") -> flagFormHtml
+                    path.contains("prepare_flag") -> flagFormHtml
                     else -> TOKEN_PAGE_HTML
                 }
                 respond(
@@ -1958,7 +1964,7 @@ class TopicDetailViewModelTest {
                 }
                 val body = when {
                     path.contains("/posts.json") -> postsJson(1L)
-                    path.contains("/flag") -> flagFormHtml
+                    path.contains("prepare_flag") -> flagFormHtml
                     else -> TOKEN_PAGE_HTML
                 }
                 respond(body, HttpStatusCode.OK, headersOf("Content-Type", ContentType.Text.Html.toString()))
@@ -1992,7 +1998,7 @@ class TopicDetailViewModelTest {
                 }
                 val body = when {
                     request.url.encodedPath.contains("/posts.json") -> postsJson(1L)
-                    request.url.encodedPath.contains("/flag") -> flagFormHtml
+                    request.url.encodedPath.contains("prepare_flag") -> flagFormHtml
                     else -> TOKEN_PAGE_HTML
                 }
                 respond(body, HttpStatusCode.OK, headersOf("Content-Type", ContentType.Text.Html.toString()))
@@ -2055,7 +2061,7 @@ class TopicDetailViewModelTest {
                         respond("", HttpStatusCode.Found,
                             headersOf(HttpHeaders.Location, "/discuss/some-group/1"))
                     }
-                    request.url.encodedPath.contains("/flag") ->
+                    request.url.encodedPath.contains("prepare_flag") ->
                         respond(flagFormHtml, HttpStatusCode.OK, headersOf("Content-Type", "text/html"))
                     else ->
                         respond(postsJson(1L), HttpStatusCode.OK,

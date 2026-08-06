@@ -6,6 +6,8 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performTextInput
 import com.myhobbyislearning.fibersocial.feed.models.FeedItem
 import com.myhobbyislearning.fibersocial.feed.models.Post
 import com.myhobbyislearning.fibersocial.feed.models.RavelryUser
@@ -34,10 +36,18 @@ class ReportPostUiTest {
 
     private val flagForm = FlagPostForm(
         postId = 1L,
-        authenticityToken = "tok",
+        submitUrl = "https://www.ravelry.com/flaggings",
+        fields = mapOf("authenticity_token" to "tok"),
+        reasonFieldName = "flag[code]",
         reasons = listOf(FlagReason("off_topic", "Off topic"), FlagReason("spam", "Spam")),
-        supportsEscalate = true,
+        commentFieldName = "flag[comment]",
+        escalateField = FlagEscalateField("flag[escalate]", "1"),
     )
+
+    private val commentLabel = "Anything the moderators should know? (optional)"
+
+    /** A form shape offering neither a comment box nor escalation — both are optional. */
+    private val minimalFlagForm = flagForm.copy(commentFieldName = null, escalateField = null)
 
     @Test
     fun `report post menu item is offered on every post`() {
@@ -111,7 +121,7 @@ class ReportPostUiTest {
                 onBack = {},
                 onVote = { _, _ -> },
                 reportState = ReportState.Ready(post, flagForm),
-                onSubmitReport = { reasonId, escalate -> submitted = reasonId to escalate },
+                onSubmitReport = { reasonId, escalate, _ -> submitted = reasonId to escalate },
             )
         }
         // The first reason is preselected by default.
@@ -129,13 +139,75 @@ class ReportPostUiTest {
                 onBack = {},
                 onVote = { _, _ -> },
                 reportState = ReportState.Ready(post, flagForm),
-                onSubmitReport = { reasonId, escalate -> submitted = reasonId to escalate },
+                onSubmitReport = { reasonId, escalate, _ -> submitted = reasonId to escalate },
             )
         }
         compose.onNodeWithText("Spam").performClick()
         compose.onNodeWithText("Escalate to Ravelry staff").performClick()
         compose.onNodeWithText("Report").performClick()
         compose.runOnIdle { assertEquals("spam" to true, submitted) }
+    }
+
+    @Test
+    fun `a comment box is offered when Ravelry's form takes one, and its text is submitted`() {
+        var submitted: Triple<String, Boolean, String>? = null
+        compose.setContent {
+            TopicDetailScreen(
+                topic = topic,
+                postsState = TopicDetailState.Loaded(listOf(post)),
+                onBack = {},
+                onVote = { _, _ -> },
+                reportState = ReportState.Ready(post, flagForm),
+                onSubmitReport = { reasonId, escalate, comment ->
+                    submitted = Triple(reasonId, escalate, comment)
+                },
+            )
+        }
+        compose.onNodeWithText(commentLabel).performTextInput("they doxxed someone")
+        compose.onNodeWithText("Report").performClick()
+        compose.runOnIdle {
+            assertEquals(Triple("off_topic", false, "they doxxed someone"), submitted)
+        }
+    }
+
+    @Test
+    fun `a form without a comment box or escalation renders neither`() {
+        compose.setContent {
+            TopicDetailScreen(
+                topic = topic,
+                postsState = TopicDetailState.Loaded(listOf(post)),
+                onBack = {},
+                onVote = { _, _ -> },
+                reportState = ReportState.Ready(post, minimalFlagForm),
+            )
+        }
+        compose.onNodeWithText("Off topic").assertIsDisplayed()
+        assertEquals(
+            0,
+            compose.onAllNodes(androidx.compose.ui.test.hasText(commentLabel)).fetchSemanticsNodes().size,
+        )
+        assertEquals(
+            0,
+            compose.onAllNodes(androidx.compose.ui.test.hasText("Escalate to Ravelry staff"))
+                .fetchSemanticsNodes()
+                .size,
+        )
+    }
+
+    @Test
+    fun `load error also offers Ravelry's own web report form`() {
+        // Issue #467: when the scraped flag form can't be loaded, the user still needs a
+        // route to Ravelry itself, not only to the app developer.
+        compose.setContent {
+            TopicDetailScreen(
+                topic = topic,
+                postsState = TopicDetailState.Loaded(listOf(post)),
+                onBack = {},
+                onVote = { _, _ -> },
+                reportState = ReportState.LoadError(post, "Couldn't load the report form"),
+            )
+        }
+        compose.onNodeWithText("Report to Ravelry on the web").assertIsDisplayed()
     }
 
     @Test
@@ -149,7 +221,7 @@ class ReportPostUiTest {
                 onBack = {},
                 onVote = { _, _ -> },
                 reportState = ReportState.Ready(post, flagForm),
-                onSubmitReport = { reasonId, escalate -> submitted = reasonId to escalate },
+                onSubmitReport = { reasonId, escalate, _ -> submitted = reasonId to escalate },
                 onDismissReport = { dismissed = true },
             )
         }
@@ -188,7 +260,7 @@ class ReportPostUiTest {
                 onReportToDeveloper = { developerReported = it },
             )
         }
-        compose.onNodeWithText("Report to app developer instead").performClick()
+        compose.onNodeWithText("Report to app developer instead").performScrollTo().performClick()
         compose.runOnIdle { assertEquals(1L, developerReported?.id) }
     }
 
