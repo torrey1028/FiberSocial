@@ -32,7 +32,11 @@ on:
           it builds a Kotlin/Native release framework.
         type: choice
         options: [Debug, Release]
-        default: Debug
+        # Release on this throwaway build branch (not on main's version, which
+        # defaults to Debug): the Run-workflow input list is read from the
+        # default branch, which doesn't know this input exists yet, so the
+        # dispatch has to work with no inputs supplied at all.
+        default: Release
 
 # Shares release.yml's ios-release job's macOS toolchain setup pattern, but
 # is otherwise independent — no test suites, no App Store Connect upload, no
