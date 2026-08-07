@@ -118,15 +118,15 @@ data class OpenThreadState(
  * ## Getting preview bodies: `full = true`, no per-thread fallback
  *
  * Rows preview the newest message's body, and bodies only exist on the `full` shape.
- * `getMessages(full = true)` asks for them, but WHETHER THAT WORKS IS UNRESOLVED —
- * Ravelry's docs contradict themselves over `output_format` vs `format` and we have no
- * live token to settle it (the full analysis is on `RavelryApiClient.getMessages`).
+ * `getMessages(full = true)` asks for them, and that is now confirmed to work — the
+ * `output_format`-vs-`format` doc contradiction was settled against the live API (the
+ * full analysis is on `RavelryApiClient.getMessages`).
  *
- * This does not assume it works. The risk there is documented as one-sided: if the
- * parameter name is wrong, bodies come back `null` and nothing errors. So the contract
- * here is that a null body is ROUTINE — [messagePreviewText] renders it as an empty
- * preview and the row still shows counterpart, subject, timestamp and unread dot. The
- * screen degrades by one line; it never breaks.
+ * This still does not ASSUME it works. The contract here remains that a null body is
+ * ROUTINE — [messagePreviewText] renders it as an empty preview and the row still shows
+ * counterpart, subject, timestamp and unread dot. The screen degrades by one line; it
+ * never breaks. Keeping that contract costs nothing and means a future shape change on
+ * Ravelry's side degrades instead of blanking the list.
  *
  * The obvious fallback — `getMessage(id)` per thread, which always returns the full shape
  * — is deliberately NOT done. It costs one extra request per conversation on every page,
@@ -479,10 +479,10 @@ class MessagesViewModel(
      *
      * ## The cost, and why this is where it is paid
      *
-     * `getMessages(full = true)` already asks for bodies inline, but whether that works is
-     * the unresolved `output_format`-vs-`format` ambiguity documented on this class and on
-     * `RavelryApiClient.getMessages`. So this is the FALLBACK the client's KDoc names:
-     * [RavelryApiClient.getMessage] always returns the full shape.
+     * `getMessages(full = true)` already asks for bodies inline, and that is confirmed
+     * to work (#366) — so on the common path this backfill finds nothing missing and
+     * costs nothing. It stays as the FALLBACK for any message that still arrives
+     * body-less: [RavelryApiClient.getMessage] always returns the full shape.
      *
      * It costs up to one extra GET per message in the opened thread — and ZERO when the
      * list already carried bodies, because only body-less messages are fetched. That is
@@ -490,9 +490,9 @@ class MessagesViewModel(
      * an extra request per *conversation in the mailbox*, on every page and every
      * pull-to-refresh, to fill a one-line preview (see this class's KDoc for why that was
      * rejected). Here it is bounded by one conversation the user explicitly asked to read,
-     * a handful of messages, once per open — and it is what makes the detail screen
-     * correct regardless of how the ambiguity resolves. If `full = true` turns out to
-     * work, this quietly becomes a no-op.
+     * a handful of messages, once per open — and it is what keeps the detail screen
+     * correct whatever the list shape delivers. Now that `full = true` works, it is
+     * quietly a no-op on the common path, which is the outcome it was designed for.
      *
      * Fetched in parallel, unlike the mark-read loop: nothing sequences after this, and a
      * user staring at a blank body is waiting on the slowest one.
@@ -517,7 +517,6 @@ class MessagesViewModel(
                 val full = fetched[existing.id] ?: return@map existing
                 existing.copy(
                     contentHtml = full.contentHtml ?: existing.contentHtml,
-                    content = full.content ?: existing.content,
                     folderName = full.folderName ?: existing.folderName,
                 )
             }

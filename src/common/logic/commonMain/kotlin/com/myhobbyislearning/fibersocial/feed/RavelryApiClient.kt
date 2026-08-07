@@ -1409,34 +1409,24 @@ class RavelryApiClient(
      * `time_` as this endpoint's default too, but we send it explicitly rather than
      * trusting an undefaulted server-side default to stay put.
      *
-     * UNRESOLVED DOC AMBIGUITY (#366) — `output_format` vs `format`. The parameter table
-     * documents `output_format` (accepting `list` / `full`); the worked example directly
-     * beneath it uses `format=full`. Exactly one of them is presumably honoured and we
-     * had no live token to find out which.
+     * `output_format` IS THE REAL PARAMETER NAME, NOT `format` — settled live (#366).
+     * The docs contradict themselves here: the parameter table documents `output_format`
+     * (accepting `list` / `full`) while the worked example directly beneath it uses
+     * `format=full`. Three calls against a real account on 2026-08-06 answered it:
      *
-     * We send ONLY `output_format`, the name the parameter table documents. Sending both
-     * as a hedge was considered and rejected: `format` is not an arbitrary unknown param
-     * that Ravelry would harmlessly ignore. This API is Rails and every path here ends in
-     * `.json`, where `params[:format]` is the RESERVED response-format selector. The path
-     * extension normally wins over the query param, so `?format=full` is probably inert —
-     * but "probably" is the whole problem. The plausible bad outcome is a 406 / unknown-
-     * format error on the entire request, which is strictly worse than the failure we'd
-     * be hedging against (a silent degrade to the body-less `list` shape).
+     *  - `?output_format=full` → 200, bodies present (`content_html` on every message)
+     *  - `?format=full`        → 200, bodies ABSENT — byte-identical to sending nothing
+     *  - no parameter          → 200, bodies absent
      *
-     * So the risk is deliberately one-sided: if `output_format` is the wrong name, bodies
-     * come back null and callers fall back to [getMessage], which always returns the full
-     * shape. Nothing errors.
+     * So `format` is silently ignored rather than erroring, which is exactly why this was
+     * worth settling instead of hedging: sending it would have looked fine forever while
+     * quietly never delivering a body. (The reason we never sent it as a belt-and-braces
+     * hedge: this API is Rails and every path ends in `.json`, where `params[:format]` is
+     * the RESERVED response-format selector, so the plausible downside was a 406 on the
+     * whole request rather than a harmless no-op.)
      *
-     * TO SETTLE IT: one authenticated call with only `output_format=full`, then one with
-     * only `format=full`; whichever response contains `content_html` names the winner.
-     * Note the second experiment may return an HTTP error rather than a body — that is
-     * itself the answer. Then hard-code the winner here and delete this paragraph.
-     *
-     * DO THIS BEFORE a caller sets `full = true` (#370's list-with-previews is the first
-     * one that will want to) — today the branch is unreachable in shipped code.
-     *
-     * Even if [full] is wrong, [getMessage] always returns the full shape, so a detail
-     * screen is never blocked on this question — only a list-with-previews optimisation.
+     * [getMessage] remains the per-message fallback for anything that still arrives
+     * body-less, but with `full = true` working it is now a no-op on the common path.
      *
      * @param folder Which box to list. Required by Ravelry; see [MessageFolder].
      * @param page 1-based page number.
@@ -1446,7 +1436,7 @@ class RavelryApiClient(
      *   (the documented truthy value) and OMITTED entirely when false, rather than sent
      *   as `0` — an absent param is unambiguously "no filter" whatever the server's
      *   boolean parsing does with "0"/"false".
-     * @param full When true, request bodies inline with the list. See the ambiguity note.
+     * @param full When true, request bodies inline with the list via `output_format=full`.
      */
     suspend fun getMessages(
         folder: MessageFolder,
@@ -1481,9 +1471,11 @@ class RavelryApiClient(
     }
 
     /**
-     * Returns a single private message in its full shape — the only call guaranteed to
-     * carry a body ([Message.contentHtml]), regardless of how the `output_format`
-     * ambiguity on [getMessages] resolves.
+     * Returns a single private message in its full shape — always carrying a body
+     * ([Message.contentHtml]), with no `output_format` parameter needed.
+     *
+     * Now that `getMessages(full = true)` is confirmed to deliver bodies inline, this is
+     * the per-message backfill for stragglers rather than the primary way to get a body.
      *
      * @param messageId Ravelry message ID.
      */
