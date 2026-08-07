@@ -42,6 +42,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.myhobbyislearning.fibersocial.feed.relativeTimeSince
 import com.myhobbyislearning.fibersocial.ui.PullToRefreshBox
+import com.myhobbyislearning.fibersocial.profile.profileClickable
 import com.myhobbyislearning.fibersocial.ui.UserAvatar
 
 /**
@@ -217,7 +218,12 @@ internal fun MessageThreadRow(
             modifier = Modifier.fillMaxWidth().padding(12.dp),
             verticalAlignment = Alignment.Top,
         ) {
-            UserAvatar(user = thread.counterpart, size = 40.dp)
+            // Avatar and name both open the counterpart's profile (issue #400). Null
+            // counterpart -> inert, so the "(unknown)" placeholder stays plain text.
+            val counterpartUsername = thread.counterpart?.username?.takeIf { it.isNotBlank() }
+            Box(modifier = Modifier.profileClickable(counterpartUsername)) {
+                UserAvatar(user = thread.counterpart, size = 40.dp)
+            }
             Spacer(modifier = Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -230,7 +236,11 @@ internal fun MessageThreadRow(
                         // The only weighted child, so a long name ellipsizes into the
                         // space the dot and timestamp don't need rather than pushing them
                         // off the row.
-                        modifier = Modifier.weight(1f),
+                        //
+                        // The tap here takes priority over the row's own open-conversation
+                        // click, which is the intended trade (issue #400): the name is the
+                        // profile affordance, the rest of the row opens the conversation.
+                        modifier = Modifier.weight(1f).profileClickable(counterpartUsername),
                     )
                     if (thread.hasUnread) {
                         Spacer(modifier = Modifier.width(6.dp))
