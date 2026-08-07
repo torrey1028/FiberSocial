@@ -251,7 +251,10 @@ private const val PREVIEW_MAX_CHARS = 140
  * line needs no structure, links, or images — only readable text.
  */
 private fun previewOf(message: Message): String {
-    val body = message.content ?: message.contentHtml ?: return ""
+    // `contentHtml` is the only body a read carries — Ravelry's `content` is write-only
+    // (#366, live-confirmed). This used to prefer a plain-text `message.content`, a branch
+    // that could never fire, so the tag-strip below was always the real path anyway.
+    val body = message.contentHtml ?: return ""
     val text = body
         .replace(Regex("<br\\s*/?>|</p>|</div>", RegexOption.IGNORE_CASE), " ")
         .replace(Regex("<[^>]*>"), "")

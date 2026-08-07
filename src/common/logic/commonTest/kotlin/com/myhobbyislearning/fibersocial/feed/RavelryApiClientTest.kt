@@ -3142,25 +3142,21 @@ class RavelryApiClientTest {
     }
 
     @Test
-    fun `getMessage decodes a full message that has no plain-text content field`() = runTest {
-        // UNRESOLVED (#366): Ravelry's field table lists only content_html on reads, but
-        // third-party clients mention a plain-text content. The model must decode either
-        // shape, so absence yields null rather than a MissingFieldException — otherwise a
-        // wrong guess would break every message detail fetch.
-        val client = routingApiClient { MESSAGE_FULL_JSON }
-
-        assertNull(client.getMessage(1001L).content)
-    }
-
-    @Test
-    fun `getMessage decodes a full message that does carry plain-text content`() = runTest {
-        // The other half of the same ambiguity: if the field does exist we must keep it,
-        // not drop it on the floor.
+    fun `getMessage tolerates a plain-text content key the model no longer has`() = runTest {
+        // SETTLED (#366): `content` is write-only. Reads carry only `content_html` —
+        // live-confirmed on list (with and without output_format=full) and show, so the
+        // model's speculative `content` field was deleted as a permanently-null trap.
+        //
+        // This guards the deletion rather than the field: if Ravelry ever starts sending
+        // `content` back, decoding must keep working instead of failing the whole fetch
+        // on an unknown key. The body still comes from content_html either way.
         val client = routingApiClient {
             """{"message":{"id":1001,"content":"Hi!","content_html":"<p>Hi!</p>"}}"""
         }
 
-        assertEquals("Hi!", client.getMessage(1001L).content)
+        val message = client.getMessage(1001L)
+        assertEquals(1001L, message.id)
+        assertEquals("<p>Hi!</p>", message.contentHtml)
     }
 
     @Test
@@ -3651,12 +3647,12 @@ class RavelryApiClientTest {
 
 private val MESSAGES_LIST_JSON = """
 {"messages":[
-  {"id":1001,"subject":"Hello there","message_type_name":"message","read_message":false,
+  {"id":1001,"subject":"Hello there","message_type_name":"simple_message","read_message":false,
    "replied":false,"replied_at":null,"parent_message_id":null,
    "sent_at":"2026/07/18 09:00:00 -0700",
    "sender":{"username":"yarnie","small_photo_url":"https://example.com/y.jpg"},
    "recipient":{"username":"me"}},
-  {"id":1002,"subject":"Hello there","message_type_name":"message","read_message":true,
+  {"id":1002,"subject":"Hello there","message_type_name":"sent_message","read_message":true,
    "replied":false,"parent_message_id":1001,
    "sent_at":"2026/07/18 10:00:00 -0700",
    "sender":{"username":"me"},"recipient":{"username":"yarnie"}}
