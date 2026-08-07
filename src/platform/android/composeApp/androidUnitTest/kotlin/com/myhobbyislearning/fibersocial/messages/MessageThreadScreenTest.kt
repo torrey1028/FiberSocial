@@ -1,6 +1,7 @@
 package com.myhobbyislearning.fibersocial.messages
 
 import androidx.activity.ComponentActivity
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.getBoundsInRoot
@@ -11,6 +12,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToIndex
 import com.myhobbyislearning.fibersocial.feed.models.RavelryUser
+import com.myhobbyislearning.fibersocial.profile.LocalProfileOpener
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -69,14 +71,17 @@ class MessageThreadScreenTest {
         onBack: () -> Unit = {},
         onReply: (() -> Unit)? = null,
         onToggleMute: (() -> Unit)? = null,
+        onOpenProfile: ((String) -> Unit)? = null,
     ) = compose.setContent {
-        MessageThreadScreen(
-            state = state,
-            currentUsername = ME,
-            onBack = onBack,
-            onReply = onReply,
-            onToggleMute = onToggleMute,
-        )
+        CompositionLocalProvider(LocalProfileOpener provides onOpenProfile) {
+            MessageThreadScreen(
+                state = state,
+                currentUsername = ME,
+                onBack = onBack,
+                onReply = onReply,
+                onToggleMute = onToggleMute,
+            )
+        }
     }
 
     /**
@@ -208,6 +213,44 @@ class MessageThreadScreenTest {
         setScreen()
 
         compose.onNodeWithTag("ReplyFab").assertDoesNotExist()
+    }
+
+    /** A received message's sender attribution opens that person's profile (issue #400). */
+    @Test
+    fun `tapping a sender name opens their profile`() {
+        val opened = mutableListOf<String>()
+        // One received message only: the default conversation has two, and "friend" would
+        // then match both attributions rather than naming a single node to tap.
+        setScreen(
+            state = OpenThreadState(
+                conversation(listOf(message(1, from = "friend", to = ME, body = "Only one"))),
+            ),
+            onOpenProfile = { opened += it },
+        )
+
+        compose.onNodeWithText("friend").performClick()
+
+        assertEquals(listOf("friend"), opened)
+    }
+
+    /**
+     * The user's own messages are attributed to "You", which must not navigate anywhere —
+     * a link to your own profile from your own message is a dead end, and "You" is not a
+     * username the opener could resolve in the first place.
+     */
+    @Test
+    fun `the You attribution is not a profile link`() {
+        val opened = mutableListOf<String>()
+        setScreen(
+            state = OpenThreadState(
+                conversation(listOf(message(2, from = ME, to = "friend", body = "Mine"))),
+            ),
+            onOpenProfile = { opened += it },
+        )
+
+        compose.onNodeWithText("You").performClick()
+
+        assertTrue("\"You\" opened a profile: $opened", opened.isEmpty())
     }
 
     /**

@@ -1,6 +1,7 @@
 package com.myhobbyislearning.fibersocial.messages
 
 import androidx.activity.ComponentActivity
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -14,6 +15,7 @@ import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.myhobbyislearning.fibersocial.feed.models.RavelryUser
+import com.myhobbyislearning.fibersocial.profile.LocalProfileOpener
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -68,15 +70,18 @@ class MessagesScreenTest {
         onLoadMore: () -> Unit = {},
         onThreadClick: (MessageThread) -> Unit = {},
         fabClearance: Dp = 0.dp,
+        onOpenProfile: ((String) -> Unit)? = null,
     ) = compose.setContent {
-        MessagesScreen(
-            state = state,
-            onRefresh = {},
-            onRetry = onRetry,
-            onLoadMore = onLoadMore,
-            onThreadClick = onThreadClick,
-            fabClearance = fabClearance,
-        )
+        CompositionLocalProvider(LocalProfileOpener provides onOpenProfile) {
+            MessagesScreen(
+                state = state,
+                onRefresh = {},
+                onRetry = onRetry,
+                onLoadMore = onLoadMore,
+                onThreadClick = onThreadClick,
+                fabClearance = fabClearance,
+            )
+        }
     }
 
     @Test
@@ -216,6 +221,55 @@ class MessagesScreenTest {
         assertTrue(
             compose.onAllNodesWithText("Oldest message").fetchSemanticsNodes().isEmpty(),
         )
+    }
+
+    /** Tapping the counterpart's name opens their profile (issue #400). */
+    @Test
+    fun `tapping the counterpart name opens their profile`() {
+        val opened = mutableListOf<String>()
+        setScreen(
+            MessagesState.Loaded(threads = listOf(thread())),
+            onOpenProfile = { opened += it },
+        )
+
+        compose.onNodeWithText("friend").performClick()
+
+        assertEquals(listOf("friend"), opened)
+    }
+
+    /**
+     * The name tap must NOT also fire the row's open-conversation click. Both live on the
+     * same row, so a name tap reaching both would open the profile AND the conversation.
+     */
+    @Test
+    fun `tapping the name does not also open the conversation`() {
+        val opened = mutableListOf<Long>()
+        setScreen(
+            MessagesState.Loaded(threads = listOf(thread())),
+            onThreadClick = { opened += it.rootId },
+            onOpenProfile = {},
+        )
+
+        compose.onNodeWithText("friend").performClick()
+
+        assertTrue("the row's conversation click also fired: $opened", opened.isEmpty())
+    }
+
+    /**
+     * A null counterpart renders "(unknown)", which names nobody — it must stay inert
+     * rather than becoming a link to a profile that cannot exist.
+     */
+    @Test
+    fun `the unknown counterpart placeholder is not a profile link`() {
+        val opened = mutableListOf<String>()
+        setScreen(
+            MessagesState.Loaded(threads = listOf(thread(counterpart = null))),
+            onOpenProfile = { opened += it },
+        )
+
+        compose.onNodeWithText("(unknown)").performClick()
+
+        assertTrue("(unknown) opened a profile: $opened", opened.isEmpty())
     }
 
     /**
