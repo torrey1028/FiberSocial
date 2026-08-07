@@ -9,6 +9,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToIndex
 import com.myhobbyislearning.fibersocial.feed.models.RavelryUser
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -207,5 +208,36 @@ class MessageThreadScreenTest {
         setScreen()
 
         compose.onNodeWithTag("ReplyFab").assertDoesNotExist()
+    }
+
+    /**
+     * The last message must be able to scroll CLEAR of the Reply FAB (issue #401).
+     *
+     * Asserting the message exists or `assertIsDisplayed()` would not catch this: the FAB
+     * floats above the list without occupying layout space, so the occluded message is
+     * still present, still "displayed", and simply unreadable underneath the button. Only
+     * comparing bounds sees it — the bug is that the list's bottom `contentPadding`
+     * reserved 8.dp against a ~56.dp button.
+     *
+     * Scrolls to the end first, because the failure only exists at the bottom of a list
+     * long enough to scroll there.
+     */
+    @Test
+    fun `the last message can scroll clear of the reply button`() {
+        val many = (1L..30L).map { id ->
+            message(id, from = if (id % 2 == 0L) ME else "friend", to = ME, body = "Body $id")
+        }
+        setScreen(state = OpenThreadState(conversation(messages = many)), onReply = {})
+
+        compose.onNodeWithTag("MessageThreadList").performScrollToIndex(many.lastIndex)
+        compose.waitForIdle()
+
+        val lastMessageBottom = compose.onNodeWithText("Body 30").getBoundsInRoot().bottom
+        val fabTop = compose.onNodeWithTag("ReplyFab").getBoundsInRoot().top
+
+        assertTrue(
+            "last message (bottom=$lastMessageBottom) is covered by the Reply FAB (top=$fabTop)",
+            lastMessageBottom <= fabTop,
+        )
     }
 }

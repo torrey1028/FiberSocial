@@ -2,6 +2,7 @@ package com.myhobbyislearning.fibersocial.messages
 
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
@@ -9,6 +10,9 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToIndex
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
 import com.myhobbyislearning.fibersocial.feed.models.RavelryUser
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -63,6 +67,7 @@ class MessagesScreenTest {
         onRetry: () -> Unit = {},
         onLoadMore: () -> Unit = {},
         onThreadClick: (MessageThread) -> Unit = {},
+        fabClearance: Dp = 0.dp,
     ) = compose.setContent {
         MessagesScreen(
             state = state,
@@ -70,6 +75,7 @@ class MessagesScreenTest {
             onRetry = onRetry,
             onLoadMore = onLoadMore,
             onThreadClick = onThreadClick,
+            fabClearance = fabClearance,
         )
     }
 
@@ -209,6 +215,33 @@ class MessagesScreenTest {
         compose.onNodeWithText("Newest message").assertIsDisplayed()
         assertTrue(
             compose.onAllNodesWithText("Oldest message").fetchSemanticsNodes().isEmpty(),
+        )
+    }
+
+    /**
+     * The last conversation must clear the host's "New message" FAB (issue #401).
+     *
+     * This screen does not own that FAB — it lives in `FeedScreen`'s Scaffold — so the
+     * clearance arrives as a parameter and this asserts the list honours it. The height
+     * used here stands in for a measured FAB; what matters is that the reserved space
+     * ends up BELOW the final row rather than being ignored.
+     */
+    @Test
+    fun `the last conversation row clears the reserved fab space`() {
+        val clearance = 72.dp
+        val threads = (1L..30L).map { thread(rootId = it, subject = "Conversation $it") }
+        setScreen(MessagesState.Loaded(threads = threads), fabClearance = clearance)
+
+        compose.onNodeWithTag("MessagesList").performScrollToIndex(threads.lastIndex)
+        compose.waitForIdle()
+
+        val listBottom = compose.onNodeWithTag("MessagesList").getBoundsInRoot().bottom
+        val lastRowBottom = compose.onNodeWithText("Conversation 30").getBoundsInRoot().bottom
+
+        assertTrue(
+            "last row (bottom=$lastRowBottom) intrudes into the $clearance reserved for " +
+                "the FAB above the list bottom ($listBottom)",
+            lastRowBottom <= listBottom - clearance,
         )
     }
 }

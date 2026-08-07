@@ -38,6 +38,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.myhobbyislearning.fibersocial.feed.relativeTimeSince
 import com.myhobbyislearning.fibersocial.ui.PullToRefreshBox
@@ -80,6 +81,10 @@ private const val LOAD_MORE_THRESHOLD = 3
  * @param onLoadMore Requests the next page; fired by scroll proximity to the end.
  * @param onThreadClick Opens a conversation (the detail screen arrives with #371).
  * @param listState Hoisted so scroll position survives the caller recomposing.
+ * @param fabClearance Bottom space the list must reserve so its last row can scroll clear
+ *   of a floating action button. Passed in rather than measured here because this screen
+ *   does not own its FAB — "New message" lives in `FeedScreen`'s Scaffold, which hosts
+ *   this composable as content (issue #401). Defaults to zero for callers with no FAB.
  */
 @Composable
 fun MessagesScreen(
@@ -90,6 +95,7 @@ fun MessagesScreen(
     onThreadClick: (MessageThread) -> Unit,
     modifier: Modifier = Modifier,
     listState: LazyListState = rememberLazyListState(),
+    fabClearance: Dp = 0.dp,
 ) {
     when (state) {
         MessagesState.Loading -> Box(
@@ -118,6 +124,7 @@ fun MessagesScreen(
                     onLoadMore = onLoadMore,
                     onThreadClick = onThreadClick,
                     listState = listState,
+                    fabClearance = fabClearance,
                 )
             }
         }
@@ -138,6 +145,7 @@ private fun MessageThreadList(
     onThreadClick: (MessageThread) -> Unit,
     listState: LazyListState,
     modifier: Modifier = Modifier,
+    fabClearance: Dp = 0.dp,
 ) {
     val shouldLoadMore by remember {
         derivedStateOf {
@@ -153,7 +161,8 @@ private fun MessageThreadList(
     LazyColumn(
         state = listState,
         modifier = modifier.fillMaxSize().testTag("MessagesList"),
-        contentPadding = PaddingValues(vertical = 8.dp),
+        // Bottom clears the host's "New message" FAB; see the fabClearance param.
+        contentPadding = PaddingValues(top = 8.dp, bottom = 8.dp + fabClearance),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         items(threads, key = { it.rootId }) { thread ->
