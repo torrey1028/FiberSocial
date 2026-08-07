@@ -16,11 +16,23 @@ class RavelryAuthManager {
         // Ravelry grants a read-only token when no scope is requested, which 403s every
         // write (reply/edit/delete). `forum-write` grants forum posting; `message-write`
         // grants posting project comments (issue #103 — its Ravelry description mentions
-        // private messages, but comments/create requires it too); `offline` is required
-        // to receive a refresh token (without it Ravelry often omits one, forcing frequent
+        // private messages, but comments/create requires it too); `message-read` grants
+        // READING private messages (issue #396 — see below); `offline` is required to
+        // receive a refresh token (without it Ravelry often omits one, forcing frequent
         // re-login). Space-separated per the OAuth spec. Tokens issued before a scope was
-        // added lack it until the user next logs in, so new-scope writes 403 for them.
-        const val SCOPE = "forum-write message-write offline"
+        // added lack it until the user next logs in, so new-scope calls 403 for them.
+        //
+        // `message-read` IS APPROVAL-GATED, and this app has been approved (issue #396).
+        // Do not assume any other Ravelry app can request it. Until 2026-08-06 this scope
+        // was unobtainable and every route to it was live-tested closed: `/oauth2/auth`
+        // rejected it as `invalid_scope`, `/oauth2/token` silently stripped it from the
+        // grant, OAuth 1.0a hit the same wall, and even a token holding all seven
+        // documented scopes still 403'd every message read. That is why the whole
+        // messages feature was built against an API it could not yet read from, and why
+        // the website-scraping fallback (#399/PR #404) was drafted. With the grant in
+        // hand, requesting it here is the entire fix — do not delete it from this string
+        // without re-reading #396, because the read path has no other way in.
+        const val SCOPE = "forum-write message-write message-read offline"
     }
 
     private var codeVerifier: String? = null
