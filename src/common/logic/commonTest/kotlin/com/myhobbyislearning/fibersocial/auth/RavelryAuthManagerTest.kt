@@ -22,13 +22,18 @@ class RavelryAuthManagerTest {
     }
 
     @Test
-    fun `auth url requests forum-write message-write and offline scope`() {
+    fun `auth url requests forum-write message-write message-read and offline scope`() {
         val url = RavelryAuthManager().buildAuthUrl("my-client-id")
 
         // forum-write authorizes reply/edit/delete; message-write authorizes posting
-        // project comments (issue #103); offline yields a refresh token so the user
-        // isn't forced to re-login constantly.
-        assertEquals("forum-write message-write offline", Url(url).parameters["scope"])
+        // project comments (issue #103); message-read authorizes reading private
+        // messages (issue #396 — approval-gated, granted to this app on 2026-08-06, and
+        // the ONLY way the messages feature can read anything); offline yields a refresh
+        // token so the user isn't forced to re-login constantly.
+        assertEquals(
+            "forum-write message-write message-read offline",
+            Url(url).parameters["scope"],
+        )
     }
 
     @Test
