@@ -150,6 +150,54 @@ class MessagesViewModelTest {
             assertTrue(!state.hasMore)
         }
 
+    /**
+     * The open thread carries the identity that interprets it (issue #406).
+     *
+     * The screen used to take the signed-in username from the FEED's state instead. That
+     * source is momentarily null whenever the feed reloads — which a configuration change
+     * triggers — so rotating with a thread open flipped every message the user had sent
+     * from OUTBOUND to INBOUND for a frame: wrong bubble colour, wrong side of the screen.
+     *
+     * Publishing the username alongside the thread makes the two impossible to disagree,
+     * because they now come from the same retained object. Asserting it here rather than
+     * on the screen is deliberate: the defect was WHICH SOURCE the identity came from, and
+     * that is decided at this layer.
+     */
+    @Test
+    fun `the open thread publishes the username that interprets it`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val client = suspendableRoutingApiClient { url ->
+                if (url.parameters["folder"] == "inbox") {
+                    listJson(
+                        listOf(
+                            messageJson(id = 1, sender = "friend", recipient = "yarnie"),
+                            messageJson(
+                                id = 2,
+                                sender = "yarnie",
+                                recipient = "friend",
+                                parentId = 1,
+                            ),
+                        ),
+                    )
+                } else {
+                    EMPTY_LIST_JSON
+                }
+            }
+            val vm = MessagesViewModel(client, this)
+            vm.load("yarnie")
+            awaitChildren(coroutineContext[Job]!!)
+
+            vm.openThread(rootId = 1)
+            awaitChildren(coroutineContext[Job]!!)
+
+            val open = assertNotNull(vm.openThread.value)
+            assertEquals("yarnie", open.currentUsername)
+            // And it is the identity that actually resolves direction, not a lookalike:
+            // the user's own message must read as sent.
+            val mine = open.thread.messages.first { it.sender?.username == "yarnie" }
+            assertEquals(MessageDirection.OUTBOUND, messageDirection(mine, open.currentUsername))
+        }
+
     @Test
     fun `a failed load surfaces an error`() = runTest(UnconfinedTestDispatcher()) {
         val vm = MessagesViewModel(errorApiClient(), this)

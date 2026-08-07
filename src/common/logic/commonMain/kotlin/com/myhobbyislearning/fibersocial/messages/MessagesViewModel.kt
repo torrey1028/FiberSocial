@@ -96,11 +96,20 @@ sealed class MessagesState {
  *   true when at least one message actually lacked a body.
  * @property bodyError Set when that backfill failed. The thread stays fully readable —
  *   this only explains why some messages show no text.
+ * @property currentUsername Who "you" are, for telling sent from received. CARRIED WITH
+ *   THE THREAD ON PURPOSE (issue #406): the screen must interpret a conversation with the
+ *   same identity that grouped it, and reading the two from different sources is what
+ *   caused the rotation bug. The feed's copy of the signed-in user is momentarily null
+ *   while the feed reloads — which a configuration change triggers — so a thread rendered
+ *   against it flipped every OUTBOUND message to INBOUND for a frame, changing both the
+ *   bubble colour and the side of the screen it sat on before snapping back. This
+ *   ViewModel's own [currentUsername] survives that, because the ViewModel does.
  */
 data class OpenThreadState(
     val thread: MessageThread,
     val loadingBodies: Boolean = false,
     val bodyError: String? = null,
+    val currentUsername: String = "",
 )
 
 /**
@@ -396,6 +405,7 @@ class MessagesViewModel(
         _openThread.value = OpenThreadState(
             thread = thread,
             loadingBodies = thread.messages.any { it.contentHtml.isNullOrBlank() },
+            currentUsername = currentUsername,
         )
         // Deliberately NOT cancelling a previous open's job, and deliberately not
         // cancelled by closeThread: a mark-read POST that the user outran by tapping Back
