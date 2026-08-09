@@ -47,18 +47,43 @@ class LoginNavigationPolicyTest {
         assertTrue(isAllowedLoginNavigation("about:blank"))
     }
 
-    // --- The login page's auth-adjacent detours stay usable in-app ---
+    // --- The login page's two detour links go OUT to the browser, not in-app ---
+    // Both finish via an emailed link that opens in the real browser, so running their
+    // first step in the WebView's throwaway cookie jar only splits the flow in two.
 
     @Test
-    fun `allows the forgot password page and its query variants`() {
-        assertTrue(isAllowedLoginNavigation("https://www.ravelry.com/account/forgot"))
-        assertTrue(isAllowedLoginNavigation("https://www.ravelry.com/account/forgot?forgot=username"))
+    fun `the forgot password page and its query variants are external detours`() {
+        assertTrue(isExternalLoginDetour("https://www.ravelry.com/account/forgot"))
+        assertTrue(isExternalLoginDetour("https://www.ravelry.com/account/forgot?forgot=username"))
+        // And no longer loadable in place.
+        assertFalse(isAllowedLoginNavigation("https://www.ravelry.com/account/forgot"))
     }
 
     @Test
-    fun `allows the invitations sign-up flow and its sub-steps`() {
-        assertTrue(isAllowedLoginNavigation("https://www.ravelry.com/invitations"))
-        assertTrue(isAllowedLoginNavigation("https://www.ravelry.com/invitations/ask"))
+    fun `the invitations sign-up flow and its sub-steps are external detours`() {
+        assertTrue(isExternalLoginDetour("https://www.ravelry.com/invitations"))
+        // /invitations/ask is where Ravelry's own POST lands, so it has to be covered
+        // too — otherwise the form submission reads as an off-flow server redirect.
+        assertTrue(isExternalLoginDetour("https://www.ravelry.com/invitations/ask"))
+        assertFalse(isAllowedLoginNavigation("https://www.ravelry.com/invitations"))
+        assertFalse(isAllowedLoginNavigation("https://www.ravelry.com/invitations/ask"))
+    }
+
+    @Test
+    fun `the detour check applies the same host and escape guards as the allowlist`() {
+        // It feeds openUri, so a lookalike host passing here would hand the user's real
+        // browser a page of someone else's choosing.
+        assertFalse(isExternalLoginDetour("https://www.ravelry.com.evil.com/invitations"))
+        assertFalse(isExternalLoginDetour("https://evil.com/invitations"))
+        assertFalse(isExternalLoginDetour("http://www.ravelry.com/invitations"))
+        assertFalse(isExternalLoginDetour("https://www.ravelry.com/invitations/..%2fmessages"))
+    }
+
+    @Test
+    fun `the auth flow itself is never treated as a detour`() {
+        assertFalse(isExternalLoginDetour("https://www.ravelry.com/account/login"))
+        assertFalse(isExternalLoginDetour("https://www.ravelry.com/consent?consent=8ed98e71"))
+        assertFalse(isExternalLoginDetour("https://www.ravelry.com/oauth2/auth?client_id=x"))
     }
 
     // --- The rest of the Ravelry site is not ---
@@ -216,5 +241,28 @@ class LoginNavigationPolicyTest {
             LoginNavigationDecision.RESTART_FLOW,
             loginNavigationDecision("https://example.com/broken", userInitiated = false, restartsUsed = 0),
         )
+    }
+
+    @Test
+    fun `a detour opens externally however it was reached and whatever the budget`() {
+        // The server-driven case is the one that matters: Ravelry POSTs /invitations to
+        // /invitations/ask itself. Ordered ahead of the restart branch so that redirect
+        // can't restart the login flow underneath someone creating an account.
+        for (url in listOf(
+            "https://www.ravelry.com/invitations",
+            "https://www.ravelry.com/invitations/ask",
+            "https://www.ravelry.com/account/forgot",
+        )) {
+            assertEquals(
+                LoginNavigationDecision.OPEN_EXTERNALLY,
+                loginNavigationDecision(url, userInitiated = true, restartsUsed = 0),
+                url,
+            )
+            assertEquals(
+                LoginNavigationDecision.OPEN_EXTERNALLY,
+                loginNavigationDecision(url, userInitiated = false, restartsUsed = MAX_LOGIN_FLOW_RESTARTS),
+                url,
+            )
+        }
     }
 }
