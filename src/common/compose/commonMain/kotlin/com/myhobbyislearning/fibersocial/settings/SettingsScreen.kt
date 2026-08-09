@@ -76,8 +76,10 @@ import com.myhobbyislearning.fibersocial.ui.UserAvatar
  * @param onOpenAbout Opens the "About FiberSocial" disclosure screen (issue #289).
  * @param onOpenBlockedUsers Opens the blocked-users manage/unblock list (issue #410).
  * @param onDeleteAccount Opens Ravelry's profile editor, where the account-deletion link
- *   lives, in the system browser. Required by App Store guideline 5.1.1(v); see
- *   `ravelryAccountDeletionUrl` for why it's a link out rather than an in-app flow.
+ *   lives, in the system browser, and signs out — returning from the browser should land
+ *   on the login screen, not in the settings of an account that may no longer exist.
+ *   Required by App Store guideline 5.1.1(v); see `ravelryAccountDeletionUrl` for why
+ *   it's a link out rather than an in-app flow. The dialog in front of it says both.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -122,17 +124,22 @@ fun SettingsScreen(
             onDismissRequest = { confirmingDeleteAccount = false },
             title = { Text("Delete your Ravelry account?") },
             text = {
-                // Spells out both surprises before the hand-off: that this deletes the
-                // Ravelry account itself (FiberSocial has no separate account to delete),
-                // and that the last step happens on Ravelry's site — including *where* on
-                // that page to look, since Ravelry has no deeper URL to link to.
+                // Spells out all three surprises before the hand-off: that this deletes
+                // the Ravelry account itself (FiberSocial has no separate account to
+                // delete), that the last step happens on Ravelry's site — including
+                // *where* on that page to look, since Ravelry has no deeper URL to link
+                // to — and that the app signs itself out on the way (see onDeleteAccount's
+                // call site), which would otherwise read as having been logged out at
+                // random by a tap that "only" opened a browser.
                 Text(
                     "FiberSocial doesn't have its own accounts — you sign in with Ravelry, " +
                         "so deleting your account means deleting your Ravelry account and " +
                         "everything in it. This can't be undone.\n\n" +
                         "We'll open your Ravelry profile settings in your browser. Sign in " +
                         "if you're asked to, then use the \"delete Ravelry account\" link at " +
-                        "the bottom of that page to finish.",
+                        "the bottom of that page to finish.\n\n" +
+                        "You'll be signed out of FiberSocial here. If you change your mind, " +
+                        "nothing is deleted until you finish on Ravelry — just sign back in.",
                 )
             },
             confirmButton = {

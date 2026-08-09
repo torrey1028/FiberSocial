@@ -1107,7 +1107,17 @@ fun FeedScreen(
             // control is a logged-in profile-edit link, so the user usually has to sign
             // in to Ravelry on the way — and the app's only WebView is the login one,
             // deliberately confined to the OAuth flow (issue #425).
-            onDeleteAccount = { uriHandler.openUri(ravelryAccountDeletionUrl(user?.username)) },
+            onDeleteAccount = {
+                uriHandler.openUri(ravelryAccountDeletionUrl(user?.username))
+                // Sign out on the way out, so returning from the browser lands on the
+                // login screen rather than back in the settings of an account that may
+                // no longer exist. The app cannot observe whether the deletion actually
+                // went through, and of the two guesses this is the safe one: a session
+                // held open against a deleted account 403s on every call, while a user
+                // who changed their mind just logs back in. Ordered after openUri
+                // because signing out tears this screen down.
+                onLogout()
+            },
         )
         return
     }
