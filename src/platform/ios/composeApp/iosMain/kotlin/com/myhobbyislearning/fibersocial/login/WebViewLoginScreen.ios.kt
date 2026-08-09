@@ -15,6 +15,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.UIKitView
 import com.myhobbyislearning.fibersocial.auth.AuthCallback
@@ -71,21 +72,59 @@ actual fun WebViewLoginScreen(
     // remember: WKWebView.navigationDelegate is weak; the composition must hold the
     // strong reference or the delegate is collected mid-login.
     val delegate = remember { LoginNavigationDelegate(buildAuthUrl, onAuthComplete, onAuthError) }
+    // Held so the toolbar's Back can drive the web view's OWN history — UIKitView's
+    // factory runs where the view is created, which the toolbar can't reach otherwise.
+    // Plain remember, not state: nothing recomposes on it, it's read inside a click.
+    val webViewHolder = remember { WebViewHolder() }
     Column(Modifier.fillMaxSize()) {
-        // Debug builds only: a login failure can strand the flow INSIDE the web view
-        // (e.g. dumped onto ravelry.com's home page), and iOS has no system back to
-        // escape it — which also made the login screen's log export unreachable right
-        // after the failures it exists to capture. This bar keeps both an exit and the
-        // export reachable from anywhere in the web flow. Absent in release builds.
-        if (DebugFlags.debugToolsAvailable) {
-            DebugLoginToolbar(onBack)
-        }
-        LoginWebView(buildAuthUrl, delegate)
+        LoginToolbar(
+            onBack = {
+                // Web history first, then leave the screen — the same rule Android's
+                // BackHandler applies to the system back button (issue #308), so a
+                // sign-up or forgot-password detour taken from the login page backs out
+                // to the login form rather than abandoning the login attempt outright.
+                val webView = webViewHolder.webView
+                if (webView != null && webView.canGoBack) {
+                    webView.goBack()
+                } else {
+                    onBack()
+                }
+            },
+            onExit = onBack,
+        )
+        LoginWebView(buildAuthUrl, delegate, webViewHolder)
     }
 }
 
+/** Strong-reference box for the live [WKWebView]; see its `remember` in the screen above. */
+@OptIn(ExperimentalForeignApi::class)
+private class WebViewHolder {
+    var webView: WKWebView? = null
+}
+
+/**
+ * Bar above the login web view, present in **release** builds too.
+ *
+ * iOS has no system back button, so without this the only way out of the web flow is the
+ * edge-swipe gesture — which navigates web history when there is some and does nothing at
+ * all when there isn't. That left two dead ends in release: a stranded login (a failure
+ * that dumps the flow onto a page with no history, issue #449) and, more routinely, the
+ * sign-up detour — tapping "Sign Up" on Ravelry's login page loads `/invitations`, whose
+ * emailed signup link necessarily finishes in the system browser, stranding the user on a
+ * "check your email" page inside the app with no visible way back to the login form.
+ *
+ * Debug builds keep the two controls #427 added on top of Back. "Exit login" is NOT
+ * redundant with it: Back walks web history one page at a time, which is what the
+ * sign-up round trip needs but is a poor escape from a flow stranded several redirects
+ * deep — the case that button exists for. And the log export has to be reachable from
+ * *inside* this web view, since the failures the exported trace exists to capture happen
+ * here, not on the screens either side of it.
+ *
+ * @param onBack Web-history back, falling through to leaving the screen at the root.
+ * @param onExit Leaves the login screen outright, whatever the history depth.
+ */
 @Composable
-private fun DebugLoginToolbar(onBack: () -> Unit) {
+private fun LoginToolbar(onBack: () -> Unit, onExit: () -> Unit) {
     val shareText = rememberShareText()
     Surface {
         Row(
@@ -94,17 +133,27 @@ private fun DebugLoginToolbar(onBack: () -> Unit) {
                 .windowInsetsPadding(
                     WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal),
                 ),
-            horizontalArrangement = Arrangement.End,
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            TextButton(onClick = onBack) { Text("Exit login") }
-            TextButton(onClick = { shareText(DebugLog.dump()) }) { Text("Share log") }
+            TextButton(onClick = onBack) { Text("Back") }
+            if (DebugFlags.debugToolsAvailable) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(onClick = onExit) { Text("Exit login") }
+                    TextButton(onClick = { shareText(DebugLog.dump()) }) { Text("Share log") }
+                }
+            }
         }
     }
 }
 
 @OptIn(ExperimentalForeignApi::class)
 @Composable
-private fun LoginWebView(buildAuthUrl: () -> String, delegate: LoginNavigationDelegate) {
+private fun LoginWebView(
+    buildAuthUrl: () -> String,
+    delegate: LoginNavigationDelegate,
+    holder: WebViewHolder,
+) {
     UIKitView(
         factory = {
             val configuration = WKWebViewConfiguration().apply {
@@ -120,12 +169,12 @@ private fun LoginWebView(buildAuthUrl: () -> String, delegate: LoginNavigationDe
                 // Lets the standard edge-swipe gesture navigate the web flow's own
                 // history within the allowed auth pages — e.g. back out of a sign-up or
                 // forgot-password detour taken from the login page (issue #308) —
-                // mirroring Android's system-back handling of the same case. iOS has no
-                // system-level back button/gesture equivalent to fall back to once
-                // history is exhausted, so in release builds nothing triggers onBack
-                // here; debug builds wire it to the toolbar's "Exit login" (see
-                // WebViewLoginScreen above).
+                // mirroring Android's system-back handling of the same case. It is not
+                // sufficient on its own: it is invisible, and it does nothing once
+                // history runs out. The toolbar's Back (see LoginToolbar) is the
+                // discoverable path and covers both, in release as well as debug.
                 allowsBackForwardNavigationGestures = true
+                holder.webView = this
                 val authUrl = buildAuthUrl()
                 DebugLog.log("WebView loading ${describeUrlForLog(authUrl)}")
                 loadRequest(NSURLRequest(uRL = NSURL(string = authUrl)!!))
