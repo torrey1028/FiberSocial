@@ -35,6 +35,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.materialIcon
@@ -74,6 +75,9 @@ import com.myhobbyislearning.fibersocial.ui.UserAvatar
  * @param onNewMessagesEnabledChange Invoked with the new value when toggled.
  * @param onOpenAbout Opens the "About FiberSocial" disclosure screen (issue #289).
  * @param onOpenBlockedUsers Opens the blocked-users manage/unblock list (issue #410).
+ * @param onDeleteAccount Opens Ravelry's profile editor, where the account-deletion link
+ *   lives, in the system browser. Required by App Store guideline 5.1.1(v); see
+ *   `ravelryAccountDeletionUrl` for why it's a link out rather than an in-app flow.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -97,17 +101,57 @@ fun SettingsScreen(
     onOpenDebugPanel: (() -> Unit)? = null,
     onOpenAbout: () -> Unit = {},
     onOpenBlockedUsers: () -> Unit = {},
+    onDeleteAccount: () -> Unit = {},
 ) {
     // Sign out is the only other tappable row on this screen and fires on a single tap
     // with no undo (issue #262) — a fat-finger tap wipes the OAuth session and, via the
     // login WebView's cookie clear, the Ravelry web session too. Confirm first, matching
     // the leave-group dialog's pattern in FeedScreen.kt.
     var confirmingSignOut by rememberSaveable { mutableStateOf(false) }
+    // Same reasoning as confirmingSignOut, plus one of its own: the row hands the user
+    // off to an external browser, and guideline 5.1.1(v) explicitly permits (and this
+    // being irreversible, invites) a confirmation step in front of that.
+    var confirmingDeleteAccount by rememberSaveable { mutableStateOf(false) }
     // Disabled while the dialog is up (matching NewTopicScreen/FeedbackScreen's
     // enabled = !sending idiom): a back press otherwise still reaches this screen-level
     // handler and navigates out of Settings with the dialog left dangling open, instead
     // of the dialog's own dismiss-on-back consuming it.
-    BackHandler(enabled = !confirmingSignOut, onBack = onBack)
+    BackHandler(enabled = !confirmingSignOut && !confirmingDeleteAccount, onBack = onBack)
+    if (confirmingDeleteAccount) {
+        AlertDialog(
+            onDismissRequest = { confirmingDeleteAccount = false },
+            title = { Text("Delete your Ravelry account?") },
+            text = {
+                // Spells out both surprises before the hand-off: that this deletes the
+                // Ravelry account itself (FiberSocial has no separate account to delete),
+                // and that the last step happens on Ravelry's site — including *where* on
+                // that page to look, since Ravelry has no deeper URL to link to.
+                Text(
+                    "FiberSocial doesn't have its own accounts — you sign in with Ravelry, " +
+                        "so deleting your account means deleting your Ravelry account and " +
+                        "everything in it. This can't be undone.\n\n" +
+                        "We'll open your Ravelry profile settings in your browser. Sign in " +
+                        "if you're asked to, then use the \"delete Ravelry account\" link at " +
+                        "the bottom of that page to finish.",
+                )
+            },
+            confirmButton = {
+                // Tagged for the same reason as ConfirmSignOut: the row that opened this
+                // dialog stays in the semantics tree behind it, so a text match on
+                // "Delete account" alone would be ambiguous.
+                TextButton(
+                    onClick = {
+                        confirmingDeleteAccount = false
+                        onDeleteAccount()
+                    },
+                    modifier = Modifier.testTag("ConfirmDeleteAccount"),
+                ) { Text("Continue to Ravelry") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmingDeleteAccount = false }) { Text("Cancel") }
+            },
+        )
+    }
     if (confirmingSignOut) {
         AlertDialog(
             onDismissRequest = { confirmingSignOut = false },
@@ -291,6 +335,33 @@ fun SettingsScreen(
                 Spacer(Modifier.width(16.dp))
                 Text(
                     text = "Sign out",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+            HorizontalDivider()
+            // App Store guideline 5.1.1(v) — the 2026-08-07 rejection of 1.0 (3001).
+            // Last row on the screen and directly under Sign out, where the destructive
+            // account actions belong together and a reviewer looking for it will find it.
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(
+                        onClick = { confirmingDeleteAccount = true },
+                        onClickLabel = "Delete account",
+                        role = Role.Button,
+                    )
+                    .padding(horizontal = 16.dp, vertical = 16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    Icons.Default.Delete,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error,
+                )
+                Spacer(Modifier.width(16.dp))
+                Text(
+                    text = "Delete account",
                     style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.error,
                 )

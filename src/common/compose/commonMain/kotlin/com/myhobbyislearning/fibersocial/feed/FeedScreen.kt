@@ -116,6 +116,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import com.myhobbyislearning.fibersocial.about.AboutScreen
 import com.myhobbyislearning.fibersocial.app.ForegroundActivations
+import com.myhobbyislearning.fibersocial.auth.ravelryAccountDeletionUrl
 import com.myhobbyislearning.fibersocial.debug.DebugPanel
 import com.myhobbyislearning.fibersocial.events.EventDetailScreen
 import com.myhobbyislearning.fibersocial.events.EventsScreen
@@ -1039,6 +1040,7 @@ fun FeedScreen(
     }
 
     if (showSettings) {
+        val uriHandler = LocalUriHandler.current
         // notificationSettings and its one-shot load are hoisted to FeedScreen's state block
         // (see #360 there) so the optimistic value survives leaving and re-entering Settings.
         // Optimistically update local state, then persist. Null (still loading) is a no-op.
@@ -1101,6 +1103,11 @@ fun FeedScreen(
             },
             onOpenAbout = { showAbout = true },
             onOpenBlockedUsers = { showBlockedUsers = true },
+            // Guideline 5.1.1(v). The system browser, not a WebView: Ravelry's deletion
+            // control is a logged-in profile-edit link, so the user usually has to sign
+            // in to Ravelry on the way — and the app's only WebView is the login one,
+            // deliberately confined to the OAuth flow (issue #425).
+            onDeleteAccount = { uriHandler.openUri(ravelryAccountDeletionUrl(user?.username)) },
         )
         return
     }

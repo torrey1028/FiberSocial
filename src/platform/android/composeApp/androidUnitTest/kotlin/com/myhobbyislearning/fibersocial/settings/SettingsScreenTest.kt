@@ -8,6 +8,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import com.myhobbyislearning.fibersocial.feed.models.RavelryUser
 import com.myhobbyislearning.fibersocial.notifications.PollCadence
 import org.junit.Rule
@@ -316,5 +317,63 @@ class SettingsScreenTest {
             )
         }
         compose.onNodeWithText("New messages").assertIsOff()
+    }
+
+    // App Store guideline 5.1.1(v) — the rejection of 1.0 (3001) on 2026-08-07. The row
+    // has to exist unconditionally: a reviewer following the "navigate to the account
+    // deletion option" step will not supply any optional handler to make it appear.
+    @Test
+    fun `delete account row is always shown`() {
+        compose.setContent {
+            SettingsScreen(user = user, onBack = {}, onSignOut = {})
+        }
+        compose.onNodeWithText("Delete account").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun `tapping delete account opens a confirmation dialog without leaving the app yet`() {
+        var deletes = 0
+        compose.setContent {
+            SettingsScreen(user = user, onBack = {}, onSignOut = {}, onDeleteAccount = { deletes++ })
+        }
+        compose.onNodeWithText("Delete account").performScrollTo().performClick()
+        compose.onNodeWithText("Delete your Ravelry account?").assertIsDisplayed()
+        compose.runOnIdle { assertEquals(0, deletes) }
+    }
+
+    @Test
+    fun `confirming delete account invokes its handler`() {
+        var deletes = 0
+        compose.setContent {
+            SettingsScreen(user = user, onBack = {}, onSignOut = {}, onDeleteAccount = { deletes++ })
+        }
+        compose.onNodeWithText("Delete account").performScrollTo().performClick()
+        compose.onNodeWithTag("ConfirmDeleteAccount").performClick()
+        compose.runOnIdle { assertEquals(1, deletes) }
+    }
+
+    @Test
+    fun `cancelling the delete account dialog leaves the account alone`() {
+        var deletes = 0
+        compose.setContent {
+            SettingsScreen(user = user, onBack = {}, onSignOut = {}, onDeleteAccount = { deletes++ })
+        }
+        compose.onNodeWithText("Delete account").performScrollTo().performClick()
+        compose.onNodeWithText("Cancel").performClick()
+        compose.runOnIdle { assertEquals(0, deletes) }
+        compose.onNodeWithText("Delete your Ravelry account?").assertDoesNotExist()
+    }
+
+    @Test
+    fun `back is consumed by the delete account dialog rather than leaving settings`() {
+        // Same trap the sign-out dialog covers: without the BackHandler guard, back
+        // navigates out of Settings and leaves the dialog dangling over the feed.
+        var backs = 0
+        compose.setContent {
+            SettingsScreen(user = user, onBack = { backs++ }, onSignOut = {})
+        }
+        compose.onNodeWithText("Delete account").performScrollTo().performClick()
+        compose.runOnIdle { compose.activity.onBackPressedDispatcher.onBackPressed() }
+        compose.runOnIdle { assertEquals(0, backs) }
     }
 }
