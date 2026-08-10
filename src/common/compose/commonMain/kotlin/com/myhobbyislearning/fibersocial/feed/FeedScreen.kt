@@ -1108,7 +1108,14 @@ fun FeedScreen(
             // in to Ravelry on the way — and the app's only WebView is the login one,
             // deliberately confined to the OAuth flow (issue #425).
             onDeleteAccount = {
-                uriHandler.openUri(ravelryAccountDeletionUrl(user?.username))
+                // runCatching, matching ReportPostDialog/EventDetailScreen: openUri
+                // rethrows an unresolvable ACTION_VIEW as IllegalArgumentException, and
+                // an uncaught throw out of a click handler crashes the app — on the one
+                // path App Review is explicitly told to walk (5.1.1(v)), on a device
+                // with no browser able to handle https.
+                val opened = runCatching {
+                    uriHandler.openUri(ravelryAccountDeletionUrl(user?.username))
+                }.onFailure { println("FiberSocial: openUri failed: ${it.message}") }.isSuccess
                 // Sign out on the way out, so returning from the browser lands on the
                 // login screen rather than back in the settings of an account that may
                 // no longer exist. The app cannot observe whether the deletion actually
@@ -1116,7 +1123,11 @@ fun FeedScreen(
                 // held open against a deleted account 403s on every call, while a user
                 // who changed their mind just logs back in. Ordered after openUri
                 // because signing out tears this screen down.
-                onLogout()
+                //
+                // Only when the browser actually opened, though: signing out after a
+                // failed hand-off would strand the user with neither the deletion page
+                // nor the session the dialog promised they could return to.
+                if (opened) onLogout()
             },
         )
         return

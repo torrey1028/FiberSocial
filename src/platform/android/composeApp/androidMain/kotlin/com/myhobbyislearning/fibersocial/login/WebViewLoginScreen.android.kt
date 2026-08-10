@@ -148,7 +148,16 @@ actual fun WebViewLoginScreen(
                             LoginNavigationDecision.ALLOW -> false
                             LoginNavigationDecision.OPEN_EXTERNALLY -> {
                                 DebugLog.log("WebView handed off to the browser: ${describeUrlForLog(url)}")
-                                uriHandler.openUri(url)
+                                // AndroidUriHandler turns an unresolvable ACTION_VIEW into an
+                                // IllegalArgumentException, and this is a WebViewClient callback
+                                // on the UI thread — an uncaught throw here takes the app down
+                                // mid-login on any device with no browser able to handle https
+                                // (none installed, or one disabled by a managed profile). The
+                                // navigation is cancelled either way, so failing here just
+                                // leaves the user on the login form, which is recoverable.
+                                runCatching { uriHandler.openUri(url) }.onFailure {
+                                    DebugLog.log("WebView browser hand-off failed: ${it.message}")
+                                }
                                 true
                             }
                             LoginNavigationDecision.BLOCK -> {

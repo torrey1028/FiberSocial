@@ -207,7 +207,13 @@ private class LoginNavigationDelegate(
                 LoginNavigationDecision.OPEN_EXTERNALLY -> {
                     DebugLog.log("WebView handed off to the browser: ${describeUrlForLog(url)}")
                     decisionHandler(WKNavigationActionPolicy.WKNavigationActionPolicyCancel)
-                    openExternally(url)
+                    // Mirrors the Android handler: an exception escaping a WKNavigationDelegate
+                    // callback terminates a Kotlin/Native app outright. The decisionHandler is
+                    // already called above, so cancelling is not at risk either way — a failed
+                    // hand-off just leaves the user on the login form.
+                    runCatching { openExternally(url) }.onFailure {
+                        DebugLog.log("WebView browser hand-off failed: ${it.message}")
+                    }
                 }
                 LoginNavigationDecision.BLOCK -> {
                     DebugLog.log("WebView cancelled non-login navigation to ${describeUrlForLog(url)}")
