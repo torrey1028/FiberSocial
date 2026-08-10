@@ -219,8 +219,9 @@ jobs:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     # No concurrency group here (unlike build-rc): this job can sit paused for
-    # however long manual QA/approval takes, and needs.build-rc.outputs already
-    # scopes it to this run's own RC — sharing build-rc's `release-android`
+    # however long manual QA/approval takes, and the tag it promotes is already
+    # pinned by $GITHUB_REF_NAME (see "Determine expected versionCode"), so it
+    # can only ever act on its own run's RC — sharing build-rc's `release-android`
     # group would make a still-pending approval block every later run's
     # build-rc (a real release fix-forward) from even starting.
     permissions:
@@ -274,7 +275,13 @@ jobs:
           VERSION_CODE: ${{ steps.version.outputs.version_code }}
         run: |
           pip install --quiet google-api-python-client google-auth
-          python3 -c '
+          # Fed on stdin via a quoted heredoc, NOT `python3 -c '...'`: inside a
+          # single-quoted shell argument the first apostrophe in the Python source
+          # ends the string, so a literal like release.get('name') silently reaches
+          # Python as release.get(name) and the whole program dies with a
+          # SyntaxError before it does anything. A <<'PY' heredoc quotes nothing and
+          # expands nothing, so the Python below is passed through byte for byte.
+          python3 - <<'PY'
           import json, os
           from google.oauth2 import service_account
           from googleapiclient.discovery import build
@@ -311,7 +318,7 @@ jobs:
           edits.commit(editId=edit_id, packageName=package_name).execute()
 
           print(f"Promoted versionCode {version_code} ({release.get('name', '?')}) from {source_track!r} to production.")
-          '
+          PY
 
       # Flips the one GitHub Release object for this tag from release
       # candidate to released — this is what moves the public
