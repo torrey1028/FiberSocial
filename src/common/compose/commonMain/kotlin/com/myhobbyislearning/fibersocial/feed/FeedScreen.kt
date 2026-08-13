@@ -162,6 +162,7 @@ import com.myhobbyislearning.fibersocial.ui.GroupBadge
 import com.myhobbyislearning.fibersocial.ui.PullToRefreshBox
 import com.myhobbyislearning.fibersocial.ui.appLogoResource
 import com.myhobbyislearning.fibersocial.ui.UserAvatar
+import com.myhobbyislearning.fibersocial.ui.rememberFabClearance
 import io.ktor.http.encodeURLParameter
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
@@ -1486,6 +1487,9 @@ fun FeedScreen(
     // (issue #431), so both link out to the same Ravelry search page — the app
     // deliberately doesn't rebuild group search in-app (issue #232).
     val onFindGroups = { uriHandler.openUri("https://www.ravelry.com/groups/search") }
+    // The "New message" FAB lives in this Scaffold, but the list it covers is inside
+    // MessagesScreen — so the measurement is taken here and the clearance passed down.
+    val messagesFabClearance = rememberFabClearance()
 
     CloseDrawerOnBack(drawerState)
 
@@ -1599,7 +1603,11 @@ fun FeedScreen(
                             viewModel.messages.resetCompose()
                             composingMessage = true
                         },
-                        modifier = Modifier.testTag("NewMessageFab"),
+                        // Measured so the conversation list can reserve bottom space and
+                        // let its last row scroll clear of this button (issue #401) — the
+                        // FAB floats and is absent from the Scaffold's innerPadding.
+                        modifier = Modifier.testTag("NewMessageFab")
+                            .then(messagesFabClearance.measured()),
                     ) {
                         Icon(Icons.Default.Edit, contentDescription = "New message")
                     }
@@ -1637,6 +1645,7 @@ fun FeedScreen(
             }
             if (showingMessages) MessagesScreen(
                 state = displayedMessagesState,
+                fabClearance = messagesFabClearance.padding,
                 onRefresh = { viewModel.messages.refresh() },
                 // NOT refresh(): retry has to work from the error state, where refresh has
                 // no loaded content to refresh and would no-op — that is exactly the open

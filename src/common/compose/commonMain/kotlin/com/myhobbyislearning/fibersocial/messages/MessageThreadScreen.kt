@@ -56,6 +56,7 @@ import com.myhobbyislearning.fibersocial.feed.html.HtmlPostParser
 import com.myhobbyislearning.fibersocial.feed.parseRavelryTimestamp
 import com.myhobbyislearning.fibersocial.feed.relativeTimeSince
 import com.myhobbyislearning.fibersocial.ui.UserAvatar
+import com.myhobbyislearning.fibersocial.ui.rememberFabClearance
 
 /** Label an outbound message is attributed to, in place of the signed-in user's own name. */
 private const val SELF_LABEL = "You"
@@ -143,6 +144,9 @@ fun MessageThreadScreen(
     BackHandler(onBack = onBack)
 
     val thread = state.thread
+    // The Reply FAB floats above the list and is not part of its layout, so without this
+    // the last message parks underneath it, unreadable (issue #401). See rememberFabClearance.
+    val fabClearance = rememberFabClearance()
     Scaffold(
         modifier = modifier.testTag("MessageThreadScreen"),
         topBar = {
@@ -166,7 +170,7 @@ fun MessageThreadScreen(
             onReply?.let {
                 ExtendedFloatingActionButton(
                     onClick = it,
-                    modifier = Modifier.testTag("ReplyFab"),
+                    modifier = Modifier.testTag("ReplyFab").then(fabClearance.measured()),
                     icon = { Icon(Icons.Default.Edit, contentDescription = null) },
                     text = { Text("Reply") },
                 )
@@ -182,7 +186,14 @@ fun MessageThreadScreen(
                 // row previewing its newest message is the part you haven't read.
                 state = rememberLazyListState(),
                 modifier = Modifier.fillMaxSize().testTag("MessageThreadList"),
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                contentPadding = PaddingValues(
+                    start = 12.dp,
+                    end = 12.dp,
+                    top = 8.dp,
+                    // Clears the Reply FAB. Zero when there is no FAB — a thread with no
+                    // inbound message gets no Reply action, and reserves no space for one.
+                    bottom = 8.dp + fabClearance.padding,
+                ),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 items(thread.messages, key = { it.id }) { message ->
