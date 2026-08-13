@@ -1194,10 +1194,15 @@ fun FeedScreen(
     if (threadState != null) {
         MessageThreadScreen(
             state = threadState,
-            // Blank only in the window before the feed has resolved the user, which the
-            // messages list can't be reached in — messageDirection treats it as "everything
-            // received", which mis-styles rather than mis-marks (mark-read already ran).
-            currentUsername = user?.username.orEmpty(),
+            // FROM THE THREAD, NOT FROM THE FEED (issue #406). This used to read
+            // `user?.username.orEmpty()`, on the assumption that a blank was only possible
+            // "in the window before the feed has resolved the user, which the messages list
+            // can't be reached in". A configuration change breaks that assumption: rotating
+            // re-enters the feed's loading state with the thread already open, so `user`
+            // went null for a frame and every message the user sent rendered as received —
+            // wrong bubble colour AND wrong side of the screen — before snapping back.
+            // MessagesViewModel's own username survives, because the ViewModel does.
+            currentUsername = threadState.currentUsername,
             // Read state is already applied by the time this fires: openThread() marked the
             // thread read when it opened it, and updated the list row from the same
             // regrouping, so the row behind is correct the instant it reappears.
