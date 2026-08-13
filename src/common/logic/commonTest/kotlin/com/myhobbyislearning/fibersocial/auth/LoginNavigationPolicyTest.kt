@@ -254,4 +254,66 @@ class LoginNavigationPolicyTest {
         }
     }
 
+
+    // --- A login page pointed away from this flow is a dead end (device trace 2026-08-13) ---
+
+    @Test
+    fun `the sign-in link on the sign-up page is not treated as the oauth login page`() {
+        // The observed dead end: Sign Up -> /invitations -> its header's "sign in" link,
+        // which is /account/login?return_to=/invitations. Path-only matching let it
+        // through, the user signed in, Ravelry honoured return_to, and the OAuth flow was
+        // silently abandoned on the sign-up page.
+        val url = "https://www.ravelry.com/account/login?return_to=/invitations"
+        assertTrue(isOffFlowLoginPage(url))
+        assertFalse(isAllowedLoginNavigation(url))
+    }
+
+    @Test
+    fun `the real oauth login page carries no return_to and stays allowed`() {
+        // Empirical: the OAuth flow's own login page has no return_to at all — the
+        // consent id lives in the session (same trace).
+        assertFalse(isOffFlowLoginPage("https://www.ravelry.com/account/login"))
+        assertTrue(isAllowedLoginNavigation("https://www.ravelry.com/account/login"))
+    }
+
+    @Test
+    fun `a return_to pointing back into the flow stays allowed`() {
+        // The stale-challenge bounce (issue #434) looks like this, and it CAN finish the
+        // flow — restarting on it would throw away a login that was about to work.
+        for (url in listOf(
+            "https://www.ravelry.com/account/login?prompt=1&return_to=/consent?consent=8ed98e71",
+            "https://www.ravelry.com/account/login?return_to=/oauth2/auth?client_id=x",
+        )) {
+            assertFalse(isOffFlowLoginPage(url), url)
+            assertTrue(isAllowedLoginNavigation(url), url)
+        }
+    }
+
+    @Test
+    fun `an off-flow login page restarts rather than being blocked or loaded`() {
+        // Restart, not BLOCK: the user asking to sign in should get a working login page,
+        // not a tap that does nothing. Ahead of the userInitiated split for that reason.
+        val url = "https://www.ravelry.com/account/login?return_to=/invitations"
+        assertEquals(
+            LoginNavigationDecision.RESTART_FLOW,
+            loginNavigationDecision(url, userInitiated = true, restartsUsed = 0),
+        )
+        assertEquals(
+            LoginNavigationDecision.RESTART_FLOW,
+            loginNavigationDecision(url, userInitiated = false, restartsUsed = 0),
+        )
+        // Still bounded by the same budget as every other restart.
+        assertEquals(
+            LoginNavigationDecision.FAIL_LOGIN,
+            loginNavigationDecision(url, userInitiated = true, restartsUsed = MAX_LOGIN_FLOW_RESTARTS),
+        )
+    }
+
+    @Test
+    fun `an off-site return_to does not sneak through as a flow-completing login`() {
+        assertTrue(isOffFlowLoginPage("https://www.ravelry.com/account/login?return_to=https://evil.com"))
+        // Lookalike prefixes must not read as the consent page.
+        assertTrue(isOffFlowLoginPage("https://www.ravelry.com/account/login?return_to=/consent-evil"))
+        assertTrue(isOffFlowLoginPage("https://www.ravelry.com/account/login?return_to=/oauth2evil"))
+    }
 }

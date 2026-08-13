@@ -46,11 +46,55 @@ fun isAllowedLoginNavigation(url: String): Boolean {
     if (url == "about:blank") return true
     val path = ravelrySafePath(url) ?: return false
     return path.startsWith("/oauth2/") ||
-        path == "/account/login" ||
+        (path == "/account/login" && !isOffFlowLoginPage(url)) ||
         path == "/account/forgot" ||
         path == "/consent" ||
         path == "/invitations" ||
         path.startsWith("/invitations/")
+}
+
+/**
+ * Whether [url] is a Ravelry login page that would sign the user in **somewhere other
+ * than this OAuth flow** — a login form whose `return_to` points away from it.
+ *
+ * The dead end this closes, from an on-device trace (2026-08-13): from the login page the
+ * user taps "Sign Up", lands on `/invitations`, and taps the *"sign in"* link in that
+ * page's own header. That link is `/account/login?return_to=/invitations`. Matching
+ * `/account/login` on path alone let it through, so the user signed in, Ravelry honoured
+ * `return_to`, and they were returned to the sign-up page — signed in to the website, but
+ * with the OAuth flow abandoned. No consent page, no code, no way forward, and nothing
+ * looked broken enough to explain why.
+ *
+ * The distinguishing signal is the query, and it is empirical: the real OAuth login page
+ * carries **no** `return_to` (the consent id lives in the session, see the same trace),
+ * while the stale-challenge bounce carries one pointing back into the flow
+ * (`/account/login?prompt=1&return_to=/consent?...`, issue #434). So a `return_to` aimed
+ * anywhere else means this login cannot finish the flow.
+ *
+ * Callers treat it as a restart rather than a block, because the user asking to sign in
+ * is a reasonable thing to want — they should land on a login page that actually works,
+ * not have the tap silently swallowed.
+ */
+fun isOffFlowLoginPage(url: String): Boolean {
+    if (ravelrySafePath(url) != "/account/login") return false
+    val parsed = runCatching { Url(url) }.getOrNull() ?: return false
+    val returnTo = parsed.parameters["return_to"] ?: return false
+    return !returnTo.pointsInsideAuthFlow()
+}
+
+/**
+ * Whether this `return_to` value addresses the OAuth flow, matched on a delimiter
+ * boundary rather than a bare prefix: `/consent-evil` starts with `/consent` but is a
+ * different Rails route entirely, and treating it as in-flow would hand back exactly the
+ * escape [isOffFlowLoginPage] exists to close. Same rule, same reason, as [isAuthRedirect].
+ */
+private fun String.pointsInsideAuthFlow(): Boolean {
+    for (route in listOf("/consent", "/oauth2")) {
+        if (!startsWith(route)) continue
+        val rest = substring(route.length)
+        if (rest.isEmpty() || rest[0] == '/' || rest[0] == '?' || rest[0] == '#') return true
+    }
+    return false
 }
 
 /**
@@ -159,6 +203,15 @@ fun loginNavigationDecision(
     restartsUsed: Int,
 ): LoginNavigationDecision = when {
     isAllowedLoginNavigation(url) -> LoginNavigationDecision.ALLOW
+    // Ahead of the userInitiated split: a login page pointed away from this flow is a
+    // dead end whoever asked for it, and the user tapping "sign in" wants a login page
+    // that works — not a silently swallowed tap. Restarting gives them exactly that.
+    isOffFlowLoginPage(url) ->
+        if (restartsUsed < MAX_LOGIN_FLOW_RESTARTS) {
+            LoginNavigationDecision.RESTART_FLOW
+        } else {
+            LoginNavigationDecision.FAIL_LOGIN
+        }
     userInitiated -> LoginNavigationDecision.BLOCK
     restartsUsed < MAX_LOGIN_FLOW_RESTARTS -> LoginNavigationDecision.RESTART_FLOW
     else -> LoginNavigationDecision.FAIL_LOGIN
