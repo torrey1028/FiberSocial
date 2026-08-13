@@ -1,10 +1,9 @@
 # iOS debug builds without a Mac
 
-`.github/workflows/ios-debug-build.yml` builds a Debug-configuration,
-Ad Hoc-signed IPA on a GitHub Actions macOS runner and publishes it as an
-over-the-air (OTA) install link via GitHub Pages, so you can get a fresh
-build onto a real iPhone straight from a Linux/WSL machine with no Mac and
-no cable.
+`.github/workflows/ios-debug-build.yml` builds an Ad Hoc-signed IPA on a
+GitHub Actions macOS runner and publishes it as an over-the-air (OTA) install
+link via GitHub Pages, so you can get a fresh build onto a real iPhone
+straight from a Linux/WSL machine with no Mac and no cable.
 
 This is a developer convenience tool, separate from the release pipeline
 (`release.yml`'s `ios-release` job, `docs/ios-device-checklist.md`) — it has
@@ -14,12 +13,36 @@ beyond your own registered device(s).
 ## Requesting a build
 
 ```bash
+# Debug configuration (the default)
 gh workflow run ios-debug-build.yml --repo torrey1028/FiberSocial --ref <branch>
+
+# Release configuration
+gh workflow run ios-debug-build.yml --repo torrey1028/FiberSocial --ref <branch> \
+  -f configuration=Release
 ```
 
 Or use the "Run workflow" button on the workflow's Actions page and pick the
-branch there. It's `workflow_dispatch`-only (no automatic trigger) since
-every run costs macOS runner time, the most expensive tier.
+branch and configuration there. It's `workflow_dispatch`-only (no automatic
+trigger) since every run costs macOS runner time, the most expensive tier.
+
+### Which configuration?
+
+**Reach for `Release` whenever what you're checking differs between build
+types** — otherwise the build cannot show you the thing you're trying to
+verify:
+
+- Anything gated on `DebugFlags.debugToolsAvailable` — the login web view's
+  "Share log" button, the Settings "Debug panel" row. A Debug IPA shows those,
+  so it can't confirm what a release user sees in their place.
+- Anything gated out by `FeatureFlags` (e.g. `messagesEnabled`), which is
+  compiled out of release builds entirely.
+
+`Debug` is still the default, and is the right pick when you want those tools —
+above all the login web view's log export, which is the only way to get a trace
+off an OTA-installed iPhone.
+
+Either way it's an Ad Hoc build for your own registered devices, not a release
+artifact: no tests, no QA gate, and it never reaches TestFlight or the store.
 
 When it finishes, open **`https://torrey1028.github.io/FiberSocial/ios-debug/`**
 in **Safari on the iPhone** (the `itms-services://` install link only works
