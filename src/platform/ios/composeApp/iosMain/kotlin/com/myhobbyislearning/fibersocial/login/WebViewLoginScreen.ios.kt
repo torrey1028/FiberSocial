@@ -15,7 +15,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.viewinterop.UIKitView
 import com.myhobbyislearning.fibersocial.auth.AuthCallback
 import com.myhobbyislearning.fibersocial.auth.MALFORMED_AUTH_CALLBACK_MESSAGE
@@ -68,24 +70,43 @@ actual fun WebViewLoginScreen(
     onAuthError: (message: String) -> Unit,
     onBack: () -> Unit,
 ) {
+    // Sign-up and password reset both finish via an emailed link that opens in the
+    // browser, so they are handed off there rather than run in this WebView — see
+    // isExternalLoginDetour. Read here because the delegate is a plain class with no
+    // access to composition-locals.
+    val uriHandler = LocalUriHandler.current
     // remember: WKWebView.navigationDelegate is weak; the composition must hold the
     // strong reference or the delegate is collected mid-login.
-    val delegate = remember { LoginNavigationDelegate(buildAuthUrl, onAuthComplete, onAuthError) }
+    val delegate = remember {
+        LoginNavigationDelegate(buildAuthUrl, onAuthComplete, onAuthError, uriHandler::openUri)
+    }
     Column(Modifier.fillMaxSize()) {
-        // Debug builds only: a login failure can strand the flow INSIDE the web view
-        // (e.g. dumped onto ravelry.com's home page), and iOS has no system back to
-        // escape it — which also made the login screen's log export unreachable right
-        // after the failures it exists to capture. This bar keeps both an exit and the
-        // export reachable from anywhere in the web flow. Absent in release builds.
-        if (DebugFlags.debugToolsAvailable) {
-            DebugLoginToolbar(onBack)
-        }
+        LoginToolbar(onCancel = onBack)
         LoginWebView(buildAuthUrl, delegate)
     }
 }
 
+/**
+ * Bar above the login web view, present in **release** builds too.
+ *
+ * iOS has no system back button, so a login that dies inside the web view — a load
+ * failure that never commits a page, a content-process kill with nothing to reload
+ * (issue #449) — left release users with nothing to do but force-quit the app. The
+ * edge-swipe gesture doesn't cover it: it navigates web history, and at the point those
+ * failures happen there is none. Cancel always leaves.
+ *
+ * A plain exit rather than a history-walking Back is enough because nothing loads in this
+ * web view except the OAuth flow itself: the login page's "Sign Up" and "I forgot" links
+ * are handed to the system browser (see `isExternalLoginDetour`), so there is no in-app
+ * side trip left to back out of. Walking the OAuth flow's own history backwards is what
+ * the edge-swipe gesture is still there for.
+ *
+ * Debug builds add the log export #427 introduced — the failures the exported trace
+ * exists to capture happen *inside* this web view, so the share sheet has to be reachable
+ * from here rather than only from the screens on either side of it.
+ */
 @Composable
-private fun DebugLoginToolbar(onBack: () -> Unit) {
+private fun LoginToolbar(onCancel: () -> Unit) {
     val shareText = rememberShareText()
     Surface {
         Row(
@@ -94,10 +115,13 @@ private fun DebugLoginToolbar(onBack: () -> Unit) {
                 .windowInsetsPadding(
                     WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal),
                 ),
-            horizontalArrangement = Arrangement.End,
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            TextButton(onClick = onBack) { Text("Exit login") }
-            TextButton(onClick = { shareText(DebugLog.dump()) }) { Text("Share log") }
+            TextButton(onClick = onCancel) { Text("Cancel") }
+            if (DebugFlags.debugToolsAvailable) {
+                TextButton(onClick = { shareText(DebugLog.dump()) }) { Text("Share log") }
+            }
         }
     }
 }
@@ -118,13 +142,10 @@ private fun LoginWebView(buildAuthUrl: () -> String, delegate: LoginNavigationDe
             WKWebView(frame = CGRectMake(0.0, 0.0, 0.0, 0.0), configuration = configuration).apply {
                 navigationDelegate = delegate
                 // Lets the standard edge-swipe gesture navigate the web flow's own
-                // history within the allowed auth pages — e.g. back out of a sign-up or
-                // forgot-password detour taken from the login page (issue #308) —
-                // mirroring Android's system-back handling of the same case. iOS has no
-                // system-level back button/gesture equivalent to fall back to once
-                // history is exhausted, so in release builds nothing triggers onBack
-                // here; debug builds wire it to the toolbar's "Exit login" (see
-                // WebViewLoginScreen above).
+                // history (issue #308), mirroring Android's system-back handling. It is
+                // not an escape hatch: it is invisible, and it does nothing once history
+                // runs out — which is exactly the state a failed login leaves behind.
+                // The toolbar's Cancel (see LoginToolbar) covers that.
                 allowsBackForwardNavigationGestures = true
                 val authUrl = buildAuthUrl()
                 DebugLog.log("WebView loading ${describeUrlForLog(authUrl)}")
@@ -142,6 +163,7 @@ private class LoginNavigationDelegate(
     private val buildAuthUrl: () -> String,
     private val onAuthComplete: (code: String, state: String?, sessionCookie: String) -> Unit,
     private val onAuthError: (message: String) -> Unit,
+    private val openExternally: (url: String) -> Unit,
 ) : NSObject(), WKNavigationDelegateProtocol {
 
     // Restarts performed by this screen; caps the recovery loop.
@@ -182,6 +204,17 @@ private class LoginNavigationDelegate(
             when (loginNavigationDecision(url, userInitiated, flowRestarts)) {
                 LoginNavigationDecision.ALLOW ->
                     decisionHandler(WKNavigationActionPolicy.WKNavigationActionPolicyAllow)
+                LoginNavigationDecision.OPEN_EXTERNALLY -> {
+                    DebugLog.log("WebView handed off to the browser: ${describeUrlForLog(url)}")
+                    decisionHandler(WKNavigationActionPolicy.WKNavigationActionPolicyCancel)
+                    // Mirrors the Android handler: an exception escaping a WKNavigationDelegate
+                    // callback terminates a Kotlin/Native app outright. The decisionHandler is
+                    // already called above, so cancelling is not at risk either way — a failed
+                    // hand-off just leaves the user on the login form.
+                    runCatching { openExternally(url) }.onFailure {
+                        DebugLog.log("WebView browser hand-off failed: ${it.message}")
+                    }
+                }
                 LoginNavigationDecision.BLOCK -> {
                     DebugLog.log("WebView cancelled non-login navigation to ${describeUrlForLog(url)}")
                     decisionHandler(WKNavigationActionPolicy.WKNavigationActionPolicyCancel)
