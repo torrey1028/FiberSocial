@@ -21,12 +21,10 @@ import io.ktor.http.Url
  * (`/oauth2/auth`), the account-login form (`/account/login`), and the authorize
  * page (`/consent?consent=<uuid>`), plus the app's own OAuth redirect (which the
  * platform navigation handlers intercept before this policy runs, but is allowed
- * here too so correctness doesn't depend on their check ordering). The login
- * page's two auth-adjacent detours also stay usable in-app — password reset
- * (`/account/forgot`, query variants share the path) and Ravelry's
- * invitation-based sign-up (`/invitations` and its sub-steps) — because a dead
- * "forgot your password?" link strands people who need it most. Those detour
- * pages render the site's full footer, but its links are blocked like any other.
+ * here too so correctness doesn't depend on their check ordering).
+ *
+ * That is the whole OAuth flow and nothing else. The login page's two detour links —
+ * "Sign Up" and "I forgot" — are deliberately NOT here; see [isExternalLoginDetour].
  *
  * Host and path are compared on a parsed URL, not by string prefix, so lookalike
  * hosts (`www.ravelry.com.evil.com`) don't pass. The host compares case-insensitively
@@ -41,23 +39,59 @@ fun isAllowedLoginNavigation(url: String): Boolean {
     // WebViews use about:blank for internal empty documents (e.g. before the first
     // real load); blocking it can only break the flow, never open the site.
     if (url == "about:blank") return true
-    val parsed = runCatching { Url(url) }.getOrElse {
-        println("FiberSocial: isAllowedLoginNavigation could not parse ${url.take(120)}")
-        return false
-    }
-    if (parsed.protocol != URLProtocol.HTTPS) return false
-    val host = parsed.host.lowercase()
-    if (host != "www.ravelry.com" && host != "ravelry.com") return false
-    val path = parsed.encodedPath
-    if (path.contains("..") || path.contains('%') || path.contains("//") || path.contains('\\')) {
-        return false
-    }
+    val path = ravelrySafePath(url) ?: return false
     return path.startsWith("/oauth2/") ||
         path == "/account/login" ||
-        path == "/account/forgot" ||
-        path == "/consent" ||
-        path == "/invitations" ||
-        path.startsWith("/invitations/")
+        path == "/consent"
+}
+
+/**
+ * Whether [url] is one of the login page's two detour links — Ravelry's invitation-based
+ * sign-up (`/invitations` and its sub-steps, the "Sign Up" button) or password reset
+ * (`/account/forgot`, the "I forgot" link; query variants share the path).
+ *
+ * These get handed to the system browser rather than loaded in place, because **neither
+ * can finish inside the app**. Both end the same way: Ravelry emails a link, and that
+ * link opens in the real browser. `/invitations` even says so — it is "Step 1 of 2 — get
+ * a signup link". Running step 1 in the login WebView splits one flow across two cookie
+ * jars — the WebView's is deliberately non-persistent, a fresh jar per login so the
+ * captured `_ravelry_session` is the only copy that survives — and parks the user on a
+ * "check your email" page inside a screen whose only purpose is logging in. Opening them
+ * in the browser puts both steps in the same place with the same session, and leaves the
+ * login screen sitting on the login form for when the user comes back with an account or
+ * a new password.
+ *
+ * This is not a reversal of the #425 lockdown: an off-flow *browse* attempt is still
+ * cancelled in place (bouncing those to the browser was tried and felt broken mid-login).
+ * These two are the navigations a user takes knowing they are leaving the login attempt
+ * behind, which is exactly when an external hand-off reads as intended rather than as
+ * being thrown out of the app.
+ */
+fun isExternalLoginDetour(url: String): Boolean {
+    val path = ravelrySafePath(url) ?: return false
+    return path == "/invitations" ||
+        path.startsWith("/invitations/") ||
+        path == "/account/forgot"
+}
+
+/**
+ * The `encodedPath` of [url] if it is an https URL on Ravelry's own host whose path is
+ * free of the escapes a prefix check could be walked through, else null. Shared by the
+ * allowlist and [isExternalLoginDetour] so neither can drift into a weaker host check.
+ */
+private fun ravelrySafePath(url: String): String? {
+    val parsed = runCatching { Url(url) }.getOrElse {
+        println("FiberSocial: login navigation policy could not parse ${url.take(120)}")
+        return null
+    }
+    if (parsed.protocol != URLProtocol.HTTPS) return null
+    val host = parsed.host.lowercase()
+    if (host != "www.ravelry.com" && host != "ravelry.com") return null
+    val path = parsed.encodedPath
+    if (path.contains("..") || path.contains('%') || path.contains("//") || path.contains('\\')) {
+        return null
+    }
+    return path
 }
 
 /**
@@ -79,6 +113,9 @@ fun isAuthRedirect(url: String): Boolean {
 enum class LoginNavigationDecision {
     /** On the auth flow — load it. */
     ALLOW,
+
+    /** A sign-up / password-reset detour — cancel it and hand the URL to the browser. */
+    OPEN_EXTERNALLY,
 
     /** Off the flow by the user's own tap — cancel it and stay put. */
     BLOCK,
@@ -124,6 +161,11 @@ fun loginNavigationDecision(
     restartsUsed: Int,
 ): LoginNavigationDecision = when {
     isAllowedLoginNavigation(url) -> LoginNavigationDecision.ALLOW
+    // Ahead of the userInitiated split on purpose: a detour is a hand-off whichever way
+    // it was reached. Ravelry moves `/invitations` → `/invitations/ask` itself after the
+    // form POST, and reading that as an off-flow server redirect would restart the login
+    // flow underneath someone in the middle of creating an account.
+    isExternalLoginDetour(url) -> LoginNavigationDecision.OPEN_EXTERNALLY
     userInitiated -> LoginNavigationDecision.BLOCK
     restartsUsed < MAX_LOGIN_FLOW_RESTARTS -> LoginNavigationDecision.RESTART_FLOW
     else -> LoginNavigationDecision.FAIL_LOGIN

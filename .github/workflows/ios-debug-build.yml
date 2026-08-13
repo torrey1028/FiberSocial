@@ -6,8 +6,9 @@ name: iOS Device Build
 # <branch>`, or use the "Run workflow" button in the Actions tab and pick the
 # branch there.
 #
-# Builds an archive in the requested configuration (Debug by default), signs it
-# Ad Hoc (same Apple
+# Builds an archive in the configuration picked by the `configuration` input
+# (Debug by default; pick Release to device-check anything that only exists in
+# release builds — see that input's description), signs it Ad Hoc (same Apple
 # Distribution certificate release.yml's ios-release job already uses — Ad
 # Hoc profiles are signed with a Distribution cert, just scoped to specific
 # registered devices, so no new certificate is needed), and publishes an
@@ -25,11 +26,12 @@ on:
     inputs:
       configuration:
         description: >-
-          Xcode build configuration. Release is what compile-time feature gates
-          see as shipped (FeatureFlags.messagesEnabled is Platform.isDebugBinary,
-          so Messages is present in Debug and absent in Release) — pick it to
-          test the app as users will get it. Release also takes noticeably longer:
-          it builds a Kotlin/Native release framework.
+          Xcode build configuration. Release is what you want to device-check
+          anything gated on DebugFlags.debugToolsAvailable or FeatureFlags — a
+          Debug IPA shows the debug toolbars and compiles in the flagged-out
+          features (Messages, #415), so it cannot verify release-only behavior.
+          Debug keeps those tools, and builds noticeably faster: Release makes
+          Kotlin/Native produce a release framework.
         type: choice
         options: [Debug, Release]
         default: Debug
@@ -151,7 +153,8 @@ jobs:
           APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
         run: |
           xcodebuild -project src/platform/ios/FiberSocial.xcodeproj -scheme FiberSocial \
-            -configuration "${{ inputs.configuration }}" -archivePath "$RUNNER_TEMP/FiberSocial.xcarchive" \
+            -configuration "${{ inputs.configuration }}" \
+            -archivePath "$RUNNER_TEMP/FiberSocial.xcarchive" \
             -destination 'generic/platform=iOS' \
             CODE_SIGN_STYLE=Manual \
             CODE_SIGN_IDENTITY="Apple Distribution" \

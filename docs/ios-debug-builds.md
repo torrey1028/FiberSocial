@@ -16,16 +16,17 @@ beyond your own registered device(s).
 ## Requesting a build
 
 ```bash
+# Debug configuration (the default)
 gh workflow run ios-debug-build.yml --repo torrey1028/FiberSocial --ref <branch>
 
-# …or a Release-configuration build:
+# Release configuration
 gh workflow run ios-debug-build.yml --repo torrey1028/FiberSocial --ref <branch> \
   -f configuration=Release
 ```
 
 Or use the "Run workflow" button on the workflow's Actions page and pick the
-branch there. It's `workflow_dispatch`-only (no automatic trigger) since
-every run costs macOS runner time, the most expensive tier.
+branch and configuration there. It's `workflow_dispatch`-only (no automatic
+trigger) since every run costs macOS runner time, the most expensive tier.
 
 When it finishes, open **`https://torrey1028.github.io/FiberSocial/ios-debug/`**
 in **Safari on the iPhone** (the `itms-services://` install link only works
@@ -44,6 +45,14 @@ Release build**. A Debug OTA build therefore can't tell you what App Store
 users will actually see; a Release one can. It costs extra runner time
 (Kotlin/Native builds a release framework, which is much slower than the
 debug one), so it isn't the default.
+
+It also matters for anything gated on `DebugFlags.debugToolsAvailable` — the
+login web view's "Share log" button, the Settings "Debug panel" row. A Debug
+IPA shows those, so it can't confirm what a release user sees in their place.
+
+That cuts both ways, and is the reason to stay on `Debug` unless you need
+otherwise: the log export is the only way to get a trace off an OTA-installed
+iPhone, and a Release build doesn't have it.
 
 Note the install page and the OTA link are the same URL either way — a new
 build replaces the previous one, whatever its configuration. The page says
