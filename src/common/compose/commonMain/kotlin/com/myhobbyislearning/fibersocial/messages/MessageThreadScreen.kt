@@ -55,6 +55,7 @@ import com.myhobbyislearning.fibersocial.feed.PostBody
 import com.myhobbyislearning.fibersocial.feed.html.HtmlPostParser
 import com.myhobbyislearning.fibersocial.feed.parseRavelryTimestamp
 import com.myhobbyislearning.fibersocial.feed.relativeTimeSince
+import com.myhobbyislearning.fibersocial.profile.profileClickable
 import com.myhobbyislearning.fibersocial.ui.UserAvatar
 import com.myhobbyislearning.fibersocial.ui.rememberFabClearance
 
@@ -285,6 +286,11 @@ private fun MessageBubble(
         !counterpartName.isNullOrBlank() -> counterpartName
         else -> UNKNOWN_SENDER
     }
+    // Whose profile the attribution opens, or null for no link (issue #400). NOT simply
+    // `sender`: that falls back to the "(unknown)" placeholder, and on an outbound message
+    // it is the literal "You" — neither names a profile, and the user's own name should not
+    // navigate anywhere from their own message.
+    val senderUsername = if (outbound) null else message.sender?.username?.takeIf { it.isNotBlank() }
     val timestamp = parseRavelryTimestamp(message.sentAt)
         ?.let { relativeTimeSince(it.toEpochMilliseconds()) }
         ?: UNKNOWN_TIME
@@ -314,17 +320,25 @@ private fun MessageBubble(
                     // Only the other party gets an avatar: a column of the user's own
                     // face down the sent side adds nothing the "You" label doesn't.
                     if (!outbound) {
-                        UserAvatar(user = message.sender, size = 24.dp)
+                        Box(modifier = Modifier.profileClickable(senderUsername)) {
+                            UserAvatar(user = message.sender, size = 24.dp)
+                        }
                         Spacer(Modifier.width(8.dp))
                     }
-                    Text(
-                        text = sender,
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f),
-                    )
+                    // Weight on the Box, not the clickable Text — otherwise the profile
+                    // link is the whole weighted slot rather than the name, so most of a
+                    // short name's tap target is empty bubble header. Same reasoning as
+                    // the conversation row in MessagesScreen; see the comment there.
+                    Box(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = sender,
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.profileClickable(senderUsername),
+                        )
+                    }
                     Spacer(Modifier.width(8.dp))
                     Text(
                         text = timestamp,

@@ -1,6 +1,7 @@
 package com.myhobbyislearning.fibersocial.messages
 
 import androidx.activity.ComponentActivity
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -14,6 +15,7 @@ import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.myhobbyislearning.fibersocial.feed.models.RavelryUser
+import com.myhobbyislearning.fibersocial.profile.LocalProfileOpener
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -68,15 +70,18 @@ class MessagesScreenTest {
         onLoadMore: () -> Unit = {},
         onThreadClick: (MessageThread) -> Unit = {},
         fabClearance: Dp = 0.dp,
+        onOpenProfile: ((String) -> Unit)? = null,
     ) = compose.setContent {
-        MessagesScreen(
-            state = state,
-            onRefresh = {},
-            onRetry = onRetry,
-            onLoadMore = onLoadMore,
-            onThreadClick = onThreadClick,
-            fabClearance = fabClearance,
-        )
+        CompositionLocalProvider(LocalProfileOpener provides onOpenProfile) {
+            MessagesScreen(
+                state = state,
+                onRefresh = {},
+                onRetry = onRetry,
+                onLoadMore = onLoadMore,
+                onThreadClick = onThreadClick,
+                fabClearance = fabClearance,
+            )
+        }
     }
 
     @Test
@@ -216,6 +221,97 @@ class MessagesScreenTest {
         assertTrue(
             compose.onAllNodesWithText("Oldest message").fetchSemanticsNodes().isEmpty(),
         )
+    }
+
+    /** Tapping the counterpart's name opens their profile (issue #400). */
+    @Test
+    fun `tapping the counterpart name opens their profile`() {
+        val opened = mutableListOf<String>()
+        setScreen(
+            MessagesState.Loaded(threads = listOf(thread())),
+            onOpenProfile = { opened += it },
+        )
+
+        compose.onNodeWithText("friend").performClick()
+
+        assertEquals(listOf("friend"), opened)
+    }
+
+    /**
+     * The name tap must NOT also fire the row's open-conversation click. Both live on the
+     * same row, so a name tap reaching both would open the profile AND the conversation.
+     */
+    @Test
+    fun `tapping the name does not also open the conversation`() {
+        val opened = mutableListOf<Long>()
+        setScreen(
+            MessagesState.Loaded(threads = listOf(thread())),
+            onThreadClick = { opened += it.rootId },
+            onOpenProfile = {},
+        )
+
+        compose.onNodeWithText("friend").performClick()
+
+        assertTrue("the row's conversation click also fired: $opened", opened.isEmpty())
+    }
+
+    /**
+     * The profile link must be THE NAME, not the whole row-title slot (issue #400).
+     *
+     * The name sits in a weighted slot so the unread dot and timestamp stay right-aligned,
+     * and `weight` sizes its child *exactly* — so putting the clickable on the weighted
+     * `Text` made even a two-character name a full-slot-wide link (measured: 72dp→284dp on
+     * a 320dp screen, ~93% of it blank). All that blank space is where a user taps to open
+     * the conversation, so the row's main gesture was being swallowed by the profile link.
+     *
+     * Compares a short name against a very long one rather than asserting a dp figure,
+     * which would be hostage to font metrics: the target must GROW WITH THE TEXT. With the
+     * weight back on the Text both measure identically, which is exactly the bug.
+     */
+    @Test
+    fun `the profile tap target is the name rather than the whole title slot`() {
+        val short = "ab"
+        val long = "x".repeat(400)
+        // Both rows in ONE composition: setContent may only be called once per rule, and
+        // rendering them side by side compares them under identical constraints anyway.
+        setScreen(
+            MessagesState.Loaded(
+                threads = listOf(
+                    thread(rootId = 1, counterpart = user(short)),
+                    thread(rootId = 2, counterpart = user(long)),
+                ),
+            ),
+            onOpenProfile = {},
+        )
+
+        val shortBounds = compose.onNodeWithText(short).getBoundsInRoot()
+        val longBounds = compose.onNodeWithText(long).getBoundsInRoot()
+        val shortWidth = shortBounds.right - shortBounds.left
+        val longWidth = longBounds.right - longBounds.left
+
+        assertTrue(
+            "a ${short.length}-character name claims the same tap width ($shortWidth) as " +
+                "a ${long.length}-character one ($longWidth) — the link is the weighted " +
+                "slot, not the name",
+            shortWidth < longWidth,
+        )
+    }
+
+    /**
+     * A null counterpart renders "(unknown)", which names nobody — it must stay inert
+     * rather than becoming a link to a profile that cannot exist.
+     */
+    @Test
+    fun `the unknown counterpart placeholder is not a profile link`() {
+        val opened = mutableListOf<String>()
+        setScreen(
+            MessagesState.Loaded(threads = listOf(thread(counterpart = null))),
+            onOpenProfile = { opened += it },
+        )
+
+        compose.onNodeWithText("(unknown)").performClick()
+
+        assertTrue("(unknown) opened a profile: $opened", opened.isEmpty())
     }
 
     /**
