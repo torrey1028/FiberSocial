@@ -171,7 +171,7 @@ fun MessageThreadScreen(
             onReply?.let {
                 ExtendedFloatingActionButton(
                     onClick = it,
-                    modifier = Modifier.testTag("ReplyFab").then(fabClearance.modifier),
+                    modifier = Modifier.testTag("ReplyFab").then(fabClearance.measured()),
                     icon = { Icon(Icons.Default.Edit, contentDescription = null) },
                     text = { Text("Reply") },
                 )
@@ -325,14 +325,20 @@ private fun MessageBubble(
                         }
                         Spacer(Modifier.width(8.dp))
                     }
-                    Text(
-                        text = sender,
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f).profileClickable(senderUsername),
-                    )
+                    // Weight on the Box, not the clickable Text — otherwise the profile
+                    // link is the whole weighted slot rather than the name, so most of a
+                    // short name's tap target is empty bubble header. Same reasoning as
+                    // the conversation row in MessagesScreen; see the comment there.
+                    Box(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = sender,
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.profileClickable(senderUsername),
+                        )
+                    }
                     Spacer(Modifier.width(8.dp))
                     Text(
                         text = timestamp,

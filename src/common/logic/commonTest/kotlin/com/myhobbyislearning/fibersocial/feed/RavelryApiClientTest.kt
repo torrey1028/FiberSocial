@@ -3422,6 +3422,41 @@ class RavelryApiClientTest {
     }
 
     @Test
+    fun `a dead token on a messages call is still session expiry not scope copy`() = runTest {
+        // The interaction between issue #418 and issue #396: BOTH failures arrive as a
+        // 403 on the same call, and only the body tells them apart. withMessageReadForbidden
+        // Message catches ForbiddenException, which authenticatedRequest throws only for a
+        // genuine permission 403 — an invalid-token 403 becomes SessionExpiredException
+        // instead and must sail straight through the wrapper untouched.
+        //
+        // Widening that catch (to Exception, or to a shared supertype if these two ever
+        // gain one) would swallow the expiry and hand a user whose session is actually
+        // dead the "sign out and back in" scope copy, with nothing ever routing them to
+        // the forced-logout UI. The advice would read plausibly and the logout would
+        // never happen, so nothing else in the suite would notice.
+        val engine = MockEngine {
+            respond(
+                "403 Forbidden. OAuth 2 token is not valid.",
+                HttpStatusCode.Forbidden,
+                headersOf("Content-Type", ContentType.Text.Html.toString()),
+            )
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val client = RavelryApiClient(httpClient, FakeFeedTokenStorage())
+
+        // The retry 403s the same way, so this ends in expiry rather than a success.
+        val e = assertFailsWith<SessionExpiredException> { client.getMessages(MessageFolder.INBOX) }
+
+        val message = e.message ?: ""
+        assertFalse(
+            message.contains("Sign out and back in"),
+            "a dead session got the missing-scope copy: $message",
+        )
+    }
+
+    @Test
     fun `a single-message 403 gets the same re-login copy as the list`() = runTest {
         // getMessage is the body-backfill path, so a stale-scope token hits it too — a
         // conversation that opened from cache would otherwise show the generic text.

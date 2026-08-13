@@ -227,21 +227,31 @@ internal fun MessageThreadRow(
             Spacer(modifier = Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = counterpartName,
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = if (thread.hasUnread) FontWeight.Bold else FontWeight.Medium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        // The only weighted child, so a long name ellipsizes into the
-                        // space the dot and timestamp don't need rather than pushing them
-                        // off the row.
-                        //
-                        // The tap here takes priority over the row's own open-conversation
-                        // click, which is the intended trade (issue #400): the name is the
-                        // profile affordance, the rest of the row opens the conversation.
-                        modifier = Modifier.weight(1f).profileClickable(counterpartUsername),
-                    )
+                    // The weight lives on this Box, NOT on the Text, so the profile tap
+                    // target is the name itself rather than the whole weighted slot.
+                    // `weight` sizes its child exactly, so putting it on a clickable Text
+                    // makes a two-character name a 200dp-wide link — nearly all of it
+                    // blank space, and blank space on this row is where a user taps to
+                    // open the conversation. The Box still consumes the slot, so the
+                    // unread dot and timestamp stay exactly where they were.
+                    Box(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = counterpartName,
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = if (thread.hasUnread) FontWeight.Bold else FontWeight.Medium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            // Constrained by the Box above, so a long name still ellipsizes
+                            // into the space the dot and timestamp don't need rather than
+                            // pushing them off the row.
+                            //
+                            // The tap here takes priority over the row's own
+                            // open-conversation click, which is the intended trade (issue
+                            // #400): the name is the profile affordance, the rest of the
+                            // row opens the conversation.
+                            modifier = Modifier.profileClickable(counterpartUsername),
+                        )
+                    }
                     if (thread.hasUnread) {
                         Spacer(modifier = Modifier.width(6.dp))
                         UnreadDot()

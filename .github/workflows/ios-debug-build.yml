@@ -6,7 +6,9 @@ name: iOS Debug Build
 # <branch>`, or use the "Run workflow" button in the Actions tab and pick the
 # branch there.
 #
-# Builds a Debug-configuration archive, signs it Ad Hoc (same Apple
+# Builds an archive in the configuration picked by the `configuration` input
+# (Debug by default; pick Release to device-check anything that only exists in
+# release builds — see that input's description), signs it Ad Hoc (same Apple
 # Distribution certificate release.yml's ios-release job already uses — Ad
 # Hoc profiles are signed with a Distribution cert, just scoped to specific
 # registered devices, so no new certificate is needed), and publishes an
@@ -21,6 +23,16 @@ name: iOS Debug Build
 #     repo secret.
 on:
   workflow_dispatch:
+    inputs:
+      configuration:
+        description: >-
+          Build configuration. Release is what you want to device-check anything
+          gated on DebugFlags.debugToolsAvailable or FeatureFlags — a Debug IPA
+          shows the debug toolbars and compiles in the flagged-out features, so
+          it cannot verify release-only behavior. Debug keeps those tools.
+        type: choice
+        options: [Debug, Release]
+        default: Debug
 
 # Shares release.yml's ios-release job's macOS toolchain setup pattern, but
 # is otherwise independent — no test suites, no App Store Connect upload, no
@@ -134,12 +146,13 @@ jobs:
       # CFBundleVersion just needs to be a number that identifies this build;
       # ad hoc/OTA installs aren't subject to TestFlight's strictly-increasing
       # build-number rule, so the run number is enough.
-      - name: Archive (Debug configuration)
+      - name: Archive (${{ inputs.configuration }} configuration)
         env:
           APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
         run: |
           xcodebuild -project src/platform/ios/FiberSocial.xcodeproj -scheme FiberSocial \
-            -configuration Debug -archivePath "$RUNNER_TEMP/FiberSocial.xcarchive" \
+            -configuration "${{ inputs.configuration }}" \
+            -archivePath "$RUNNER_TEMP/FiberSocial.xcarchive" \
             -destination 'generic/platform=iOS' \
             CODE_SIGN_STYLE=Manual \
             CODE_SIGN_IDENTITY="Apple Distribution" \
@@ -212,7 +225,7 @@ jobs:
                   <key>kind</key>
                   <string>software</string>
                   <key>title</key>
-                  <string>FiberSocial (Debug)</string>
+                  <string>FiberSocial (${{ inputs.configuration }})</string>
                 </dict>
               </dict>
             </array>
@@ -225,13 +238,13 @@ jobs:
           cat > "$RUNNER_TEMP/install.html" <<HTML
           <!DOCTYPE html>
           <html>
-          <head><meta charset="utf-8"><title>FiberSocial debug build</title></head>
+          <head><meta charset="utf-8"><title>FiberSocial ${{ inputs.configuration }} build</title></head>
           <body>
-            <h1>FiberSocial debug build</h1>
+            <h1>FiberSocial ${{ inputs.configuration }} build</h1>
             <p>Build #$GITHUB_RUN_NUMBER from commit ${GITHUB_SHA:0:7}, built $(date -u +%Y-%m-%dT%H:%M:%SZ).</p>
             <p>Open this page in <strong>Safari</strong> on a registered iPhone (this link
             won't work in Chrome or any other browser) and tap the button below.</p>
-            <p><a href="itms-services://?action=download-manifest&url=https://torrey1028.github.io/FiberSocial/ios-debug/manifest.plist">Install FiberSocial (Debug)</a></p>
+            <p><a href="itms-services://?action=download-manifest&url=https://torrey1028.github.io/FiberSocial/ios-debug/manifest.plist">Install FiberSocial (${{ inputs.configuration }})</a></p>
             <p>If nothing happens: your iPhone's UDID must be registered and included in
             the Ad Hoc provisioning profile this build was signed with. See
             docs/ios-debug-builds.md for setup and troubleshooting.</p>
@@ -279,7 +292,7 @@ jobs:
       - name: Write summary
         run: |
           {
-            echo "## Debug build #$GITHUB_RUN_NUMBER published"
+            echo "## ${{ inputs.configuration }} build #$GITHUB_RUN_NUMBER published"
             echo ""
             echo "Open on your registered iPhone, in Safari:"
             echo "https://torrey1028.github.io/FiberSocial/ios-debug/"
