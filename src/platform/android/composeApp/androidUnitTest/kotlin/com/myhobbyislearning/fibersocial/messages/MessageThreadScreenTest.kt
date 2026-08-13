@@ -1,6 +1,9 @@
 package com.myhobbyislearning.fibersocial.messages
 
 import androidx.activity.ComponentActivity
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.getBoundsInRoot
@@ -238,6 +241,55 @@ class MessageThreadScreenTest {
         assertTrue(
             "last message (bottom=$lastMessageBottom) is covered by the Reply FAB (top=$fabTop)",
             lastMessageBottom <= fabTop,
+        )
+    }
+
+    /**
+     * Losing the Reply action must also release the space reserved for its FAB (issue #401's
+     * "no dead gap" half).
+     *
+     * `onSizeChanged` reports a size only while something is being measured — it does NOT
+     * fire with zero when the node leaves composition. So a clearance that only ever
+     * measured would latch the last height forever, and a thread with no reply action would
+     * keep a button-sized strip of empty space under its final message. `FabClearance`
+     * resets on dispose to prevent that; this is what would catch it going away.
+     *
+     * Toggles rather than composing the FAB-less case from scratch, because a clearance
+     * that was never measured is `0.dp` anyway — only the measure-then-remove path can
+     * strand a stale value.
+     */
+    @Test
+    fun `dropping the reply action releases the space its FAB reserved`() {
+        val many = (1L..30L).map { id ->
+            message(id, from = if (id % 2 == 0L) ME else "friend", to = ME, body = "Body $id")
+        }
+        var repliable by mutableStateOf(true)
+        compose.setContent {
+            MessageThreadScreen(
+                state = OpenThreadState(conversation(messages = many)),
+                currentUsername = ME,
+                onBack = {},
+                onReply = if (repliable) ({}) else null,
+                onToggleMute = null,
+            )
+        }
+
+        compose.onNodeWithTag("MessageThreadList").performScrollToIndex(many.lastIndex)
+        compose.waitForIdle()
+        val withFab = compose.onNodeWithText("Body 30").getBoundsInRoot().bottom
+
+        compose.runOnIdle { repliable = false }
+        compose.onNodeWithTag("ReplyFab").assertDoesNotExist()
+        compose.onNodeWithTag("MessageThreadList").performScrollToIndex(many.lastIndex)
+        compose.waitForIdle()
+        val withoutFab = compose.onNodeWithText("Body 30").getBoundsInRoot().bottom
+
+        // With the FAB gone the reserved strip goes too, so the last message can now sit
+        // lower than it could while the button was there. A latched height keeps the two
+        // identical.
+        assertTrue(
+            "last message did not reclaim the FAB's space (with=$withFab without=$withoutFab)",
+            withoutFab > withFab,
         )
     }
 }

@@ -1607,7 +1607,7 @@ fun FeedScreen(
                         // let its last row scroll clear of this button (issue #401) — the
                         // FAB floats and is absent from the Scaffold's innerPadding.
                         modifier = Modifier.testTag("NewMessageFab")
-                            .then(messagesFabClearance.modifier),
+                            .then(messagesFabClearance.measured()),
                     ) {
                         Icon(Icons.Default.Edit, contentDescription = "New message")
                     }

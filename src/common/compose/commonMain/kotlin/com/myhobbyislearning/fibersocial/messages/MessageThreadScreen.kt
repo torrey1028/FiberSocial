@@ -170,7 +170,7 @@ fun MessageThreadScreen(
             onReply?.let {
                 ExtendedFloatingActionButton(
                     onClick = it,
-                    modifier = Modifier.testTag("ReplyFab").then(fabClearance.modifier),
+                    modifier = Modifier.testTag("ReplyFab").then(fabClearance.measured()),
                     icon = { Icon(Icons.Default.Edit, contentDescription = null) },
                     text = { Text("Reply") },
                 )
