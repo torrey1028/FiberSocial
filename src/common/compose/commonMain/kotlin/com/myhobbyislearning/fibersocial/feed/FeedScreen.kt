@@ -116,6 +116,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import com.myhobbyislearning.fibersocial.about.AboutScreen
 import com.myhobbyislearning.fibersocial.app.ForegroundActivations
+import com.myhobbyislearning.fibersocial.auth.ravelryAccountDeletionUrl
 import com.myhobbyislearning.fibersocial.debug.DebugPanel
 import com.myhobbyislearning.fibersocial.events.EventDetailScreen
 import com.myhobbyislearning.fibersocial.events.EventsScreen
@@ -1040,6 +1041,7 @@ fun FeedScreen(
     }
 
     if (showSettings) {
+        val uriHandler = LocalUriHandler.current
         // notificationSettings and its one-shot load are hoisted to FeedScreen's state block
         // (see #360 there) so the optimistic value survives leaving and re-entering Settings.
         // Optimistically update local state, then persist. Null (still loading) is a no-op.
@@ -1102,6 +1104,32 @@ fun FeedScreen(
             },
             onOpenAbout = { showAbout = true },
             onOpenBlockedUsers = { showBlockedUsers = true },
+            // Guideline 5.1.1(v). The system browser, not a WebView: Ravelry's deletion
+            // control is a logged-in profile-edit link, so the user usually has to sign
+            // in to Ravelry on the way — and the app's only WebView is the login one,
+            // deliberately confined to the OAuth flow (issue #425).
+            onDeleteAccount = {
+                // runCatching, matching ReportPostDialog/EventDetailScreen: openUri
+                // rethrows an unresolvable ACTION_VIEW as IllegalArgumentException, and
+                // an uncaught throw out of a click handler crashes the app — on the one
+                // path App Review is explicitly told to walk (5.1.1(v)), on a device
+                // with no browser able to handle https.
+                val opened = runCatching {
+                    uriHandler.openUri(ravelryAccountDeletionUrl(user?.username))
+                }.onFailure { println("FiberSocial: openUri failed: ${it.message}") }.isSuccess
+                // Sign out on the way out, so returning from the browser lands on the
+                // login screen rather than back in the settings of an account that may
+                // no longer exist. The app cannot observe whether the deletion actually
+                // went through, and of the two guesses this is the safe one: a session
+                // held open against a deleted account 403s on every call, while a user
+                // who changed their mind just logs back in. Ordered after openUri
+                // because signing out tears this screen down.
+                //
+                // Only when the browser actually opened, though: signing out after a
+                // failed hand-off would strand the user with neither the deletion page
+                // nor the session the dialog promised they could return to.
+                if (opened) onLogout()
+            },
         )
         return
     }
@@ -1579,7 +1607,7 @@ fun FeedScreen(
                         // let its last row scroll clear of this button (issue #401) — the
                         // FAB floats and is absent from the Scaffold's innerPadding.
                         modifier = Modifier.testTag("NewMessageFab")
-                            .then(messagesFabClearance.modifier),
+                            .then(messagesFabClearance.measured()),
                     ) {
                         Icon(Icons.Default.Edit, contentDescription = "New message")
                     }
