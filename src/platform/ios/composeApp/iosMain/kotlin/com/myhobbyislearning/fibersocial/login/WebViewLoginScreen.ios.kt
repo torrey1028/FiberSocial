@@ -36,6 +36,7 @@ import com.myhobbyislearning.fibersocial.debug.describeSessionCookie
 import com.myhobbyislearning.fibersocial.debug.describeUrlForLog
 import com.myhobbyislearning.fibersocial.debug.rememberShareText
 import kotlinx.cinterop.ExperimentalForeignApi
+import kotlinx.cinterop.ObjCSignatureOverride
 import platform.CoreGraphics.CGRectMake
 import platform.Foundation.NSError
 import platform.Foundation.NSHTTPCookie
@@ -177,6 +178,7 @@ private fun LoginWebView(
 /** See `contentProcessReloads` in [LoginNavigationDelegate]. */
 private const val MAX_CONTENT_PROCESS_RELOADS = 2
 
+@OptIn(ExperimentalForeignApi::class)
 private class LoginNavigationDelegate(
     private val buildAuthUrl: () -> String,
     private val onAuthComplete: (code: String, state: String?, sessionCookie: String) -> Unit,
@@ -276,6 +278,12 @@ private class LoginNavigationDelegate(
     // that has actually been seen: the authorize challenge going stale and dumping the
     // user on the Ravelry home page inside the app (issue #434). didCommit is the last
     // moment before that page's content is on screen.
+    // webView(_:didCommit:) and webView(_:didFinish:) below are distinct Objective-C
+    // selectors, but both map to the Kotlin signature webView(WKWebView, WKNavigation?)
+    // — parameter names do not distinguish overloads — so without this the two are a
+    // compile error ("Conflicting overloads"). Only the macOS CI job catches it; Apple
+    // targets cannot be compiled on the Linux dev box.
+    @ObjCSignatureOverride
     override fun webView(webView: WKWebView, didCommitNavigation: WKNavigation?) {
         val committed = webView.URL?.absoluteString ?: return
         if (isAllowedLoginNavigation(committed)) return
