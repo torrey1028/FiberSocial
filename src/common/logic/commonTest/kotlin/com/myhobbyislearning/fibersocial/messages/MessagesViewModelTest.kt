@@ -816,7 +816,6 @@ class MessagesViewModelTest {
                           "sender": {"username":"friend"}, "recipient": {"username":"yarnie"},
                           "read_message": true,
                           "content_html": "<p>Fetched $id</p>",
-                          "content": "Fetched $id",
                           "folder_name": "inbox"
                         }}
                     """.trimIndent()
@@ -842,7 +841,6 @@ class MessagesViewModelTest {
             assertEquals("<p>Already here</p>", messages.getValue(1L).contentHtml)
             assertEquals("<p>Fetched 3</p>", messages.getValue(3L).contentHtml)
             // The full shape's other fields come along when the response carries them.
-            assertEquals("Fetched 3", messages.getValue(3L).content)
             assertEquals("inbox", messages.getValue(3L).folderName)
         }
 

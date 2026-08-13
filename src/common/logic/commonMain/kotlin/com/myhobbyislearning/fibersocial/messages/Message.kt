@@ -53,12 +53,27 @@ enum class MessageFolder(val wireName: String) {
  * @property repliedAt Timestamp of that reply, or `null` if none.
  * @property parentMessageId The message this one replies to, or `null` if it starts a
  *   conversation.
- * @property messageTypeName Ravelry's own classification of the message (e.g. a normal
- *   user-to-user PM vs a system notice). Nullable — treat an unknown value as ordinary.
+ * @property messageTypeName Ravelry's own classification of the message. An OPEN-ENDED
+ *   string, not a two-value normal-vs-system flag. A live account (2026-08-06) returned
+ *   seven distinct inbox values — `simple_message`, `link_message`,
+ *   `gift_certificate_message`, `comment_message`, `friend_message`, `group_invitation`,
+ *   `photo_request` — and, in the SENT folder, `sent_message` for every single message
+ *   regardless of what it would have been called in the recipient's inbox. So this field
+ *   describes the row you are looking at, NOT an intrinsic property of the message, and
+ *   it cannot be used to pair a sent message with its inbox counterpart.
+ *
+ *   Nullable, and nothing branches on it. Treat an unrecognised value as ordinary rather
+ *   than enumerating: the set is Ravelry's to extend, and a `when` over these would
+ *   silently mishandle whatever they add next.
  * @property folderName Which box the message currently lives in. Full shape only.
- * @property contentHtml Server-rendered HTML body. Full shape only.
- * @property content Plain-text body — see the note below. Full shape only, and possibly
- *   never present at all.
+ * @property contentHtml Server-rendered HTML body, and THE ONLY BODY A READ CARRIES.
+ *   Full shape only. Ravelry's `content` is write-only: it is accepted on create/reply
+ *   and never returned by `/messages/list.json` (with or without `output_format=full`)
+ *   or `/messages/{id}.json` — live-confirmed against a real account, 2026-08-06, after
+ *   the `message-read` grant made reads observable at all (#366, #396). A plain-text
+ *   `content` field used to exist on this model as a hedge while that was unverifiable;
+ *   it was always null and has been deleted rather than left as a trap. Bodies render
+ *   through the HTML path.
  */
 @Serializable
 data class Message(
@@ -74,22 +89,4 @@ data class Message(
     @SerialName("message_type_name") val messageTypeName: String? = null,
     @SerialName("folder_name") val folderName: String? = null,
     @SerialName("content_html") val contentHtml: String? = null,
-    /**
-     * UNRESOLVED DOC AMBIGUITY (#366) — does a read carry plain text alongside HTML?
-     *
-     * Ravelry's own field table for `Message (full)` lists ONLY `content_html`; `content`
-     * appears exclusively on `Message (POST)`, i.e. it looks write-only. But third-party
-     * clients refer to a `content` field on reads, and the docs are demonstrably sloppy
-     * elsewhere in this same section (see [MessageFolder] and the `output_format`
-     * comment on `getMessages`). We had no live token to settle it, so this field is
-     * nullable and optional: the model decodes identically whether the key is present,
-     * absent, or explicitly null, and nothing here commits to an answer.
-     *
-     * TO SETTLE IT: one authenticated `GET /messages/{id}.json` against a real account —
-     * if the returned JSON has a `content` key, plain text exists on reads and the
-     * detail screen may prefer it; if not, bodies MUST render through the HTML path
-     * ([contentHtml]) and this field should be deleted rather than left as a trap.
-     * Until then, treat [contentHtml] as the only body you can rely on.
-     */
-    val content: String? = null,
 )

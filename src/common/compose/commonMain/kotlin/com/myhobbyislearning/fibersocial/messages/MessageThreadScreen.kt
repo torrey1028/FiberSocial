@@ -80,8 +80,8 @@ private const val BUBBLE_WIDTH_FRACTION = 0.88f
  *
  * ## Bodies render through the shared [PostBody], entered at the HTML parser
  *
- * PMs read back as `content_html` and nothing else — `Message.content` is documented
- * write-only and its presence on reads is unresolved (see `Message.content`). So a body is
+ * PMs read back as `content_html` and nothing else — Ravelry's `content` is write-only,
+ * confirmed against the live API (#366). So a body is
  * parsed with [HtmlPostParser], the project's single HTML→`PostDocument` converter, and
  * handed to the same [PostBody] the forum uses. Adding a second HTML path is an explicit
  * project trap; this adds none.
