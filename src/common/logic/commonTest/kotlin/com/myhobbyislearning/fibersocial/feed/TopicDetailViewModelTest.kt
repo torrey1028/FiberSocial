@@ -1763,13 +1763,27 @@ class TopicDetailViewModelTest {
             val releaseFirstForm = CompletableDeferred<Unit>()
             val releaseSecondForm = CompletableDeferred<Unit>()
             val secondPost = Post(id = 2L, user = RavelryUser(username = "someone-else"))
-            var formFetches = 0
+            // Keyed on the POST ID in the URL, not on an arrival counter. Both requests
+            // are deliberately in flight at once, so "first to reach this handler" is not
+            // guaranteed to be the first post's — and a `formFetches++` shared between two
+            // concurrent engine coroutines is a plain non-atomic read-modify-write that
+            // can hand both of them the same number. Either way the deferreds get paired
+            // to the wrong requests, releasing the SECOND one completes the FIRST post's
+            // fetch, and the assertion below fails as though the stale-response guard were
+            // broken when it is fine and only the fixture mis-paired. Intrinsic pairing
+            // removes both races (issue #501).
+            val releases = mapOf(
+                reportedPost.id to releaseFirstForm,
+                secondPost.id to releaseSecondForm,
+            )
             val engine = MockEngine { request ->
                 val path = request.url.encodedPath
                 when {
                     path.contains("prepare_flag") -> {
-                        formFetches++
-                        if (formFetches == 1) releaseFirstForm.await() else releaseSecondForm.await()
+                        val postId = path.substringAfter("/forum_posts/")
+                            .substringBefore("/")
+                            .toLong()
+                        releases.getValue(postId).await()
                         respond(flagFormHtml, HttpStatusCode.OK, headersOf("Content-Type", "text/html"))
                     }
                     path.contains("/posts.json") ->
