@@ -161,6 +161,7 @@ import com.myhobbyislearning.fibersocial.ui.AppBranding
 import com.myhobbyislearning.fibersocial.ui.GroupBadge
 import com.myhobbyislearning.fibersocial.ui.PullToRefreshBox
 import com.myhobbyislearning.fibersocial.ui.appLogoResource
+import com.myhobbyislearning.fibersocial.ui.rememberOpenWebPage
 import com.myhobbyislearning.fibersocial.ui.UserAvatar
 import io.ktor.http.encodeURLParameter
 import kotlinx.coroutines.NonCancellable
@@ -1040,7 +1041,7 @@ fun FeedScreen(
     }
 
     if (showSettings) {
-        val uriHandler = LocalUriHandler.current
+        val openWebPage = rememberOpenWebPage()
         // notificationSettings and its one-shot load are hoisted to FeedScreen's state block
         // (see #360 there) so the optimistic value survives leaving and re-entering Settings.
         // Optimistically update local state, then persist. Null (still loading) is a no-op.
@@ -1103,30 +1104,24 @@ fun FeedScreen(
             },
             onOpenAbout = { showAbout = true },
             onOpenBlockedUsers = { showBlockedUsers = true },
-            // Guideline 5.1.1(v). The system browser, not a WebView: Ravelry's deletion
-            // control is a logged-in profile-edit link, so the user usually has to sign
-            // in to Ravelry on the way — and the app's only WebView is the login one,
-            // deliberately confined to the OAuth flow (issue #425).
+            // Guideline 5.1.1(v). Ravelry's deletion control is a logged-in profile-edit
+            // link with no API behind it, so the last step is necessarily a web page —
+            // but it opens IN the app (rememberOpenWebPage → SFSafariViewController on
+            // iOS), not by punting to Safari, which is what guideline 4 rejected 0.3.2
+            // for. Not the login WebView either: that one is deliberately confined to the
+            // OAuth flow (issue #425).
             onDeleteAccount = {
-                // runCatching, matching ReportPostDialog/EventDetailScreen: openUri
-                // rethrows an unresolvable ACTION_VIEW as IllegalArgumentException, and
-                // an uncaught throw out of a click handler crashes the app — on the one
-                // path App Review is explicitly told to walk (5.1.1(v)), on a device
-                // with no browser able to handle https.
-                val opened = runCatching {
-                    uriHandler.openUri(ravelryAccountDeletionUrl(user?.username))
-                }.onFailure { println("FiberSocial: openUri failed: ${it.message}") }.isSuccess
-                // Sign out on the way out, so returning from the browser lands on the
-                // login screen rather than back in the settings of an account that may
-                // no longer exist. The app cannot observe whether the deletion actually
-                // went through, and of the two guesses this is the safe one: a session
-                // held open against a deleted account 403s on every call, while a user
-                // who changed their mind just logs back in. Ordered after openUri
-                // because signing out tears this screen down.
+                val opened = openWebPage(ravelryAccountDeletionUrl(user?.username))
+                // Sign out on the way out, so returning from the deletion page lands on
+                // the login screen rather than back in the settings of an account that
+                // may no longer exist. The app cannot observe whether the deletion
+                // actually went through, and of the two guesses this is the safe one: a
+                // session held open against a deleted account 403s on every call, while a
+                // user who changed their mind just logs back in.
                 //
-                // Only when the browser actually opened, though: signing out after a
-                // failed hand-off would strand the user with neither the deletion page
-                // nor the session the dialog promised they could return to.
+                // Only when the page actually opened, though: signing out after a failed
+                // hand-off would strand the user with neither the deletion page nor the
+                // session the dialog promised they could return to.
                 if (opened) onLogout()
             },
         )

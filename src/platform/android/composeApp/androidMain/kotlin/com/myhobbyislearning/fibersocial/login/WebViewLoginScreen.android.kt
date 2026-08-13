@@ -19,7 +19,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.backhandler.BackHandler
-import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.viewinterop.AndroidView
 import com.myhobbyislearning.fibersocial.auth.AuthCallback
 import com.myhobbyislearning.fibersocial.auth.MALFORMED_AUTH_CALLBACK_MESSAGE
@@ -34,6 +33,7 @@ import com.myhobbyislearning.fibersocial.auth.parseAuthCallback
 import com.myhobbyislearning.fibersocial.debug.DebugLog
 import com.myhobbyislearning.fibersocial.debug.describeSessionCookie
 import com.myhobbyislearning.fibersocial.debug.describeUrlForLog
+import com.myhobbyislearning.fibersocial.ui.rememberOpenWebPage
 
 @Composable
 actual fun WebViewLoginScreen(
@@ -46,11 +46,11 @@ actual fun WebViewLoginScreen(
     // AndroidView's factory runs once the underlying view exists, which BackHandler
     // (evaluated on every composition) can't reach any other way.
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
-    // Sign-up and password reset both finish via an emailed link that opens in the
-    // browser, so they are handed off there rather than run in this WebView — see
-    // isExternalLoginDetour. Captured here because the WebViewClient below is built
-    // inside AndroidView's factory, where no composition-local is readable.
-    val uriHandler = LocalUriHandler.current
+    // Sign-up and password reset are handed to a separate browser surface rather than run
+    // in this WebView, which is confined to the OAuth flow — see isExternalLoginDetour.
+    // Captured here because the WebViewClient below is built inside AndroidView's factory,
+    // where no composition-local is readable.
+    val openWebPage = rememberOpenWebPage()
     // System back navigates the WEB flow's own history first — the OAuth flow's own
     // pages, since the login page's sign-up and password-reset links now leave for the
     // browser instead of loading here — and only leaves the screen entirely once there's
@@ -146,18 +146,13 @@ actual fun WebViewLoginScreen(
                         val userInitiated = request.hasGesture() && !request.isRedirect
                         return when (loginNavigationDecision(url, userInitiated, flowRestarts)) {
                             LoginNavigationDecision.ALLOW -> false
+                            // openWebPage never throws (see its expect declaration) — this
+                            // is a WebViewClient callback on the UI thread, where an
+                            // uncaught throw takes the app down mid-login. The result is
+                            // ignored on purpose: the navigation is cancelled either way,
+                            // so a failure just leaves the user on the login form.
                             LoginNavigationDecision.OPEN_EXTERNALLY -> {
-                                DebugLog.log("WebView handed off to the browser: ${describeUrlForLog(url)}")
-                                // AndroidUriHandler turns an unresolvable ACTION_VIEW into an
-                                // IllegalArgumentException, and this is a WebViewClient callback
-                                // on the UI thread — an uncaught throw here takes the app down
-                                // mid-login on any device with no browser able to handle https
-                                // (none installed, or one disabled by a managed profile). The
-                                // navigation is cancelled either way, so failing here just
-                                // leaves the user on the login form, which is recoverable.
-                                runCatching { uriHandler.openUri(url) }.onFailure {
-                                    DebugLog.log("WebView browser hand-off failed: ${it.message}")
-                                }
+                                openWebPage(url)
                                 true
                             }
                             LoginNavigationDecision.BLOCK -> {

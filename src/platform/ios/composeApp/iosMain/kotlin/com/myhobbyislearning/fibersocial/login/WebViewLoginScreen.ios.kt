@@ -17,7 +17,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.viewinterop.UIKitView
 import com.myhobbyislearning.fibersocial.auth.AuthCallback
 import com.myhobbyislearning.fibersocial.auth.MALFORMED_AUTH_CALLBACK_MESSAGE
@@ -34,6 +33,7 @@ import com.myhobbyislearning.fibersocial.debug.DebugLog
 import com.myhobbyislearning.fibersocial.debug.describeSessionCookie
 import com.myhobbyislearning.fibersocial.debug.describeUrlForLog
 import com.myhobbyislearning.fibersocial.debug.rememberShareText
+import com.myhobbyislearning.fibersocial.ui.rememberOpenWebPage
 import kotlinx.cinterop.ExperimentalForeignApi
 import platform.CoreGraphics.CGRectMake
 import platform.Foundation.NSError
@@ -70,15 +70,14 @@ actual fun WebViewLoginScreen(
     onAuthError: (message: String) -> Unit,
     onBack: () -> Unit,
 ) {
-    // Sign-up and password reset both finish via an emailed link that opens in the
-    // browser, so they are handed off there rather than run in this WebView — see
-    // isExternalLoginDetour. Read here because the delegate is a plain class with no
-    // access to composition-locals.
-    val uriHandler = LocalUriHandler.current
+    // Sign-up and password reset are handed to an SFSafariViewController rather than run
+    // in this WebView, which is confined to the OAuth flow — see isExternalLoginDetour.
+    // Read here because the delegate is a plain class with no access to composition-locals.
+    val openWebPage = rememberOpenWebPage()
     // remember: WKWebView.navigationDelegate is weak; the composition must hold the
     // strong reference or the delegate is collected mid-login.
     val delegate = remember {
-        LoginNavigationDelegate(buildAuthUrl, onAuthComplete, onAuthError, uriHandler::openUri)
+        LoginNavigationDelegate(buildAuthUrl, onAuthComplete, onAuthError, openWebPage)
     }
     Column(Modifier.fillMaxSize()) {
         LoginToolbar(onCancel = onBack)
@@ -163,7 +162,7 @@ private class LoginNavigationDelegate(
     private val buildAuthUrl: () -> String,
     private val onAuthComplete: (code: String, state: String?, sessionCookie: String) -> Unit,
     private val onAuthError: (message: String) -> Unit,
-    private val openExternally: (url: String) -> Unit,
+    private val openWebPage: (url: String) -> Boolean,
 ) : NSObject(), WKNavigationDelegateProtocol {
 
     // Restarts performed by this screen; caps the recovery loop.
@@ -204,16 +203,13 @@ private class LoginNavigationDelegate(
             when (loginNavigationDecision(url, userInitiated, flowRestarts)) {
                 LoginNavigationDecision.ALLOW ->
                     decisionHandler(WKNavigationActionPolicy.WKNavigationActionPolicyAllow)
+                // openWebPage never throws (see its expect declaration) — an exception
+                // escaping a WKNavigationDelegate callback terminates a Kotlin/Native app
+                // outright. The result is ignored on purpose: the navigation is already
+                // cancelled, so a failure just leaves the user on the login form.
                 LoginNavigationDecision.OPEN_EXTERNALLY -> {
-                    DebugLog.log("WebView handed off to the browser: ${describeUrlForLog(url)}")
                     decisionHandler(WKNavigationActionPolicy.WKNavigationActionPolicyCancel)
-                    // Mirrors the Android handler: an exception escaping a WKNavigationDelegate
-                    // callback terminates a Kotlin/Native app outright. The decisionHandler is
-                    // already called above, so cancelling is not at risk either way — a failed
-                    // hand-off just leaves the user on the login form.
-                    runCatching { openExternally(url) }.onFailure {
-                        DebugLog.log("WebView browser hand-off failed: ${it.message}")
-                    }
+                    openWebPage(url)
                 }
                 LoginNavigationDecision.BLOCK -> {
                     DebugLog.log("WebView cancelled non-login navigation to ${describeUrlForLog(url)}")
