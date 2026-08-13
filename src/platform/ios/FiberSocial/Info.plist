@@ -43,5 +43,20 @@
 	<string>$(RAVELRY_CLIENT_ID)</string>
 	<key>RavelryClientSecret</key>
 	<string>$(RAVELRY_CLIENT_SECRET)</string>
+	<!--
+	  FiberSocial has no camera feature of its own. These exist because the app now
+	  renders Ravelry's own profile editor in an in-app web view (WebPageScreen, for
+	  account deletion), and Ravelry's page carries a photo upload whose system picker
+	  offers "Take Photo or Video". Without these keys iOS TCC-kills the app the instant
+	  that is tapped — which is exactly how the 2.1(a) rejection happened (issue #407):
+	  App Review reached a Ravelry upload control through a web view and crashed it.
+	  #407 was closed on the reasoning that no camera path remained reachable; adding a
+	  web view over the profile editor makes one reachable again, on the very flow
+	  App Review is instructed to walk for guideline 5.1.1(v).
+	-->
+	<key>NSCameraUsageDescription</key>
+	<string>Ravelry's website, shown inside FiberSocial, can ask to take a photo — for example when you change your profile picture. FiberSocial itself never uses the camera.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Ravelry's website, shown inside FiberSocial, can ask to record video with sound. FiberSocial itself never uses the microphone.</string>
 </dict>
 </plist>

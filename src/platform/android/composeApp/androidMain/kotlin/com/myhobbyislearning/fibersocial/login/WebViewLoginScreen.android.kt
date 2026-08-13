@@ -33,7 +33,6 @@ import com.myhobbyislearning.fibersocial.auth.parseAuthCallback
 import com.myhobbyislearning.fibersocial.debug.DebugLog
 import com.myhobbyislearning.fibersocial.debug.describeSessionCookie
 import com.myhobbyislearning.fibersocial.debug.describeUrlForLog
-import com.myhobbyislearning.fibersocial.ui.rememberOpenWebPage
 
 @Composable
 actual fun WebViewLoginScreen(
@@ -46,17 +45,11 @@ actual fun WebViewLoginScreen(
     // AndroidView's factory runs once the underlying view exists, which BackHandler
     // (evaluated on every composition) can't reach any other way.
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
-    // Sign-up and password reset are handed to a separate browser surface rather than run
-    // in this WebView, which is confined to the OAuth flow — see isExternalLoginDetour.
-    // Captured here because the WebViewClient below is built inside AndroidView's factory,
-    // where no composition-local is readable.
-    val openWebPage = rememberOpenWebPage()
-    // System back navigates the WEB flow's own history first — the OAuth flow's own
-    // pages, since the login page's sign-up and password-reset links now leave for the
-    // browser instead of loading here — and only leaves the screen entirely once there's
-    // nowhere further back to go within it. Without this, nothing here handles back at
-    // all, so it falls through to the Activity default and exits the app outright
-    // (issue #308).
+    // System back navigates the WEB flow's own history first — e.g. backing out of the
+    // sign-up or password-reset detour taken from the login page — and only leaves the
+    // screen entirely once there's nowhere further back to go within it. Without this,
+    // nothing here handles back at all, so it falls through to the Activity default and
+    // exits the app outright (issue #308).
     BackHandler {
         val webView = webViewRef
         if (webView != null && webView.canGoBack()) {
@@ -146,15 +139,6 @@ actual fun WebViewLoginScreen(
                         val userInitiated = request.hasGesture() && !request.isRedirect
                         return when (loginNavigationDecision(url, userInitiated, flowRestarts)) {
                             LoginNavigationDecision.ALLOW -> false
-                            // openWebPage never throws (see its expect declaration) — this
-                            // is a WebViewClient callback on the UI thread, where an
-                            // uncaught throw takes the app down mid-login. The result is
-                            // ignored on purpose: the navigation is cancelled either way,
-                            // so a failure just leaves the user on the login form.
-                            LoginNavigationDecision.OPEN_EXTERNALLY -> {
-                                openWebPage(url)
-                                true
-                            }
                             LoginNavigationDecision.BLOCK -> {
                                 DebugLog.log("WebView cancelled non-login navigation to ${describeUrlForLog(url)}")
                                 true
