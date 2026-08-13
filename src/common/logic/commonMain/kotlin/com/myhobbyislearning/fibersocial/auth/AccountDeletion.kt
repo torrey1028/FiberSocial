@@ -41,7 +41,14 @@ private fun accountDeletionPath(username: String?): String {
     if (handle.isEmpty()) return "/people/edit"
     // Ravelry handles are conventionally [A-Za-z0-9_-], but this value comes off the
     // wire, and an unescaped one would silently build a different URL than intended.
-    return "/people/${handle.encodeURLPathPart()}/edit"
+    val encoded = handle.encodeURLPathPart()
+    // A handle that needed escaping puts a % in the path — and ravelrySafePath rejects
+    // any %, so isAllowedAccountDeletionNavigation would refuse the very URL this
+    // function just built and the web view would block its own first page. Falling back
+    // to the handle-less editor keeps the builder and the allowlist provably in
+    // agreement, and Ravelry redirects it to the signed-in user's own editor anyway.
+    if (encoded != handle) return "/people/edit"
+    return "/people/$encoded/edit"
 }
 
 /**

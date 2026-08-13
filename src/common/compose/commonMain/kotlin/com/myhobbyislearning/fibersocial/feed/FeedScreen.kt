@@ -586,6 +586,16 @@ fun FeedScreen(
     // account-deletion page (issues #478, #481). rememberSaveable so it survives the
     // configuration change a rotation causes mid-flow.
     var webPageUrl by rememberSaveable { mutableStateOf<String?>(null) }
+    // Captured at the same instant as webPageUrl, and saved beside it, so the allowlist
+    // is evaluated against the identity the page was OPENED for (issue #406's lesson).
+    // Reading `user?.username` live at navigation time instead would be wrong for
+    // exactly the reason #406 documents: the feed's copy of the signed-in user is
+    // momentarily null while the feed reloads, which a rotation triggers — and this page
+    // survives rotation (rememberSaveable). During that window the allowlist would
+    // resolve to the handle-less /people/edit while the page sits on
+    // /people/<handle>/edit, so the next navigation — Ravelry's own redirect, the login
+    // POST, the delete link itself — would be cancelled as off-flow.
+    var webPageUsername by rememberSaveable { mutableStateOf<String?>(null) }
     var composingTopic by rememberSaveable { mutableStateOf(false) }
     // The message composer (issue #374), following composingTopic's shape exactly: a
     // rememberSaveable flag plus an early return, not a new navigation mechanism.
@@ -1014,7 +1024,7 @@ fun FeedScreen(
             // ravelry.com". The 2.1(a) crash came from a reviewer roaming Ravelry inside
             // a web view we had opened for them (issue #425); staying on Ravelry was
             // never the safety property.
-            isAllowedNavigation = { isAllowedAccountDeletionNavigation(it, user?.username) },
+            isAllowedNavigation = { isAllowedAccountDeletionNavigation(it, webPageUsername) },
             // Signing out here rather than at the tap: returning from the deletion page
             // should land on the login screen, not in the settings of an account that may
             // no longer exist (the confirmation dialog says so). The app cannot observe
@@ -1023,6 +1033,7 @@ fun FeedScreen(
             // while a user who changed their mind just signs back in.
             onClose = {
                 webPageUrl = null
+                webPageUsername = null
                 onLogout()
             },
         )
@@ -1139,7 +1150,14 @@ fun FeedScreen(
             // which is what guideline 4 rejected 0.3.2 for (issue #481). Sign-out happens
             // when that page is closed, not here: this screen is inside FeedScreen, so
             // logging out now would tear the page down before the user ever saw it.
-            onDeleteAccount = { webPageUrl = ravelryAccountDeletionUrl(user?.username) },
+            onDeleteAccount = {
+                // Both captured from the same read of `user`, so the page and the
+                // allowlist guarding it can never be resolved against different
+                // identities. See webPageUsername's declaration.
+                val handle = user?.username
+                webPageUsername = handle
+                webPageUrl = ravelryAccountDeletionUrl(handle)
+            },
         )
         return
     }
