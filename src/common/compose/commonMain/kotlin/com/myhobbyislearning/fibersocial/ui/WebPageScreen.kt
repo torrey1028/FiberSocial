@@ -33,12 +33,14 @@ import androidx.compose.ui.Modifier
  * certificate to confirm they are entering their sign in credentials into a legitimate
  * page" — and the page this carries really does ask for a Ravelry password. Naming the
  * host in the app's own chrome gives the user that same check. It is honest, too:
- * [PlatformWebView] cannot leave Ravelry ([isRavelryWebUrl]), so the label cannot go
+ * [PlatformWebView] renders nothing outside [isAllowedNavigation], so the label cannot go
  * stale under the user's feet.
  *
- * @param url The page to open. Must be a Ravelry https URL; anything else renders blank
- *   because the platform navigation guards reject it.
+ * @param url The page to open.
  * @param title App-chrome title describing why the user is here, not the page's own.
+ * @param isAllowedNavigation The only pages this view may render. Passed in rather than
+ *   hardcoded so the policy lives in commonMain next to the login one, and so each caller
+ *   states its own flow — see `isAllowedAccountDeletionNavigation`.
  * @param onClose Close button, and Android's system back once the page's own history is
  *   exhausted.
  */
@@ -46,6 +48,7 @@ import androidx.compose.ui.Modifier
 fun WebPageScreen(
     url: String,
     title: String,
+    isAllowedNavigation: (String) -> Boolean,
     onClose: () -> Unit,
 ) {
     Scaffold(
@@ -71,6 +74,7 @@ fun WebPageScreen(
     ) { padding ->
         PlatformWebView(
             url = url,
+            isAllowedNavigation = isAllowedNavigation,
             onBackExhausted = onClose,
             modifier = Modifier.fillMaxSize().padding(padding),
         )
@@ -87,13 +91,14 @@ internal fun webPageHost(url: String): String =
 /**
  * The platform web view: Android `WebView`, iOS `WKWebView`.
  *
- * Navigation is confined to Ravelry's own host on both platforms ([isRavelryWebUrl]).
- * That is not decoration — an unconstrained in-app web view on ravelry.com is exactly
- * what produced the 2.1(a) crash rejection (issue #425): the reviewer browsed from a
- * Ravelry page into the web messages composer and killed the app from its image upload.
- * Here the user genuinely must be free to roam Ravelry (sign in, then walk their profile
- * editor), so the guard is host-level rather than the login view's path allowlist — but
- * off-site navigation still cannot happen.
+ * Navigation is confined to [isAllowedNavigation] on both platforms, and the guard is
+ * applied twice: once when a navigation is proposed, and again when a page actually
+ * begins loading. The second check is not redundant — Android's
+ * `shouldOverrideUrlLoading` is documented as not firing for POST requests (issue #447),
+ * so a form submission could otherwise put an unexpected page on screen with the policy
+ * never consulted. An unconstrained in-app web view on ravelry.com is exactly what
+ * produced the 2.1(a) crash rejection (issue #425): the reviewer browsed from a page we
+ * had let them onto into the web messages composer, and its image upload killed the app.
  *
  * @param onBackExhausted Called when the user presses back with no page history left.
  *   Android only; iOS has no system back, and its edge-swipe gesture stops at the root.
@@ -101,6 +106,7 @@ internal fun webPageHost(url: String): String =
 @Composable
 expect fun PlatformWebView(
     url: String,
+    isAllowedNavigation: (String) -> Boolean,
     onBackExhausted: () -> Unit,
     modifier: Modifier,
 )

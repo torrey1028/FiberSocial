@@ -116,6 +116,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import com.myhobbyislearning.fibersocial.about.AboutScreen
 import com.myhobbyislearning.fibersocial.app.ForegroundActivations
+import com.myhobbyislearning.fibersocial.auth.isAllowedAccountDeletionNavigation
 import com.myhobbyislearning.fibersocial.auth.ravelryAccountDeletionUrl
 import com.myhobbyislearning.fibersocial.debug.DebugPanel
 import com.myhobbyislearning.fibersocial.events.EventDetailScreen
@@ -1009,6 +1010,11 @@ fun FeedScreen(
         WebPageScreen(
             url = pageUrl,
             title = "Delete account",
+            // Only the pages the deletion flow actually walks — NOT "anything on
+            // ravelry.com". The 2.1(a) crash came from a reviewer roaming Ravelry inside
+            // a web view we had opened for them (issue #425); staying on Ravelry was
+            // never the safety property.
+            isAllowedNavigation = { isAllowedAccountDeletionNavigation(it, user?.username) },
             // Signing out here rather than at the tap: returning from the deletion page
             // should land on the login screen, not in the settings of an account that may
             // no longer exist (the confirmation dialog says so). The app cannot observe

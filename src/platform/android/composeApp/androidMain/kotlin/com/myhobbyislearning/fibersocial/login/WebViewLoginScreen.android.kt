@@ -2,6 +2,7 @@
 
 package com.myhobbyislearning.fibersocial.login
 
+import android.graphics.Bitmap
 import android.webkit.CookieManager
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
@@ -27,7 +28,9 @@ import com.myhobbyislearning.fibersocial.auth.LOGIN_FLOW_LOST_MESSAGE
 import com.myhobbyislearning.fibersocial.auth.LoginNavigationDecision
 import com.myhobbyislearning.fibersocial.auth.authFailureMessage
 import com.myhobbyislearning.fibersocial.auth.describeAuthFailureForLog
+import com.myhobbyislearning.fibersocial.auth.isAllowedLoginNavigation
 import com.myhobbyislearning.fibersocial.auth.isAuthRedirect
+import com.myhobbyislearning.fibersocial.auth.loginPageLoadDecision
 import com.myhobbyislearning.fibersocial.auth.loginNavigationDecision
 import com.myhobbyislearning.fibersocial.auth.parseAuthCallback
 import com.myhobbyislearning.fibersocial.debug.DebugLog
@@ -166,6 +169,33 @@ actual fun WebViewLoginScreen(
                             "WebView error ${error.errorCode} ${error.description} " +
                                 "url=${describeUrlForLog(request.url.toString())}",
                         )
+                    }
+
+                    // Second line of defense (issue #447). shouldOverrideUrlLoading is
+                    // documented as NOT invoked for POST requests, so a form submission
+                    // from an allowed page can move the main frame anywhere without the
+                    // policy ever running — and the observed result is the whole Ravelry
+                    // home page rendered inside the login WebView when the authorize
+                    // challenge goes stale (issue #434). Re-check here, where every load
+                    // passes, and stop anything off-flow before it can be shown.
+                    override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
+                        if (isAllowedLoginNavigation(url)) return
+                        DebugLog.log("WebView caught an off-flow page load: ${describeUrlForLog(url)}")
+                        // stopLoading alone would leave whatever already rendered on
+                        // screen, so blank it before deciding what to do next.
+                        view.stopLoading()
+                        view.loadUrl("about:blank")
+                        when (loginPageLoadDecision(url, flowRestarts)) {
+                            LoginNavigationDecision.FAIL_LOGIN -> {
+                                DebugLog.log("login flow lost after $flowRestarts restarts — giving up")
+                                onAuthError(LOGIN_FLOW_LOST_MESSAGE)
+                            }
+                            else -> {
+                                flowRestarts++
+                                DebugLog.log("off-flow page load — restart #$flowRestarts")
+                                view.loadUrl(buildAuthUrl())
+                            }
+                        }
                     }
 
                     override fun onPageFinished(view: WebView, url: String) {

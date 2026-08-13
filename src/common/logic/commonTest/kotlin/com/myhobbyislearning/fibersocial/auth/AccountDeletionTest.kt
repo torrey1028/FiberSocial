@@ -2,6 +2,7 @@ package com.myhobbyislearning.fibersocial.auth
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class AccountDeletionTest {
@@ -52,6 +53,62 @@ class AccountDeletionTest {
             assertTrue(
                 ravelryAccountDeletionUrl(handle).startsWith("https://www.ravelry.com/people/"),
                 "handle $handle produced ${ravelryAccountDeletionUrl(handle)}",
+            )
+        }
+    }
+
+    // --- Navigation allowlist for the in-app deletion page (issues #481, #425) ---
+
+    private fun allowed(url: String) = isAllowedAccountDeletionNavigation(url, "torrey1028")
+
+    @Test
+    fun `the profile editor and its tab sub-paths are allowed`() {
+        assertTrue(allowed("https://www.ravelry.com/people/torrey1028/edit"))
+        assertTrue(allowed("https://www.ravelry.com/people/torrey1028/edit/privacy"))
+        // Ravelry bounces here when the session is not valid, and its sign-in form POSTs
+        // back to the same path — without it the flow dead-ends for a signed-out user.
+        assertTrue(allowed("https://www.ravelry.com/account/login"))
+    }
+
+    @Test
+    fun `the rest of the ravelry site is NOT allowed just because it is ravelry`() {
+        // The 2.1(a) crash came from roaming Ravelry inside a web view we opened; the
+        // reviewer never left ravelry.com, so "still on Ravelry" is not the guarantee.
+        assertFalse(allowed("https://www.ravelry.com/"))
+        assertFalse(allowed("https://www.ravelry.com/messages"))
+        assertFalse(allowed("https://www.ravelry.com/discuss/the-testing-pool"))
+        assertFalse(allowed("https://www.ravelry.com/people/someone-else/edit"))
+        // Prefix-adjacent, but a different account's page.
+        assertFalse(allowed("https://www.ravelry.com/people/torrey1028-evil/edit"))
+        // Their profile, but not the editor.
+        assertFalse(allowed("https://www.ravelry.com/people/torrey1028"))
+    }
+
+    @Test
+    fun `off-site and lookalike hosts are not allowed`() {
+        assertFalse(allowed("https://www.ravelry.com.evil.com/people/torrey1028/edit"))
+        assertFalse(allowed("https://evil.com/people/torrey1028/edit"))
+        assertFalse(allowed("http://www.ravelry.com/people/torrey1028/edit"))
+        assertFalse(allowed("javascript:alert(1)"))
+        assertFalse(allowed("https://www.ravelry.com/people/torrey1028/edit/..%2f..%2fmessages"))
+    }
+
+    @Test
+    fun `the handle-less fallback allows its own editor and nothing wider`() {
+        assertTrue(isAllowedAccountDeletionNavigation("https://www.ravelry.com/people/edit", null))
+        assertTrue(isAllowedAccountDeletionNavigation("https://www.ravelry.com/people/edit/privacy", null))
+        assertFalse(isAllowedAccountDeletionNavigation("https://www.ravelry.com/people", null))
+        assertFalse(isAllowedAccountDeletionNavigation("https://www.ravelry.com/", null))
+    }
+
+    @Test
+    fun `the url the app opens is itself allowed`() {
+        // Pins the two against each other: if the URL builder ever changes shape, the
+        // allowlist cannot silently stop covering the page the app actually opens.
+        for (handle in listOf("torrey1028", null)) {
+            assertTrue(
+                isAllowedAccountDeletionNavigation(ravelryAccountDeletionUrl(handle), handle),
+                "handle $handle",
             )
         }
     }

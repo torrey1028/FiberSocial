@@ -26,7 +26,7 @@ class WebPageScreenTest {
         // password is really Ravelry — the same assurance Apple cites for
         // SFSafariViewController (issue #481).
         compose.setContent {
-            WebPageScreen(url = deletionUrl, title = "Delete account", onClose = {})
+            WebPageScreen(url = deletionUrl, title = "Delete account", isAllowedNavigation = { true }, onClose = {})
         }
         compose.onNodeWithText("Delete account").assertIsDisplayed()
         compose.onNodeWithText("www.ravelry.com").assertIsDisplayed()
@@ -38,7 +38,7 @@ class WebPageScreenTest {
         // button would strand them on the page with their session still live.
         var closes = 0
         compose.setContent {
-            WebPageScreen(url = deletionUrl, title = "Delete account", onClose = { closes++ })
+            WebPageScreen(url = deletionUrl, title = "Delete account", isAllowedNavigation = { true }, onClose = { closes++ })
         }
         compose.onNodeWithContentDescription("Close").performClick()
         compose.runOnIdle { assertEquals(1, closes) }
@@ -48,7 +48,7 @@ class WebPageScreenTest {
     fun `system back closes the screen when the page has no history`() {
         var closes = 0
         compose.setContent {
-            WebPageScreen(url = deletionUrl, title = "Delete account", onClose = { closes++ })
+            WebPageScreen(url = deletionUrl, title = "Delete account", isAllowedNavigation = { true }, onClose = { closes++ })
         }
         compose.runOnIdle { compose.activity.onBackPressedDispatcher.onBackPressed() }
         compose.runOnIdle { assertEquals(1, closes) }

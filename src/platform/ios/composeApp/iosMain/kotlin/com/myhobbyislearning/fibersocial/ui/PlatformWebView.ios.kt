@@ -4,13 +4,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.UIKitView
-import com.myhobbyislearning.fibersocial.auth.isRavelryWebUrl
 import com.myhobbyislearning.fibersocial.debug.DebugLog
 import com.myhobbyislearning.fibersocial.debug.describeUrlForLog
 import kotlinx.cinterop.ExperimentalForeignApi
 import platform.CoreGraphics.CGRectMake
 import platform.Foundation.NSURL
 import platform.Foundation.NSURLRequest
+import platform.WebKit.WKNavigation
 import platform.WebKit.WKNavigationAction
 import platform.WebKit.WKNavigationActionPolicy
 import platform.WebKit.WKNavigationDelegateProtocol
@@ -22,12 +22,13 @@ import platform.darwin.NSObject
 @Composable
 actual fun PlatformWebView(
     url: String,
+    isAllowedNavigation: (String) -> Boolean,
     onBackExhausted: () -> Unit,
     modifier: Modifier,
 ) {
     // remember: WKWebView.navigationDelegate is weak, so the composition has to hold the
     // strong reference or the delegate is collected out from under the page.
-    val delegate = remember { RavelryOnlyNavigationDelegate() }
+    val delegate = remember { ConfinedNavigationDelegate(isAllowedNavigation) }
     UIKitView(
         factory = {
             // Default (persistent) data store, unlike the login web view's deliberately
@@ -54,7 +55,10 @@ actual fun PlatformWebView(
     )
 }
 
-private class RavelryOnlyNavigationDelegate : NSObject(), WKNavigationDelegateProtocol {
+private class ConfinedNavigationDelegate(
+    private val isAllowedNavigation: (String) -> Boolean,
+) : NSObject(), WKNavigationDelegateProtocol {
+
     override fun webView(
         webView: WKWebView,
         decidePolicyForNavigationAction: WKNavigationAction,
@@ -64,11 +68,24 @@ private class RavelryOnlyNavigationDelegate : NSObject(), WKNavigationDelegatePr
         // legitimately embed third-party content (Ravelry's forms embed a reCAPTCHA).
         val isMainFrame = decidePolicyForNavigationAction.targetFrame?.mainFrame ?: true
         val target = decidePolicyForNavigationAction.request.URL?.absoluteString ?: ""
-        if (!isMainFrame || isRavelryWebUrl(target)) {
+        if (!isMainFrame || isAllowedNavigation(target)) {
             decisionHandler(WKNavigationActionPolicy.WKNavigationActionPolicyAllow)
             return
         }
-        DebugLog.log("WebPage blocked off-site navigation to ${describeUrlForLog(target)}")
+        DebugLog.log("WebPage blocked navigation to ${describeUrlForLog(target)}")
         decisionHandler(WKNavigationActionPolicy.WKNavigationActionPolicyCancel)
+    }
+
+    // Second line of defense, the twin of the login view's. Belt and braces here rather
+    // than a known hole — decidePolicyForNavigationAction does fire for POSTs on iOS —
+    // but this screen renders a login form and a deletion form, so "an unexpected page
+    // can never be displayed" is worth enforcing at the last moment before it would be.
+    override fun webView(webView: WKWebView, didCommitNavigation: WKNavigation?) {
+        val committed = webView.URL?.absoluteString ?: return
+        if (isAllowedNavigation(committed)) return
+        DebugLog.log("WebPage caught an off-flow page load: ${describeUrlForLog(committed)}")
+        webView.stopLoading()
+        // Blank it rather than leaving whatever already rendered on screen.
+        webView.loadHTMLString("", baseURL = null)
     }
 }

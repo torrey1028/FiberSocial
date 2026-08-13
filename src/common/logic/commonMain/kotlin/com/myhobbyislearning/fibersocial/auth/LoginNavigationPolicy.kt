@@ -58,7 +58,7 @@ fun isAllowedLoginNavigation(url: String): Boolean {
  * free of the escapes a prefix check could be walked through, else null. Shared by the
  * allowlist so a prefix check cannot be walked through a dot-segment or %-escape.
  */
-private fun ravelrySafePath(url: String): String? {
+internal fun ravelrySafePath(url: String): String? {
     val parsed = runCatching { Url(url) }.getOrElse {
         println("FiberSocial: login navigation policy could not parse ${url.take(120)}")
         return null
@@ -74,16 +74,26 @@ private fun ravelrySafePath(url: String): String? {
 }
 
 /**
- * Whether [url] is an ordinary https page on Ravelry's own site.
+ * What to do about a page the login WebView has already *started loading* — the second
+ * line of defense behind [loginNavigationDecision] (issue #447).
  *
- * Much looser than [isAllowedLoginNavigation] — any path, not an allowlist — because its
- * caller is a different kind of screen: the in-app web view that carries the
- * account-deletion page (`WebPageScreen`), where the user has to sign in to Ravelry and
- * walk their profile editor, so no path allowlist could be written in advance. What it
- * still guarantees is that the web view cannot be steered off Ravelry entirely, which is
- * the property that matters when the page it renders is a login form.
+ * The navigation hooks are not a complete filter. Android documents
+ * `shouldOverrideUrlLoading` as **not invoked for POST requests**, so a form submission
+ * from an allowed page can move the main frame anywhere with the policy never consulted,
+ * and the docs list further non-invocation cases. The observed symptom is the one that
+ * matters: take long enough over the login form and the authorize challenge goes stale,
+ * Ravelry drops the `return_to`, and the user lands on the **Ravelry home page inside the
+ * app** (issue #434) — the whole logged-in website, which is the escape class #425 exists
+ * to close, and what App Review crashed the app through under 2.1(a).
+ *
+ * So every page load is re-checked as it begins, and anything off the flow is stopped
+ * before it can be shown. [userInitiated] is deliberately not a parameter: by this point
+ * the navigation is happening regardless of who started it, and "cancel and stay put"
+ * (what a user tap gets at decide-time) is not available — the page is already loading,
+ * so the only ways out are a fresh authorize URL or giving up.
  */
-fun isRavelryWebUrl(url: String): Boolean = ravelrySafePath(url) != null
+fun loginPageLoadDecision(url: String, restartsUsed: Int): LoginNavigationDecision =
+    loginNavigationDecision(url, userInitiated = false, restartsUsed = restartsUsed)
 
 /**
  * Whether [url] is the app's own OAuth redirect ([RavelryAuthManager.REDIRECT_URI]),

@@ -25,7 +25,9 @@ import com.myhobbyislearning.fibersocial.auth.LOGIN_FLOW_LOST_MESSAGE
 import com.myhobbyislearning.fibersocial.auth.LoginNavigationDecision
 import com.myhobbyislearning.fibersocial.auth.authFailureMessage
 import com.myhobbyislearning.fibersocial.auth.describeAuthFailureForLog
+import com.myhobbyislearning.fibersocial.auth.isAllowedLoginNavigation
 import com.myhobbyislearning.fibersocial.auth.isAuthRedirect
+import com.myhobbyislearning.fibersocial.auth.loginPageLoadDecision
 import com.myhobbyislearning.fibersocial.auth.loginNavigationDecision
 import com.myhobbyislearning.fibersocial.auth.parseAuthCallback
 import com.myhobbyislearning.fibersocial.debug.DebugFlags
@@ -265,6 +267,32 @@ private class LoginNavigationDelegate(
             DebugLog.log("www.ravelry.com cookie ${describeSessionCookie(wwwCookie)}")
             DebugLog.log("ravelry.com cookie ${describeSessionCookie(rootCookie)}")
             onAuthComplete(code, state, wwwCookie.ifEmpty { rootCookie })
+        }
+    }
+
+    // Second line of defense, the twin of Android's onPageStarted (issue #447).
+    // decidePolicyForNavigationAction does fire for POSTs on iOS, so this is belt and
+    // braces rather than a known hole — but the failure it guards against is the one
+    // that has actually been seen: the authorize challenge going stale and dumping the
+    // user on the Ravelry home page inside the app (issue #434). didCommit is the last
+    // moment before that page's content is on screen.
+    override fun webView(webView: WKWebView, didCommitNavigation: WKNavigation?) {
+        val committed = webView.URL?.absoluteString ?: return
+        if (isAllowedLoginNavigation(committed)) return
+        DebugLog.log("WebView caught an off-flow page load: ${describeUrlForLog(committed)}")
+        // stopLoading leaves whatever already rendered on screen, so blank it first.
+        webView.stopLoading()
+        webView.loadHTMLString("", baseURL = null)
+        when (loginPageLoadDecision(committed, flowRestarts)) {
+            LoginNavigationDecision.FAIL_LOGIN -> {
+                DebugLog.log("login flow lost after $flowRestarts restarts — giving up")
+                onAuthError(LOGIN_FLOW_LOST_MESSAGE)
+            }
+            else -> {
+                flowRestarts++
+                DebugLog.log("off-flow page load — restart #$flowRestarts")
+                webView.loadRequest(NSURLRequest(uRL = NSURL(string = buildAuthUrl())!!))
+            }
         }
     }
 

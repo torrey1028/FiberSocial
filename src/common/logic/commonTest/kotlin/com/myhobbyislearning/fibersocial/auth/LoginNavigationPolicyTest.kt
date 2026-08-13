@@ -254,27 +254,4 @@ class LoginNavigationPolicyTest {
         }
     }
 
-
-    // --- isRavelryWebUrl: the looser guard the in-app deletion page runs under ---
-
-    @Test
-    fun `any ravelry page counts as a ravelry web url`() {
-        // Deliberately not an allowlist: the user has to sign in and walk their profile
-        // editor, so no set of paths could be written in advance.
-        assertTrue(isRavelryWebUrl("https://www.ravelry.com/people/knitwit/edit"))
-        assertTrue(isRavelryWebUrl("https://www.ravelry.com/account/login"))
-        assertTrue(isRavelryWebUrl("https://ravelry.com/"))
-    }
-
-    @Test
-    fun `off-site and lookalike hosts are not ravelry web urls`() {
-        // The property that actually matters: the page this guards renders a login form,
-        // so the web view must not be steerable off Ravelry.
-        assertFalse(isRavelryWebUrl("https://www.ravelry.com.evil.com/people/x/edit"))
-        assertFalse(isRavelryWebUrl("https://evil.com/people/x/edit"))
-        assertFalse(isRavelryWebUrl("https://blog.ravelry.com/post"))
-        assertFalse(isRavelryWebUrl("http://www.ravelry.com/people/x/edit"))
-        assertFalse(isRavelryWebUrl("javascript:alert(1)"))
-        assertFalse(isRavelryWebUrl("https://www.ravelry.com/people/..%2fadmin"))
-    }
 }

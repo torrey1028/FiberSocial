@@ -2,6 +2,7 @@
 
 package com.myhobbyislearning.fibersocial.ui
 
+import android.graphics.Bitmap
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -14,13 +15,13 @@ import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.backhandler.BackHandler
 import androidx.compose.ui.viewinterop.AndroidView
-import com.myhobbyislearning.fibersocial.auth.isRavelryWebUrl
 import com.myhobbyislearning.fibersocial.debug.DebugLog
 import com.myhobbyislearning.fibersocial.debug.describeUrlForLog
 
 @Composable
 actual fun PlatformWebView(
     url: String,
+    isAllowedNavigation: (String) -> Boolean,
     onBackExhausted: () -> Unit,
     modifier: Modifier,
 ) {
@@ -55,14 +56,31 @@ actual fun PlatformWebView(
                         view: WebView,
                         request: WebResourceRequest,
                     ): Boolean {
+                        // Subframes can't take the user anywhere, and cancelling them
+                        // breaks pages that legitimately embed third-party content.
                         if (!request.isForMainFrame) return false
                         val target = request.url.toString()
-                        if (isRavelryWebUrl(target)) return false
+                        if (isAllowedNavigation(target)) return false
                         // Cancelled, not bounced to the browser: leaving for an external
                         // site is the behavior guideline 4 rejected (issue #481), and
-                        // nothing off Ravelry is part of why the user opened this screen.
-                        DebugLog.log("WebPage blocked off-site navigation to ${describeUrlForLog(target)}")
+                        // nothing off this flow is why the user opened this screen.
+                        DebugLog.log("WebPage blocked navigation to ${describeUrlForLog(target)}")
                         return true
+                    }
+
+                    // Second line of defense, the twin of the login view's (issue #447).
+                    // shouldOverrideUrlLoading is documented as NOT invoked for POST
+                    // requests, and this screen is mostly forms — a Ravelry sign-in POST,
+                    // then the deletion form. Without this, one of those could put an
+                    // unexpected page on screen with the policy never consulted, which is
+                    // the whole failure class #425 exists to close.
+                    override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
+                        if (url == "about:blank" || isAllowedNavigation(url)) return
+                        DebugLog.log("WebPage caught an off-flow page load: ${describeUrlForLog(url)}")
+                        // stopLoading alone would leave whatever already rendered on
+                        // screen, so blank it rather than showing an unexpected page.
+                        view.stopLoading()
+                        view.loadUrl("about:blank")
                     }
                 }
                 loadUrl(url)

@@ -30,10 +30,50 @@ import io.ktor.http.encodeURLPathPart
  * accepts `/people/edit` without a handle and redirects it to the signed-in user's own
  * editor, so the fallback still lands on the right page instead of a dead end.
  */
-fun ravelryAccountDeletionUrl(username: String?): String {
+fun ravelryAccountDeletionUrl(username: String?): String =
+    "https://www.ravelry.com${accountDeletionPath(username)}"
+
+/** Path component of [ravelryAccountDeletionUrl], shared with the navigation allowlist. */
+private fun accountDeletionPath(username: String?): String {
     val handle = username?.trim().orEmpty()
-    if (handle.isEmpty()) return "https://www.ravelry.com/people/edit"
+    // Ravelry accepts the handle-less form and redirects it to the signed-in user's own
+    // editor, so the pre-`/current_user.json` case still lands on the right page.
+    if (handle.isEmpty()) return "/people/edit"
     // Ravelry handles are conventionally [A-Za-z0-9_-], but this value comes off the
     // wire, and an unescaped one would silently build a different URL than intended.
-    return "https://www.ravelry.com/people/${handle.encodeURLPathPart()}/edit"
+    return "/people/${handle.encodeURLPathPart()}/edit"
+}
+
+/**
+ * Whether the account-deletion web view may render [url] for the signed-in [username].
+ *
+ * An allowlist, not a host check, for the same reason the login WebView has one: an
+ * unconstrained in-app web view on ravelry.com is the whole logged-in website, and that
+ * is what App Review crashed the app through under 2.1(a) (issue #425) — they reached the
+ * web messages composer's image upload from a page we had let them onto. "It's still
+ * Ravelry" is not a safety property; the reviewer never left Ravelry either.
+ *
+ * What is allowed is only what the deletion flow actually walks through:
+ *
+ * - The profile editor itself ([ravelryAccountDeletionUrl]) and its tab sub-paths, which
+ *   is where Ravelry's "delete Ravelry account" link lives.
+ * - `/account/login`, because Ravelry bounces there when the session is not valid, and
+ *   the sign-in form POSTs back to the same path.
+ *
+ * Everything else — the home page, the forums, messages, another member's profile — is
+ * cancelled and logged by the platform web views.
+ *
+ * **This list is provisional in one place, on purpose.** The URL behind Ravelry's delete
+ * link itself has not been observed: `/people/<user>/edit/<anything>` all resolve through
+ * one generic route when signed out, so it cannot be discovered without walking the flow
+ * on a real account. It is very likely under the editor prefix and therefore already
+ * covered — but until a device trace confirms it, the blocked-navigation log line is what
+ * will say so. Do not widen this list by guessing; widen it from a trace, the way the
+ * login allowlist was built (issue #425).
+ */
+fun isAllowedAccountDeletionNavigation(url: String, username: String?): Boolean {
+    val path = ravelrySafePath(url) ?: return false
+    if (path == "/account/login") return true
+    val editor = accountDeletionPath(username)
+    return path == editor || path.startsWith("$editor/")
 }
