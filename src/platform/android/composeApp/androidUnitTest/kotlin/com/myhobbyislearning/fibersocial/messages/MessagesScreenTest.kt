@@ -256,6 +256,48 @@ class MessagesScreenTest {
     }
 
     /**
+     * The profile link must be THE NAME, not the whole row-title slot (issue #400).
+     *
+     * The name sits in a weighted slot so the unread dot and timestamp stay right-aligned,
+     * and `weight` sizes its child *exactly* — so putting the clickable on the weighted
+     * `Text` made even a two-character name a full-slot-wide link (measured: 72dp→284dp on
+     * a 320dp screen, ~93% of it blank). All that blank space is where a user taps to open
+     * the conversation, so the row's main gesture was being swallowed by the profile link.
+     *
+     * Compares a short name against a very long one rather than asserting a dp figure,
+     * which would be hostage to font metrics: the target must GROW WITH THE TEXT. With the
+     * weight back on the Text both measure identically, which is exactly the bug.
+     */
+    @Test
+    fun `the profile tap target is the name rather than the whole title slot`() {
+        val short = "ab"
+        val long = "x".repeat(400)
+        // Both rows in ONE composition: setContent may only be called once per rule, and
+        // rendering them side by side compares them under identical constraints anyway.
+        setScreen(
+            MessagesState.Loaded(
+                threads = listOf(
+                    thread(rootId = 1, counterpart = user(short)),
+                    thread(rootId = 2, counterpart = user(long)),
+                ),
+            ),
+            onOpenProfile = {},
+        )
+
+        val shortBounds = compose.onNodeWithText(short).getBoundsInRoot()
+        val longBounds = compose.onNodeWithText(long).getBoundsInRoot()
+        val shortWidth = shortBounds.right - shortBounds.left
+        val longWidth = longBounds.right - longBounds.left
+
+        assertTrue(
+            "a ${short.length}-character name claims the same tap width ($shortWidth) as " +
+                "a ${long.length}-character one ($longWidth) — the link is the weighted " +
+                "slot, not the name",
+            shortWidth < longWidth,
+        )
+    }
+
+    /**
      * A null counterpart renders "(unknown)", which names nobody — it must stay inert
      * rather than becoming a link to a profile that cannot exist.
      */
