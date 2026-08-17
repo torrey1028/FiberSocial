@@ -10,6 +10,7 @@ import com.myhobbyislearning.fibersocial.events.NewEventViewModel
 import com.myhobbyislearning.fibersocial.feed.FeedRepository
 import com.myhobbyislearning.fibersocial.feed.FeedScreenModel
 import com.myhobbyislearning.fibersocial.feed.FeedViewModel
+import com.myhobbyislearning.fibersocial.feed.GroupSearchViewModel
 import com.myhobbyislearning.fibersocial.feed.ImageAttachmentViewModel
 import com.myhobbyislearning.fibersocial.feed.KeyValueGroupLastViewedStore
 import com.myhobbyislearning.fibersocial.feed.KeyValueLastDestinationStore
