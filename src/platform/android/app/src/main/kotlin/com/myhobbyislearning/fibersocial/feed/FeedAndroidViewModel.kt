@@ -50,6 +50,15 @@ class FeedAndroidViewModel(app: Application) : AndroidViewModel(app), FeedScreen
         // both wrap the same prefs file.
         KeyValueLastDestinationStore(plainKeyValueStore(app, LAST_DESTINATION_PREFS_NAME)),
     )
+    // Joining from the group browser changes membership, so the feed re-scrapes it and
+    // the drawer picks the new group up without the user backing out and pulling to
+    // refresh (issue #232).
+    override val groupSearch = GroupSearchViewModel(
+        repository,
+        viewModelScope,
+        onGroupsChanged = { feed.refresh() },
+    )
+    override val groupPreview = GroupPreviewViewModel(repository, viewModelScope)
     override val topicDetail = TopicDetailViewModel(apiClient, viewModelScope)
     override val newTopic = NewTopicViewModel(apiClient, viewModelScope)
 
@@ -95,6 +104,8 @@ class FeedAndroidViewModel(app: Application) : AndroidViewModel(app), FeedScreen
     /** Emits when any screen's data source encounters a session expiry. */
     val sessionExpired: Flow<Unit> = merge(
         feed.sessionExpired,
+        groupSearch.sessionExpired,
+        groupPreview.sessionExpired,
         topicDetail.sessionExpired,
         newTopic.sessionExpired,
         newTopicImage.sessionExpired,
