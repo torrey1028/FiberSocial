@@ -52,11 +52,13 @@ import com.myhobbyislearning.fibersocial.ui.GroupBadge
  * one-line description. Opening a topic from here works exactly as it does in the feed —
  * the host renders the topic detail over this screen.
  *
+ * Nothing here leaves for a browser. Group rules, moderators and the member list are not
+ * reachable in-app as a result — the topic list does not carry them — but sending the user
+ * out to ravelry.com is the pattern this whole change exists to remove, and on iOS it is
+ * what App Review rejected under guideline 4 (issue #481).
+ *
  * @param isJoined Whether the user joined during this visit. Ravelry's search results
  *   carry no membership flag, so this only reflects joins made here.
- * @param onOpenInBrowser Escape hatch to the real Ravelry page — the only place left that
- *   can show group rules, moderators and the member list, none of which the topic list
- *   carries.
  */
 @Composable
 fun GroupPreviewScreen(
@@ -70,7 +72,6 @@ fun GroupPreviewScreen(
     onDismissJoinError: () -> Unit = {},
     onRetry: () -> Unit = {},
     onLoadMore: () -> Unit = {},
-    onOpenInBrowser: (Group) -> Unit = {},
 ) {
     val group = when (state) {
         is GroupPreviewState.Loading -> state.group
@@ -91,9 +92,6 @@ fun GroupPreviewScreen(
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
-                },
-                actions = {
-                    TextButton(onClick = { onOpenInBrowser(group) }) { Text("On Ravelry") }
                 },
             )
         },

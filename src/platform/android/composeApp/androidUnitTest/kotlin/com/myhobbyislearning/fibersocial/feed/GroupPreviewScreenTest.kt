@@ -123,15 +123,11 @@ class GroupPreviewScreenTest {
     }
 
     @Test
-    fun `the ravelry escape hatch reports the group`() {
-        // The topic list can't show group rules, moderators or the member list; this is
-        // the only remaining way to reach them.
-        var opened: String? = null
-        compose.setContent {
-            GroupPreviewScreen(state = loaded(), onBack = {}, onOpenInBrowser = { opened = it.permalink })
-        }
-        compose.onNodeWithText("On Ravelry").performClick()
-        compose.runOnIdle { assertEquals("lace-knitters", opened) }
+    fun `nothing here offers a way out to a browser`() {
+        // The whole point of the in-app group browser: no leg of it hands the user to a
+        // browser. An "On Ravelry" action lived here briefly and was removed.
+        compose.setContent { GroupPreviewScreen(state = loaded(), onBack = {}) }
+        compose.onNodeWithText("On Ravelry").assertDoesNotExist()
     }
 
     @Test

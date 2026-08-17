@@ -1368,7 +1368,6 @@ fun FeedScreen(
     val groupPreviewState by viewModel.groupPreview.state.collectAsState()
 
     if (groupPreviewState !is GroupPreviewState.Hidden) {
-        val previewUriHandler = LocalUriHandler.current
         val previewGroup = (groupPreviewState as? GroupPreviewState.Loaded)?.group
             ?: (groupPreviewState as? GroupPreviewState.Loading)?.group
             ?: (groupPreviewState as? GroupPreviewState.Error)?.group
@@ -1389,9 +1388,6 @@ fun FeedScreen(
             onDismissJoinError = groupSearch::dismissJoinError,
             onRetry = { viewModel.groupPreview.retry() },
             onLoadMore = { viewModel.groupPreview.loadMore() },
-            onOpenInBrowser = { group ->
-                previewUriHandler.openUri("https://www.ravelry.com/groups/${group.permalink}")
-            },
         )
         return
     }
