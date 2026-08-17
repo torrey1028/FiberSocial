@@ -140,6 +140,22 @@ fun loginPageLoadDecision(url: String, restartsUsed: Int): LoginNavigationDecisi
     loginNavigationDecision(url, userInitiated = false, restartsUsed = restartsUsed)
 
 /**
+ * Whether [url] is the page Ravelry lands on once it has emailed a signup link —
+ * `/invitations/ask`, observed on device (2026-08-13) as the result of submitting the
+ * "Get a signup link" form.
+ *
+ * This is where the in-app sign-up flow **ends**, and where it used to get stuck: the
+ * remaining steps happen in the user's email and then in whatever browser opens that
+ * link, so the page says "check your email" and nothing on it can move the flow forward.
+ * The user is parked on a dead end inside a screen whose only purpose is signing in.
+ *
+ * The navigation itself must NOT be cancelled — the POST that reaches this page is what
+ * makes Ravelry send the email, so callers detect it as the page *loads*, after the
+ * server has acted, and reset the web view to a fresh login instead of rendering it.
+ */
+fun isSignUpEmailSentPage(url: String): Boolean = ravelrySafePath(url) == "/invitations/ask"
+
+/**
  * Whether [url] is the app's own OAuth redirect ([RavelryAuthManager.REDIRECT_URI]),
  * with a delimiter boundary: the URI itself, or the URI followed by a query or
  * fragment. A bare `startsWith` would also match `fibersocial://auth/callbackevil`,

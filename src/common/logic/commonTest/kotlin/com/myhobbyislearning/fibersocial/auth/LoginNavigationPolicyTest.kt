@@ -316,4 +316,43 @@ class LoginNavigationPolicyTest {
         assertTrue(isOffFlowLoginPage("https://www.ravelry.com/account/login?return_to=/consent-evil"))
         assertTrue(isOffFlowLoginPage("https://www.ravelry.com/account/login?return_to=/oauth2evil"))
     }
+
+    // --- Where the in-app sign-up flow ends (device trace 2026-08-13) ---
+
+    @Test
+    fun `the emailed-signup-link page is recognised as the end of sign-up`() {
+        // Observed as the result of submitting Ravelry's "Get a signup link" form. From
+        // here the remaining steps happen in the user's email, so the login web view has
+        // nothing left to show.
+        assertTrue(isSignUpEmailSentPage("https://www.ravelry.com/invitations/ask"))
+    }
+
+    @Test
+    fun `the sign-up form itself is not the end of sign-up`() {
+        // /invitations is the form; only its POST target means the email went out.
+        assertFalse(isSignUpEmailSentPage("https://www.ravelry.com/invitations"))
+        assertFalse(isSignUpEmailSentPage("https://www.ravelry.com/account/login"))
+    }
+
+    @Test
+    fun `it stays allowlisted so the POST that sends the email can complete`() {
+        // The critical interaction: this page is detected on LOAD and the flow reset, but
+        // the navigation must never be cancelled — that POST is what sends the email.
+        assertTrue(isAllowedLoginNavigation("https://www.ravelry.com/invitations/ask"))
+        assertEquals(
+            LoginNavigationDecision.ALLOW,
+            loginNavigationDecision(
+                "https://www.ravelry.com/invitations/ask",
+                userInitiated = true,
+                restartsUsed = 0,
+            ),
+        )
+    }
+
+    @Test
+    fun `lookalike hosts and escapes are not the sign-up end page`() {
+        assertFalse(isSignUpEmailSentPage("https://www.ravelry.com.evil.com/invitations/ask"))
+        assertFalse(isSignUpEmailSentPage("http://www.ravelry.com/invitations/ask"))
+        assertFalse(isSignUpEmailSentPage("https://www.ravelry.com/invitations/..%2fask"))
+    }
 }

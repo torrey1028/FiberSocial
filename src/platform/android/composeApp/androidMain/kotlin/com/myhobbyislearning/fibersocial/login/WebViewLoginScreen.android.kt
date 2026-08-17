@@ -8,6 +8,7 @@ import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.safeDrawing
@@ -15,7 +16,9 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
@@ -30,6 +33,7 @@ import com.myhobbyislearning.fibersocial.auth.authFailureMessage
 import com.myhobbyislearning.fibersocial.auth.describeAuthFailureForLog
 import com.myhobbyislearning.fibersocial.auth.isAllowedLoginNavigation
 import com.myhobbyislearning.fibersocial.auth.isAuthRedirect
+import com.myhobbyislearning.fibersocial.auth.isSignUpEmailSentPage
 import com.myhobbyislearning.fibersocial.auth.loginPageLoadDecision
 import com.myhobbyislearning.fibersocial.auth.loginNavigationDecision
 import com.myhobbyislearning.fibersocial.auth.parseAuthCallback
@@ -48,6 +52,13 @@ actual fun WebViewLoginScreen(
     // AndroidView's factory runs once the underlying view exists, which BackHandler
     // (evaluated on every composition) can't reach any other way.
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
+    // Bumped to reset the flow after Ravelry emails a signup link. Recreating the WebView
+    // is what actually clears the back stack — clearHistory() is easy to get wrong around
+    // an in-flight load, and a stale entry here means swiping back lands on the dead-end
+    // "check your email" page the reset exists to escape. A fresh view also re-runs the
+    // cookie clear in the factory, so the restarted login starts genuinely logged out.
+    var loginFlowKey by remember { mutableStateOf(0) }
+    var showEmailSentNotice by rememberSaveable { mutableStateOf(false) }
     // System back navigates the WEB flow's own history first — e.g. backing out of the
     // sign-up or password-reset detour taken from the login page — and only leaves the
     // screen entirely once there's nowhere further back to go within it. Without this,
@@ -64,8 +75,13 @@ actual fun WebViewLoginScreen(
     // Edge-to-edge (mandatory once targetSdk >= 35) draws content behind the system
     // bars by default; without this, the OAuth page's own header/submit controls can
     // end up under the status/navigation bar rather than just under app chrome.
+    Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
+        if (showEmailSentNotice) {
+            SignUpEmailSentBanner(onDismiss = { showEmailSentNotice = false })
+        }
+        key(loginFlowKey) {
     AndroidView(
-        modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing),
+        modifier = Modifier.fillMaxSize(),
         factory = { context ->
             WebView(context).apply {
                 settings.javaScriptEnabled = true
@@ -179,6 +195,17 @@ actual fun WebViewLoginScreen(
                     // challenge goes stale (issue #434). Re-check here, where every load
                     // passes, and stop anything off-flow before it can be shown.
                     override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
+                        // The sign-up flow's end: Ravelry has emailed the signup link and
+                        // this page can go no further. Detected as it LOADS, not as it
+                        // navigates — the POST that lands here is what sends the email, so
+                        // cancelling the navigation would mean no email at all.
+                        if (isSignUpEmailSentPage(url)) {
+                            DebugLog.log("sign-up link emailed — returning to the login form")
+                            view.stopLoading()
+                            showEmailSentNotice = true
+                            loginFlowKey++
+                            return
+                        }
                         if (isAllowedLoginNavigation(url)) return
                         DebugLog.log("WebView caught an off-flow page load: ${describeUrlForLog(url)}")
                         // stopLoading alone would leave whatever already rendered on
@@ -208,5 +235,7 @@ actual fun WebViewLoginScreen(
                 webViewRef = this
             }
         },
-    )
+            )
+        }
+    }
 }
