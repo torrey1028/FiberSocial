@@ -16,6 +16,7 @@ import com.myhobbyislearning.fibersocial.projects.ProjectPhotoPickerViewModel
  */
 interface FeedScreenModel {
     val feed: FeedViewModel
+    val groupSearch: GroupSearchViewModel
     val topicDetail: TopicDetailViewModel
     val newTopic: NewTopicViewModel
     val newTopicImage: ImageAttachmentViewModel

@@ -123,6 +123,14 @@ class IosFeedModel(scope: CoroutineScope) : FeedScreenModel {
         // hands FeedScreen for the Messages leg; both wrap the same defaults namespace.
         KeyValueLastDestinationStore(NsUserDefaultsKeyValueStore(LAST_DESTINATION_STORE_NAME)),
     )
+    // Joining from the group browser changes membership, so the feed re-scrapes it and
+    // the drawer picks the new group up without the user backing out and pulling to
+    // refresh (issue #232).
+    override val groupSearch = GroupSearchViewModel(
+        repository,
+        scope,
+        onGroupsChanged = { feed.refresh() },
+    )
     override val topicDetail = TopicDetailViewModel(apiClient, scope)
     override val newTopic = NewTopicViewModel(apiClient, scope)
 

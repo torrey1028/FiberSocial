@@ -580,6 +580,10 @@ fun FeedScreen(
     var showAbout by remember { mutableStateOf(false) }
     // Opened from Settings, same nav shape as showAbout (issue #410).
     var showBlockedUsers by remember { mutableStateOf(false) }
+    // The in-app group browser (issue #232), opened from the drawer's "Find groups" row
+    // and from the no-groups onboarding. rememberSaveable so a rotation mid-search keeps
+    // the screen open.
+    var showGroupSearch by rememberSaveable { mutableStateOf(false) }
     var composingTopic by rememberSaveable { mutableStateOf(false) }
     // The message composer (issue #374), following composingTopic's shape exactly: a
     // rememberSaveable flag plus an early return, not a new navigation mechanism.
@@ -994,6 +998,42 @@ fun FeedScreen(
             attachment = feedbackAttachment,
             onImagePicked = { uri -> viewModel.attachFeedbackImage(uri) },
             onAttachmentInserted = { viewModel.feedbackImage.acknowledgeInserted() },
+        )
+        return
+    }
+
+    // Rendered before the feed so the group browser (issue #232) shows over it; closing
+    // returns to whatever the user was looking at, drawer included.
+    if (showGroupSearch) {
+        val uriHandler = LocalUriHandler.current
+        val groupSearch = viewModel.groupSearch
+        val groupSearchState by groupSearch.state.collectAsState()
+        val groupSearchQuery by groupSearch.query.collectAsState()
+        val joiningPermalink by groupSearch.joiningPermalink.collectAsState()
+        val joinedPermalinks by groupSearch.joinedPermalinks.collectAsState()
+        val joinError by groupSearch.joinError.collectAsState()
+        // Loads the browse listing on first entry; the ViewModel makes repeat calls a
+        // no-op, so re-entering the screen doesn't re-fetch what's already there.
+        LaunchedEffect(Unit) { groupSearch.start() }
+        GroupSearchScreen(
+            state = groupSearchState,
+            query = groupSearchQuery,
+            onQueryChange = groupSearch::onQueryChanged,
+            joiningPermalink = joiningPermalink,
+            joinedPermalinks = joinedPermalinks,
+            joinError = joinError,
+            onRetry = groupSearch::retry,
+            onLoadMore = groupSearch::loadMore,
+            onJoin = groupSearch::join,
+            onDismissJoinError = groupSearch::dismissJoinError,
+            onBack = { showGroupSearch = false },
+            onOpenGroup = { group ->
+                // Reading a group before joining is allowed on Ravelry, so opening one
+                // from the results is useful — but only groups the user is a member of
+                // are in the feed's own list, so anything else has to go to the web page
+                // rather than a feed that would come back empty.
+                uriHandler.openUri("https://www.ravelry.com/groups/${group.permalink}")
+            },
         )
         return
     }
@@ -1483,9 +1523,13 @@ fun FeedScreen(
     val scope = rememberCoroutineScope()
     val uriHandler = LocalUriHandler.current
     // Shared by the drawer's "Find groups" row and the no-groups onboarding state
-    // (issue #431), so both link out to the same Ravelry search page — the app
-    // deliberately doesn't rebuild group search in-app (issue #232).
-    val onFindGroups = { uriHandler.openUri("https://www.ravelry.com/groups/search") }
+    // (issue #431). Both now open the in-app browser (issue #232); this used to send the
+    // user out to ravelry.com/groups/search in a real browser, which left the app for a
+    // job the API can do natively — search and join both already have first-class calls.
+    val onFindGroups = {
+        scope.launch { drawerState.close() }
+        showGroupSearch = true
+    }
 
     CloseDrawerOnBack(drawerState)
 
