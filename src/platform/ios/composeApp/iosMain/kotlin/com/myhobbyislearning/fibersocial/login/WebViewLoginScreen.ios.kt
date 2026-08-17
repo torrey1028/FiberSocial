@@ -14,7 +14,12 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.UIKitView
@@ -27,6 +32,7 @@ import com.myhobbyislearning.fibersocial.auth.authFailureMessage
 import com.myhobbyislearning.fibersocial.auth.describeAuthFailureForLog
 import com.myhobbyislearning.fibersocial.auth.isAllowedLoginNavigation
 import com.myhobbyislearning.fibersocial.auth.isAuthRedirect
+import com.myhobbyislearning.fibersocial.auth.isSignUpEmailSentPage
 import com.myhobbyislearning.fibersocial.auth.loginPageLoadDecision
 import com.myhobbyislearning.fibersocial.auth.loginNavigationDecision
 import com.myhobbyislearning.fibersocial.auth.parseAuthCallback
@@ -74,7 +80,24 @@ actual fun WebViewLoginScreen(
 ) {
     // remember: WKWebView.navigationDelegate is weak; the composition must hold the
     // strong reference or the delegate is collected mid-login.
-    val delegate = remember { LoginNavigationDelegate(buildAuthUrl, onAuthComplete, onAuthError) }
+    // Bumped to reset the flow after Ravelry emails a signup link. Recreating the web
+    // view is what clears the back-forward list — WKWebView exposes no way to empty it —
+    // so the edge-swipe can't land back on the dead-end "check your email" page. A fresh
+    // view also gets a fresh non-persistent store, so the restarted login starts logged
+    // out, matching Android's cookie clear.
+    var loginFlowKey by remember { mutableStateOf(0) }
+    var showEmailSentNotice by rememberSaveable { mutableStateOf(false) }
+    val delegate = remember(loginFlowKey) {
+        LoginNavigationDelegate(
+            buildAuthUrl,
+            onAuthComplete,
+            onAuthError,
+            onSignUpLinkEmailed = {
+                showEmailSentNotice = true
+                loginFlowKey++
+            },
+        )
+    }
     // Held so the toolbar's Back can drive the web view's OWN history — UIKitView's
     // factory runs where the view is created, which the toolbar can't reach otherwise.
     // Plain remember, not state: nothing recomposes on it, it's read inside a click.
@@ -94,7 +117,12 @@ actual fun WebViewLoginScreen(
                 }
             },
         )
-        LoginWebView(buildAuthUrl, delegate, webViewHolder)
+        if (showEmailSentNotice) {
+            SignUpEmailSentBanner(onDismiss = { showEmailSentNotice = false })
+        }
+        key(loginFlowKey) {
+            LoginWebView(buildAuthUrl, delegate, webViewHolder)
+        }
     }
 }
 
@@ -183,6 +211,7 @@ private class LoginNavigationDelegate(
     private val buildAuthUrl: () -> String,
     private val onAuthComplete: (code: String, state: String?, sessionCookie: String) -> Unit,
     private val onAuthError: (message: String) -> Unit,
+    private val onSignUpLinkEmailed: () -> Unit = {},
 ) : NSObject(), WKNavigationDelegateProtocol {
 
     // Restarts performed by this screen; caps the recovery loop.
@@ -286,6 +315,16 @@ private class LoginNavigationDelegate(
     @ObjCSignatureOverride
     override fun webView(webView: WKWebView, didCommitNavigation: WKNavigation?) {
         val committed = webView.URL?.absoluteString ?: return
+        // The sign-up flow's end: Ravelry has emailed the signup link and this page can go
+        // no further. Handled on commit rather than in decidePolicy because the POST that
+        // reaches it is what sends the email — cancelling that navigation would mean no
+        // email at all.
+        if (isSignUpEmailSentPage(committed)) {
+            DebugLog.log("sign-up link emailed — returning to the login form")
+            webView.stopLoading()
+            onSignUpLinkEmailed()
+            return
+        }
         if (isAllowedLoginNavigation(committed)) return
         DebugLog.log("WebView caught an off-flow page load: ${describeUrlForLog(committed)}")
         // stopLoading leaves whatever already rendered on screen, so blank it first.
