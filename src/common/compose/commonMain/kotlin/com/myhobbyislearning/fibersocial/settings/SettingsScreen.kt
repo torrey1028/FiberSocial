@@ -135,9 +135,9 @@ fun SettingsScreen(
                     "FiberSocial doesn't have its own accounts — you sign in with Ravelry, " +
                         "so deleting your account means deleting your Ravelry account and " +
                         "everything in it. This can't be undone.\n\n" +
-                        "We'll open your Ravelry profile settings in your browser. Sign in " +
-                        "if you're asked to, then use the \"delete Ravelry account\" link at " +
-                        "the bottom of that page to finish.\n\n" +
+                        "We'll open your Ravelry profile settings. Sign in if you're asked " +
+                        "to, then use the \"delete Ravelry account\" link at the bottom of " +
+                        "that page to finish.\n\n" +
                         "You'll be signed out of FiberSocial here. If you change your mind, " +
                         "nothing is deleted until you finish on Ravelry — just sign back in.",
                 )
