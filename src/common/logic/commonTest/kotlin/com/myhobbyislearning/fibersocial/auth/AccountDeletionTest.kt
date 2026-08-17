@@ -122,6 +122,74 @@ class AccountDeletionTest {
         assertFalse(isAllowedAccountDeletionNavigation("https://www.ravelry.com/", null))
     }
 
+    /**
+     * With the handle unknown, the flow's own next pages must still be reachable.
+     *
+     * `/people/edit` is what the app opens when the signed-in handle hasn't resolved, and
+     * Ravelry answers it with the user's OWN editor — whose URL carries a handle, as does
+     * the `confirm_delete` link on it. Scoping the allowlist to the handle-less path alone
+     * therefore blocks the page immediately after the one it just opened, and the flow
+     * blanks one tap in.
+     *
+     * Reachable, not theoretical: `FeedScreen` renders Settings *before* its
+     * `state is FeedState.Loading` gate, and `user` is null in that state — so a rotation
+     * with Settings open (which re-fires the feed load, issue #406) followed by a tap on
+     * Delete account opens this page with no handle.
+     */
+    @Test
+    fun `with the handle unknown the flow's handle-carrying pages are still reachable`() {
+        for (path in listOf(
+            "/people/torrey1028/edit",
+            "/people/torrey1028/edit/privacy",
+            "/people/torrey1028/confirm_delete",
+            "/people/torrey1028/delete",
+        )) {
+            assertTrue(
+                isAllowedAccountDeletionNavigation("https://www.ravelry.com$path", null),
+                "$path blocked with an unresolved handle — the flow blanks one tap in",
+            )
+        }
+    }
+
+    /**
+     * The unknown-handle widening is shape-based, and the shape must stay narrow: it may
+     * admit the editor and the two delete endpoints for *some* handle, and nothing else.
+     * The 2.1(a) crash came through the web messages composer, so those pages staying
+     * blocked is the property that actually matters here.
+     */
+    @Test
+    fun `the unknown-handle widening does not open the rest of the site`() {
+        for (path in listOf(
+            "/people/torrey1028/messages",
+            "/people/torrey1028",
+            "/people/torrey1028/edit-evil",
+            "/people/torrey1028/confirm_delete/extra",
+            "/messages",
+            "/discuss/the-testing-pool",
+            "/people",
+            "/people/",
+            "/",
+        )) {
+            assertFalse(
+                isAllowedAccountDeletionNavigation("https://www.ravelry.com$path", null),
+                "$path slipped through the unknown-handle widening",
+            )
+        }
+    }
+
+    /**
+     * The widening applies ONLY when the handle is unknown. With one in hand the list stays
+     * pinned to that user, so a known-handle session can never wander onto another
+     * account's editor or delete endpoint.
+     */
+    @Test
+    fun `a known handle is not widened to other handles`() {
+        assertFalse(allowed("https://www.ravelry.com/someone-else/edit"))
+        assertFalse(allowed("https://www.ravelry.com/people/someone-else/edit"))
+        assertFalse(allowed("https://www.ravelry.com/people/someone-else/confirm_delete"))
+        assertFalse(allowed("https://www.ravelry.com/people/someone-else/delete"))
+    }
+
     @Test
     fun `the url the app opens is itself allowed`() {
         // Pins the two against each other: if the URL builder ever changes shape, the
@@ -157,22 +225,32 @@ class AccountDeletionTest {
     }
 
     /**
-     * The allowlist must be evaluated against the identity the page was OPENED for, not
-     * against a live read of the signed-in user (issue #406's lesson, applied here).
+     * The allowlist is evaluated against the identity the page was OPENED for, not a live
+     * read of the signed-in user (issue #406's lesson, applied here) — and that still
+     * matters even though an unknown handle no longer blocks the flow.
      *
-     * This is what makes that matter: asked about the real editor page with a null handle,
-     * the allowlist resolves to the handle-less `/people/edit` and refuses it. The feed's
-     * copy of the user IS momentarily null while the feed reloads — a rotation triggers
-     * exactly that — and the deletion page survives rotation, so a caller reading the user
-     * live would cancel the next navigation mid-flow: Ravelry's redirect, the login POST,
-     * or the delete link itself. FeedScreen captures the handle alongside the URL for this
-     * reason; if that ever regresses, this is the behaviour that makes it bite.
+     * What capturing buys is SCOPE. With a handle in hand the list is pinned to that one
+     * user; a live read that flipped to null mid-flow would silently drop to the wider
+     * shape-based set instead. `FeedScreen` captures the handle alongside the URL and
+     * saves it beside it for that reason.
+     *
+     * An earlier version of this test asserted the opposite behaviour — that a null handle
+     * REFUSES the real editor page — treating the block as the safety property. That was
+     * wrong: the block is what makes the flow blank one tap in, since every page after the
+     * handle-less entry point carries a handle. The two tests above cover the corrected
+     * behaviour; this one keeps the scoping half honest.
      */
     @Test
-    fun `a null handle does not authorise the page a real handle opened`() {
-        assertFalse(
+    fun `a captured handle keeps the allowlist pinned to that user`() {
+        // Known handle: pinned. Its own pages yes, anyone else's no.
+        assertTrue(allowed("https://www.ravelry.com/people/torrey1028/confirm_delete"))
+        assertFalse(allowed("https://www.ravelry.com/people/someone-else/confirm_delete"))
+        // Unknown handle: the same page is reachable, because it has to be — but that is
+        // strictly the weaker state, which is why the handle is captured rather than read
+        // live once it is known.
+        assertTrue(
             isAllowedAccountDeletionNavigation(
-                "https://www.ravelry.com/people/torrey1028/edit",
+                "https://www.ravelry.com/people/someone-else/confirm_delete",
                 null,
             ),
         )
