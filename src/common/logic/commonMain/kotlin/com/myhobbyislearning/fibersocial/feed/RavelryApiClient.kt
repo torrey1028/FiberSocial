@@ -891,22 +891,56 @@ class RavelryApiClient(
     }
 
     private suspend fun searchGroupByQuery(query: String, permalink: String): Group? = try {
-        val raw = authenticatedRequest {
-            httpClient.get("$BASE_URL/groups/search.json") {
-                header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
-                url.parameters.apply {
-                    append("query", query)
-                    append("page_size", "25")
-                }
-            }
-        }
-        lenientJson.decodeFromString<GroupsSearchResponse>(raw).groups
-            .find { it.permalink == permalink }
+        searchGroups(query = query, pageSize = 25).groups.find { it.permalink == permalink }
     } catch (e: SessionExpiredException) {
         throw e
     } catch (e: Exception) {
         println("FiberSocial: getGroup($permalink) query=\"$query\" error: ${e.message}")
         null
+    }
+
+    /**
+     * Searches Ravelry's group directory — `/groups/search.json`, the same endpoint
+     * [getGroup] already resolves permalinks through, exposed for the in-app group
+     * browser (issue #232, which the app previously answered by linking out to Ravelry's
+     * website).
+     *
+     * [query] is optional in the API as well as here: with none, Ravelry returns the
+     * directory itself, which is what makes a browsable "popular groups" list possible
+     * before the user has typed anything.
+     *
+     * @param query Fulltext search term, or blank to browse the directory.
+     * @param sort Ravelry's own sort keys — `best` (relevance), `added` (newest),
+     *   `favorites` (most favorited). Blank leaves it to Ravelry's default.
+     * @param page 1-based page number.
+     * @param pageSize Results per page; Ravelry defaults to 50.
+     */
+    suspend fun searchGroups(
+        query: String = "",
+        sort: String = "",
+        page: Int = 1,
+        pageSize: Int = DEFAULT_FEED_PAGE_SIZE,
+    ): GroupsPage {
+        val raw = authenticatedRequest {
+            httpClient.get("$BASE_URL/groups/search.json") {
+                header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
+                url.parameters.apply {
+                    // Ravelry treats an empty query as "no filter", but sending the
+                    // parameter at all with an empty value has no upside — omit it.
+                    if (query.isNotBlank()) append("query", query)
+                    if (sort.isNotBlank()) append("sort", sort)
+                    append("page", page.toString())
+                    append("page_size", pageSize.toString())
+                }
+            }
+        }
+        val response = lenientJson.decodeFromString<GroupsSearchResponse>(raw)
+        val paginator = response.paginator
+        return GroupsPage(
+            groups = response.groups,
+            page = paginator?.page ?: page,
+            hasMore = paginator != null && paginator.page < paginator.pageCount,
+        )
     }
 
     /**
@@ -2097,7 +2131,10 @@ class RavelryApiClient(
     @Serializable private data class TopicCreateResponse(val topic: Topic)
     @Serializable private data class CurrentUserResponse(val user: RavelryUser)
     @Serializable private data class UserProfileResponse(val user: UserProfile)
-    @Serializable private data class GroupsSearchResponse(val groups: List<Group> = emptyList())
+    @Serializable private data class GroupsSearchResponse(
+        val groups: List<Group> = emptyList(),
+        val paginator: Paginator? = null,
+    )
     @Serializable private data class TopicsResponse(
         val topics: List<Topic> = emptyList(),
         val paginator: Paginator? = null,
@@ -2185,6 +2222,19 @@ data class VoteResult(
  */
 data class TopicsPage(
     val topics: List<Topic>,
+    val page: Int,
+    val hasMore: Boolean,
+)
+
+/**
+ * One page of group-directory results, as returned by [RavelryApiClient.searchGroups].
+ *
+ * @property groups This page's groups.
+ * @property page The 1-based page number these came from.
+ * @property hasMore Whether requesting `page + 1` would return further groups.
+ */
+data class GroupsPage(
+    val groups: List<Group>,
     val page: Int,
     val hasMore: Boolean,
 )

@@ -582,6 +582,10 @@ fun FeedScreen(
     var showAbout by remember { mutableStateOf(false) }
     // Opened from Settings, same nav shape as showAbout (issue #410).
     var showBlockedUsers by remember { mutableStateOf(false) }
+    // The in-app group browser (issue #232), opened from the drawer's "Find groups" row
+    // and from the no-groups onboarding. rememberSaveable so a rotation mid-search keeps
+    // the screen open.
+    var showGroupSearch by rememberSaveable { mutableStateOf(false) }
     // Non-null while the in-app Ravelry web page is open — currently only the
     // account-deletion page (issues #478, #481). rememberSaveable so it survives the
     // configuration change a rotation causes mid-flow.
@@ -1014,32 +1018,6 @@ fun FeedScreen(
         return
     }
 
-    // Rendered before settings, same layering trick as About below: the deletion page
-    // (issue #478) shows over Settings, which is still open behind it.
-    webPageUrl?.let { pageUrl ->
-        WebPageScreen(
-            url = pageUrl,
-            title = "Delete account",
-            // Only the pages the deletion flow actually walks — NOT "anything on
-            // ravelry.com". The 2.1(a) crash came from a reviewer roaming Ravelry inside
-            // a web view we had opened for them (issue #425); staying on Ravelry was
-            // never the safety property.
-            isAllowedNavigation = { isAllowedAccountDeletionNavigation(it, webPageUsername) },
-            // Signing out here rather than at the tap: returning from the deletion page
-            // should land on the login screen, not in the settings of an account that may
-            // no longer exist (the confirmation dialog says so). The app cannot observe
-            // whether the deletion went through, and of the two guesses this is the safe
-            // one — a session held open against a deleted account 403s on every call,
-            // while a user who changed their mind just signs back in.
-            onClose = {
-                webPageUrl = null
-                webPageUsername = null
-                onLogout()
-            },
-        )
-        return
-    }
-
     // Rendered before settings so "About FiberSocial" (opened from Settings, issue #289)
     // shows over it; backing out returns to the still-open settings screen.
     if (showAbout) {
@@ -1379,6 +1357,66 @@ fun FeedScreen(
         return
     }
 
+    // The group browser and the preview of a not-yet-joined group (issue #232). Rendered
+    // AFTER the topic-detail block on purpose: a topic opened from a previewed group has
+    // to layer over it, exactly as one opened from the feed does. The preview sits ahead
+    // of the browser because it is opened from a search result.
+    val groupSearch = viewModel.groupSearch
+    val joiningPermalink by groupSearch.joiningPermalink.collectAsState()
+    val joinedPermalinks by groupSearch.joinedPermalinks.collectAsState()
+    val joinError by groupSearch.joinError.collectAsState()
+    val groupPreviewState by viewModel.groupPreview.state.collectAsState()
+
+    if (groupPreviewState !is GroupPreviewState.Hidden) {
+        val previewGroup = (groupPreviewState as? GroupPreviewState.Loaded)?.group
+            ?: (groupPreviewState as? GroupPreviewState.Loading)?.group
+            ?: (groupPreviewState as? GroupPreviewState.Error)?.group
+        GroupPreviewScreen(
+            state = groupPreviewState,
+            onBack = { viewModel.groupPreview.close() },
+            onTopicClick = { topic ->
+                // Same resets as the feed's own topic open, for the same reasons.
+                viewModel.replyImage.reset()
+                viewModel.projectPicker.dismiss()
+                viewModel.topicDetail.load(topic.id)
+                selectedTopic = topic
+            },
+            isJoining = previewGroup != null && joiningPermalink == previewGroup.permalink,
+            isJoined = previewGroup != null && previewGroup.permalink in joinedPermalinks,
+            joinError = joinError,
+            onJoin = { group -> groupSearch.join(group) },
+            onDismissJoinError = groupSearch::dismissJoinError,
+            onRetry = { viewModel.groupPreview.retry() },
+            onLoadMore = { viewModel.groupPreview.loadMore() },
+        )
+        return
+    }
+
+    if (showGroupSearch) {
+        val groupSearchState by groupSearch.state.collectAsState()
+        val groupSearchQuery by groupSearch.query.collectAsState()
+        // Loads the browse listing on first entry; the ViewModel makes repeat calls a
+        // no-op, so re-entering the screen doesn't re-fetch what's already there.
+        LaunchedEffect(Unit) { groupSearch.start() }
+        GroupSearchScreen(
+            state = groupSearchState,
+            query = groupSearchQuery,
+            onQueryChange = groupSearch::onQueryChanged,
+            joiningPermalink = joiningPermalink,
+            joinedPermalinks = joinedPermalinks,
+            joinError = joinError,
+            onRetry = groupSearch::retry,
+            onLoadMore = groupSearch::loadMore,
+            onJoin = groupSearch::join,
+            onDismissJoinError = groupSearch::dismissJoinError,
+            onBack = { showGroupSearch = false },
+            // Opens the group in-app rather than bouncing to ravelry.com: its topics read
+            // exactly as a joined group's do, with a Join button on top.
+            onOpenGroup = { group -> viewModel.groupPreview.open(group) },
+        )
+        return
+    }
+
     if (composingTopic) {
         val newTopicState by viewModel.newTopic.state.collectAsState()
         val newTopicAttachment by viewModel.newTopicImage.state.collectAsState()
@@ -1512,9 +1550,13 @@ fun FeedScreen(
     val scope = rememberCoroutineScope()
     val uriHandler = LocalUriHandler.current
     // Shared by the drawer's "Find groups" row and the no-groups onboarding state
-    // (issue #431), so both link out to the same Ravelry search page — the app
-    // deliberately doesn't rebuild group search in-app (issue #232).
-    val onFindGroups = { uriHandler.openUri("https://www.ravelry.com/groups/search") }
+    // (issue #431). Both now open the in-app browser (issue #232); this used to send the
+    // user out to ravelry.com/groups/search in a real browser, which left the app for a
+    // job the API can do natively — search and join both already have first-class calls.
+    val onFindGroups = {
+        scope.launch { drawerState.close() }
+        showGroupSearch = true
+    }
 
     CloseDrawerOnBack(drawerState)
 
@@ -1720,7 +1762,7 @@ fun FeedScreen(
                     val displayedItems = filterBlocked(filterUnread(s.items, showUnreadOnly), blockedUsernames)
                     // A brand-new Ravelry user with no groups would otherwise land on a
                     // blank page (issue #431) — welcome them and point at the same
-                    // Ravelry group-search link-out the drawer offers. Checked before the
+                    // in-app group browser the drawer offers. Checked before the
                     // unread filter so toggling the filter can't replace the onboarding
                     // with a misleading "No unread topics". Group feed only: Messages has
                     // its own empty presentation; My Posts renders a bare empty list for
@@ -2164,11 +2206,12 @@ internal fun UnreadFilterEmptyState(
  * groups at all (issue #431) — a brand-new Ravelry account would otherwise see a blank
  * page with no hint of what the app is for or what to do next.
  *
- * [onFindGroups] must be the same Ravelry group-search link-out as the drawer's "Find
- * groups" row: the app deliberately links out instead of rebuilding group search in-app
- * (issue #232). Scrollable (like [FeedErrorState]) so the surrounding [PullToRefreshBox]
- * still has a nested-scrolling child — pull-to-refresh is exactly how the user picks up
- * a group joined on the website, which is why the copy mentions it.
+ * [onFindGroups] must be the same in-app group browser the drawer's "Find groups" row
+ * opens: issue #232 was originally answered by linking out to Ravelry's website and is
+ * now built natively, so nothing here leaves the app. Scrollable (like [FeedErrorState])
+ * so the surrounding [PullToRefreshBox] still has a nested-scrolling child — the browser
+ * refreshes the feed itself after a join, but pull-to-refresh is still how a group joined
+ * on the website (outside the app entirely) gets picked up.
  */
 @Composable
 internal fun NoGroupsOnboarding(
@@ -2191,7 +2234,7 @@ internal fun NoGroupsOnboarding(
         Spacer(Modifier.height(12.dp))
         Text(
             text = "FiberSocial shows the discussions from your Ravelry groups, " +
-                "and you aren't in any groups yet. Join a group or two on Ravelry " +
+                "and you aren't in any groups yet. Find a group or two " +
                 "to get started.",
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -2199,10 +2242,11 @@ internal fun NoGroupsOnboarding(
             modifier = Modifier.padding(horizontal = 32.dp),
         )
         Spacer(Modifier.height(16.dp))
-        Button(onClick = onFindGroups) { Text("Find groups on Ravelry") }
+        Button(onClick = onFindGroups) { Text("Find groups") }
         Spacer(Modifier.height(12.dp))
         Text(
-            text = "Groups you join appear in the menu — pull down to refresh here when you're done.",
+            text = "Groups you join appear in the menu automatically. " +
+                "Joined one on Ravelry's website instead? Pull down to refresh here.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
@@ -2569,8 +2613,8 @@ internal fun GroupDrawer(
                                 ),
                         )
                     }
-                    // Discover and join more groups on Ravelry's own search page (issue #232 —
-                    // linking out rather than rebuilding search in-app).
+                    // Opens the in-app group browser (issue #232). This used to link out to
+                    // Ravelry's own search page in a real browser.
                     item(key = "find-groups") {
                         NavigationDrawerItem(
                             label = { Text("Find groups") },
