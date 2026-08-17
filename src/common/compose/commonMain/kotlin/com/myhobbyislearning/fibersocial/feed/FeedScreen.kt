@@ -1002,42 +1002,6 @@ fun FeedScreen(
         return
     }
 
-    // Rendered before the feed so the group browser (issue #232) shows over it; closing
-    // returns to whatever the user was looking at, drawer included.
-    if (showGroupSearch) {
-        val uriHandler = LocalUriHandler.current
-        val groupSearch = viewModel.groupSearch
-        val groupSearchState by groupSearch.state.collectAsState()
-        val groupSearchQuery by groupSearch.query.collectAsState()
-        val joiningPermalink by groupSearch.joiningPermalink.collectAsState()
-        val joinedPermalinks by groupSearch.joinedPermalinks.collectAsState()
-        val joinError by groupSearch.joinError.collectAsState()
-        // Loads the browse listing on first entry; the ViewModel makes repeat calls a
-        // no-op, so re-entering the screen doesn't re-fetch what's already there.
-        LaunchedEffect(Unit) { groupSearch.start() }
-        GroupSearchScreen(
-            state = groupSearchState,
-            query = groupSearchQuery,
-            onQueryChange = groupSearch::onQueryChanged,
-            joiningPermalink = joiningPermalink,
-            joinedPermalinks = joinedPermalinks,
-            joinError = joinError,
-            onRetry = groupSearch::retry,
-            onLoadMore = groupSearch::loadMore,
-            onJoin = groupSearch::join,
-            onDismissJoinError = groupSearch::dismissJoinError,
-            onBack = { showGroupSearch = false },
-            onOpenGroup = { group ->
-                // Reading a group before joining is allowed on Ravelry, so opening one
-                // from the results is useful — but only groups the user is a member of
-                // are in the feed's own list, so anything else has to go to the web page
-                // rather than a feed that would come back empty.
-                uriHandler.openUri("https://www.ravelry.com/groups/${group.permalink}")
-            },
-        )
-        return
-    }
-
     // Rendered before settings so "About FiberSocial" (opened from Settings, issue #289)
     // shows over it; backing out returns to the still-open settings screen.
     if (showAbout) {
@@ -1387,6 +1351,70 @@ fun FeedScreen(
             },
         )
         ProjectPhotoPickerHost(viewModel, target = viewModel.replyImage)
+        return
+    }
+
+    // The group browser and the preview of a not-yet-joined group (issue #232). Rendered
+    // AFTER the topic-detail block on purpose: a topic opened from a previewed group has
+    // to layer over it, exactly as one opened from the feed does. The preview sits ahead
+    // of the browser because it is opened from a search result.
+    val groupSearch = viewModel.groupSearch
+    val joiningPermalink by groupSearch.joiningPermalink.collectAsState()
+    val joinedPermalinks by groupSearch.joinedPermalinks.collectAsState()
+    val joinError by groupSearch.joinError.collectAsState()
+    val groupPreviewState by viewModel.groupPreview.state.collectAsState()
+
+    if (groupPreviewState !is GroupPreviewState.Hidden) {
+        val previewUriHandler = LocalUriHandler.current
+        val previewGroup = (groupPreviewState as? GroupPreviewState.Loaded)?.group
+            ?: (groupPreviewState as? GroupPreviewState.Loading)?.group
+            ?: (groupPreviewState as? GroupPreviewState.Error)?.group
+        GroupPreviewScreen(
+            state = groupPreviewState,
+            onBack = { viewModel.groupPreview.close() },
+            onTopicClick = { topic ->
+                // Same resets as the feed's own topic open, for the same reasons.
+                viewModel.replyImage.reset()
+                viewModel.projectPicker.dismiss()
+                viewModel.topicDetail.load(topic.id)
+                selectedTopic = topic
+            },
+            isJoining = previewGroup != null && joiningPermalink == previewGroup.permalink,
+            isJoined = previewGroup != null && previewGroup.permalink in joinedPermalinks,
+            joinError = joinError,
+            onJoin = { group -> groupSearch.join(group) },
+            onDismissJoinError = groupSearch::dismissJoinError,
+            onRetry = { viewModel.groupPreview.retry() },
+            onLoadMore = { viewModel.groupPreview.loadMore() },
+            onOpenInBrowser = { group ->
+                previewUriHandler.openUri("https://www.ravelry.com/groups/${group.permalink}")
+            },
+        )
+        return
+    }
+
+    if (showGroupSearch) {
+        val groupSearchState by groupSearch.state.collectAsState()
+        val groupSearchQuery by groupSearch.query.collectAsState()
+        // Loads the browse listing on first entry; the ViewModel makes repeat calls a
+        // no-op, so re-entering the screen doesn't re-fetch what's already there.
+        LaunchedEffect(Unit) { groupSearch.start() }
+        GroupSearchScreen(
+            state = groupSearchState,
+            query = groupSearchQuery,
+            onQueryChange = groupSearch::onQueryChanged,
+            joiningPermalink = joiningPermalink,
+            joinedPermalinks = joinedPermalinks,
+            joinError = joinError,
+            onRetry = groupSearch::retry,
+            onLoadMore = groupSearch::loadMore,
+            onJoin = groupSearch::join,
+            onDismissJoinError = groupSearch::dismissJoinError,
+            onBack = { showGroupSearch = false },
+            // Opens the group in-app rather than bouncing to ravelry.com: its topics read
+            // exactly as a joined group's do, with a Join button on top.
+            onOpenGroup = { group -> viewModel.groupPreview.open(group) },
+        )
         return
     }
 

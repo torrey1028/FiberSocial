@@ -58,6 +58,7 @@ class FeedAndroidViewModel(app: Application) : AndroidViewModel(app), FeedScreen
         viewModelScope,
         onGroupsChanged = { feed.refresh() },
     )
+    override val groupPreview = GroupPreviewViewModel(repository, viewModelScope)
     override val topicDetail = TopicDetailViewModel(apiClient, viewModelScope)
     override val newTopic = NewTopicViewModel(apiClient, viewModelScope)
 

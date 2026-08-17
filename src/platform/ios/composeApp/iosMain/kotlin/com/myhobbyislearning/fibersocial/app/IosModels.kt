@@ -131,6 +131,7 @@ class IosFeedModel(scope: CoroutineScope) : FeedScreenModel {
         scope,
         onGroupsChanged = { feed.refresh() },
     )
+    override val groupPreview = GroupPreviewViewModel(repository, scope)
     override val topicDetail = TopicDetailViewModel(apiClient, scope)
     override val newTopic = NewTopicViewModel(apiClient, scope)
 

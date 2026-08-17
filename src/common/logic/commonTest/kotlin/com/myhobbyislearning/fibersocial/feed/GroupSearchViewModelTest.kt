@@ -10,6 +10,7 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.json.Json
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -269,5 +270,91 @@ class GroupSearchViewModelTest {
         val state = vm.state.value as GroupSearchState.Loaded
         assertEquals(emptyList<Group>(), state.groups)
         assertEquals("zzzzz", state.query)
+    }
+
+    @Test
+    fun `start is a no-op once a search has already run`() = runTest(UnconfinedTestDispatcher()) {
+        // The screen calls start() on every entry; re-fetching what is already on screen
+        // each time the user backs out of a group and returns would be pure waste.
+        var calls = 0
+        val vm = viewModel(this) {
+            calls++
+            searchJson(groupJson(10, "Once Only", "once-only"))
+        }
+        vm.start()
+        awaitChildren(coroutineContext[Job]!!)
+        vm.start()
+        awaitChildren(coroutineContext[Job]!!)
+        assertEquals(1, calls)
+    }
+
+    @Test
+    fun `a page that lands after the query changed is discarded`() = runTest(UnconfinedTestDispatcher()) {
+        // Otherwise page 2 of "sock" appends onto the results for "lace" — the reason
+        // loadMore re-reads state instead of closing over the page it started from.
+        val gate = CompletableDeferred<Unit>()
+        val vm = GroupSearchViewModel(
+            FeedRepository(
+                suspendableRoutingApiClient { url ->
+                    if (url.parameters["page"] == "2") gate.await()
+                    searchJson(
+                        groupJson(11, "Result", "result-${url.parameters["page"]}"),
+                        page = url.parameters["page"]?.toInt() ?: 1,
+                        pageCount = 2,
+                    )
+                },
+            ),
+            this,
+        )
+        vm.start()
+        awaitChildren(coroutineContext[Job]!!)
+        vm.loadMore()
+        // Move to a different query while page 2 is still in flight.
+        vm.onQueryChanged("lace")
+        gate.complete(Unit)
+        awaitChildren(coroutineContext[Job]!!)
+        val state = vm.state.value as GroupSearchState.Loaded
+        assertEquals("lace", state.query)
+        assertEquals(1, state.page)
+    }
+
+    @Test
+    fun `a failed loadMore clears the spinner and keeps the results`() =
+        runTest(UnconfinedTestDispatcher()) {
+            var calls = 0
+            val vm = viewModel(this) {
+                calls++
+                if (calls > 1) throw RuntimeException("page 2 boom")
+                searchJson(groupJson(12, "First", "first"), page = 1, pageCount = 2)
+            }
+            vm.start()
+            awaitChildren(coroutineContext[Job]!!)
+            vm.loadMore()
+            awaitChildren(coroutineContext[Job]!!)
+            val state = vm.state.value as GroupSearchState.Loaded
+            assertTrue(!state.loadingMore)
+            assertEquals(1, state.groups.size)
+        }
+
+    @Test
+    fun `a join is ignored while another is already in flight`() = runTest(UnconfinedTestDispatcher()) {
+        var joins = 0
+        val vm = joinableViewModel(
+            this,
+            searchBody = searchJson(
+                groupJson(13, "One", "one"),
+                groupJson(14, "Two", "two"),
+            ),
+            onJoinPost = { joins++ },
+        )
+        vm.start()
+        awaitChildren(coroutineContext[Job]!!)
+        val groups = (vm.state.value as GroupSearchState.Loaded).groups
+        vm.join(groups[0])
+        vm.join(groups[1])
+        awaitChildren(coroutineContext[Job]!!)
+        // The second tap lands while the first join is still in flight and is dropped —
+        // joining two groups from one gesture is never what the user meant.
+        assertEquals(1, joins)
     }
 }
