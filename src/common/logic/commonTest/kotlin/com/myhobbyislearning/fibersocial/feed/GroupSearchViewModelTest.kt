@@ -61,6 +61,7 @@ class GroupSearchViewModelTest {
         onGroupsChanged: suspend () -> Unit = {},
         onJoinPost: () -> Unit = {},
         failJoin: Boolean = false,
+        joinGate: kotlinx.coroutines.CompletableDeferred<Unit>? = null,
     ): GroupSearchViewModel {
         val engine = MockEngine { request ->
             when {
@@ -71,6 +72,10 @@ class GroupSearchViewModelTest {
                         headersOf("Content-Type", ContentType.Application.Json.toString()),
                     )
                 request.method.value == "POST" -> {
+                    // Parks the join mid-flight when a gate is supplied, so a test about
+                    // in-flight behaviour doesn't depend on whether the whole request
+                    // happens to resolve without suspending.
+                    joinGate?.await()
                     onJoinPost()
                     if (failJoin) {
                         respond("no", HttpStatusCode.InternalServerError, headersOf("Content-Type", "text/html"))
@@ -339,7 +344,15 @@ class GroupSearchViewModelTest {
 
     @Test
     fun `a join is ignored while another is already in flight`() = runTest(UnconfinedTestDispatcher()) {
+        // The first join is PARKED rather than merely started. Without the gate this test
+        // depended on the first join not finishing inside its own `vm.join(...)` call:
+        // under UnconfinedTestDispatcher the launched body runs eagerly and inline, so if
+        // nothing in the request actually suspends, `finally { _joiningPermalink = null }`
+        // has already run by the time the second tap arrives, the guard sees null, and the
+        // second join proceeds — joins == 2. That is scheduling, not behaviour, and it is
+        // what failed on CI while passing locally 8/8.
         var joins = 0
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
         val vm = joinableViewModel(
             this,
             searchBody = searchJson(
@@ -347,16 +360,24 @@ class GroupSearchViewModelTest {
                 groupJson(14, "Two", "two"),
             ),
             onJoinPost = { joins++ },
+            joinGate = gate,
         )
         vm.start()
         awaitChildren(coroutineContext[Job]!!)
         val groups = (vm.state.value as GroupSearchState.Loaded).groups
+
         vm.join(groups[0])
+        // The first join is provably still in flight, so the second tap's guard is being
+        // exercised rather than raced.
+        assertEquals(groups[0].permalink, vm.joiningPermalink.value)
         vm.join(groups[1])
+
+        gate.complete(Unit)
         awaitChildren(coroutineContext[Job]!!)
-        // The second tap lands while the first join is still in flight and is dropped —
-        // joining two groups from one gesture is never what the user meant.
+        // The second tap was dropped — joining two groups from one gesture is never what
+        // the user meant.
         assertEquals(1, joins)
+        assertEquals(setOf(groups[0].permalink), vm.joinedPermalinks.value)
     }
 
     /**
