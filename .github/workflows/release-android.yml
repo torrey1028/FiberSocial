@@ -38,10 +38,6 @@ jobs:
     permissions:
       contents: write
 
-    outputs:
-      aab-path: ${{ steps.paths.outputs.aab }}
-      apk-path: ${{ steps.paths.outputs.apk }}
-
     steps:
       # fetch-depth: 0 (not the shallow default) so `git describe --tags
       # --exact-match` in app/build.gradle.kts can actually resolve this tag.
@@ -149,18 +145,6 @@ jobs:
           echo "aab=src/platform/android/app/build/outputs/bundle/release/app-release.aab" >> "$GITHUB_OUTPUT"
           echo "apk=src/platform/android/app/build/outputs/apk/release/app-release.apk" >> "$GITHUB_OUTPUT"
 
-      # Persisted so the promote job can push the exact same tested bytes to
-      # the production track and attach them to the promoted GitHub Release,
-      # without rebuilding from source a second time.
-      - name: Upload build artifacts for promotion
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-android-artifacts
-          path: |
-            ${{ steps.paths.outputs.aab }}
-            ${{ steps.paths.outputs.apk }}
-          retention-days: 30
-
       # $GITHUB_REF_NAME is the tag name (e.g. v1.2.0) for a tag-push event.
       # --generate-notes pulls auto-generated release notes from merged PRs
       # since the previous tag. --prerelease (and no --latest) is the whole
@@ -179,11 +163,11 @@ jobs:
             --generate-notes \
             --prerelease
 
-      # Play accepts re-uploading the exact bundle bytes it's already seen for
-      # a given versionCode, so uploading again to a different track at
-      # promotion time (see the `promote` job) is the standard way to move a
-      # release between tracks with this action — see that job's comment for
-      # why this isn't a rebuild.
+      # The only upload this versionCode ever gets: Play rejects re-uploading
+      # a bundle whose versionCode it's already seen on any track, so the
+      # `promote` job below moves this exact release to production via the
+      # Play Developer API's track-update endpoint instead of uploading again
+      # — see that job's comment.
       - name: Upload AAB to Play Console testing track
         if: github.event_name == 'push'
         uses: r0adkll/upload-google-play@v1
@@ -235,8 +219,9 @@ jobs:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     # No concurrency group here (unlike build-rc): this job can sit paused for
-    # however long manual QA/approval takes, and needs.build-rc.outputs already
-    # scopes it to this run's own RC — sharing build-rc's `release-android`
+    # however long manual QA/approval takes, and the tag it promotes is already
+    # pinned by $GITHUB_REF_NAME (see "Determine expected versionCode"), so it
+    # can only ever act on its own run's RC — sharing build-rc's `release-android`
     # group would make a still-pending approval block every later run's
     # build-rc (a real release fix-forward) from even starting.
     permissions:
@@ -249,33 +234,91 @@ jobs:
       name: android-release
 
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Download release candidate artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: release-android-artifacts
-          path: rc-artifacts
-
-      # This is "promotion" in effect but a re-upload in mechanism: Play's API
-      # (and this action, which has no metadata-only track-promote mode — see
-      # its action.yml) always requires a bundle file per upload. What matters
-      # is that these are the *exact same bytes* built and tested in build-rc,
-      # not a fresh build from source — no new compile happens here.
+      # A real run (v0.3.0) proved the assumption this job used to be built
+      # on wrong: Play's API rejects re-uploading a bundle whose versionCode
+      # has already been used on *any* track ("Version code N has already
+      # been used"), and build-rc's upload to PLAY_TESTING_TRACK already used
+      # this release's versionCode. So promotion can't be "re-upload the same
+      # bytes to a different track" (there is no such thing, mechanically,
+      # for a versionCode Play has already seen) — it has to be a real
+      # track-to-track move of the existing release via the Play Developer
+      # API's edits.tracks endpoints, which reference the already-uploaded
+      # versionCode instead of uploading anything.
       #
-      # build-rc's upload step gives actions/upload-artifact two paths at
-      # once (the AAB and the APK); when given multiple paths, that action
-      # roots the artifact at their least common ancestor
-      # (src/platform/android/app/build/outputs), so the AAB extracts here to
-      # rc-artifacts/bundle/release/app-release.aab, not rc-artifacts/app-release.aab.
-      - name: Promote AAB to production track
-        uses: r0adkll/upload-google-play@v1
+      # Mirrors app/build.gradle.kts's versionCode packing so this promote
+      # job can identify which release on the source track to move, without
+      # needing build-rc to hand it the value via an artifact/output.
+      - name: Determine expected versionCode
+        id: version
+        run: |
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            echo "::error::Tag '$GITHUB_REF_NAME' doesn't match vMAJOR.MINOR.PATCH"
+            exit 1
+          fi
+          major="${BASH_REMATCH[1]}"
+          minor="${BASH_REMATCH[2]}"
+          patch="${BASH_REMATCH[3]}"
+          echo "version_code=$((major * 1000000 + minor * 1000 + patch))" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-python@v5
         with:
-          serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
-          packageName: com.myhobbyislearning.fibersocial
-          releaseFiles: rc-artifacts/bundle/release/app-release.aab
-          track: production
-          status: completed
+          python-version: "3.x"
+
+      # google-api-python-client/google-auth aren't preinstalled on the
+      # runner image (unlike, say, a Node action's bundled deps) — install
+      # them fresh rather than hand-rolling the JWT-bearer OAuth flow with
+      # raw HTTP calls.
+      - name: Move the release from the testing track to production
+        env:
+          PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          PLAY_TESTING_TRACK: ${{ vars.PLAY_TESTING_TRACK }}
+          VERSION_CODE: ${{ steps.version.outputs.version_code }}
+        run: |
+          pip install --quiet google-api-python-client google-auth
+          # Fed on stdin via a quoted heredoc, NOT `python3 -c '...'`: inside a
+          # single-quoted shell argument the first apostrophe in the Python source
+          # ends the string, so a literal like release.get('name') silently reaches
+          # Python as release.get(name) and the whole program dies with a
+          # SyntaxError before it does anything. A <<'PY' heredoc quotes nothing and
+          # expands nothing, so the Python below is passed through byte for byte.
+          python3 - <<'PY'
+          import json, os
+          from google.oauth2 import service_account
+          from googleapiclient.discovery import build
+
+          package_name = "com.myhobbyislearning.fibersocial"
+          source_track = os.environ["PLAY_TESTING_TRACK"]
+          version_code = int(os.environ["VERSION_CODE"])
+
+          credentials = service_account.Credentials.from_service_account_info(
+              json.loads(os.environ["PLAY_SERVICE_ACCOUNT_JSON"]),
+              scopes=["https://www.googleapis.com/auth/androidpublisher"],
+          )
+          service = build("androidpublisher", "v3", credentials=credentials)
+          edits = service.edits()
+
+          edit_id = edits.insert(body={}, packageName=package_name).execute()["id"]
+
+          releases = edits.tracks().get(
+              editId=edit_id, packageName=package_name, track=source_track,
+          ).execute().get("releases", [])
+          release = next((r for r in releases if version_code in [int(v) for v in r.get("versionCodes", [])]), None)
+          if release is None:
+              found = [r.get("versionCodes") for r in releases]
+              raise SystemExit(
+                  f"No release with versionCode {version_code} found on the {source_track!r} track "
+                  f"(found: {found}). build-rc may not have finished uploading it yet, or it landed "
+                  f"on a different track."
+              )
+
+          edits.tracks().update(
+              editId=edit_id, packageName=package_name, track="production",
+              body={"track": "production", "releases": [release]},
+          ).execute()
+          edits.commit(editId=edit_id, packageName=package_name).execute()
+
+          print(f"Promoted versionCode {version_code} ({release.get('name', '?')}) from {source_track!r} to production.")
+          PY
 
       # Flips the one GitHub Release object for this tag from release
       # candidate to released — this is what moves the public
