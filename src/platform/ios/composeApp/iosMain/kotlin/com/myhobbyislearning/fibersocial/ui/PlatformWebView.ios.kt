@@ -4,10 +4,17 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.UIKitView
+import com.myhobbyislearning.fibersocial.auth.parseCookieHeader
 import com.myhobbyislearning.fibersocial.debug.DebugLog
 import com.myhobbyislearning.fibersocial.debug.describeUrlForLog
 import kotlinx.cinterop.ExperimentalForeignApi
 import platform.CoreGraphics.CGRectMake
+import platform.Foundation.NSHTTPCookie
+import platform.Foundation.NSHTTPCookieDomain
+import platform.Foundation.NSHTTPCookieName
+import platform.Foundation.NSHTTPCookiePath
+import platform.Foundation.NSHTTPCookieSecure
+import platform.Foundation.NSHTTPCookieValue
 import platform.Foundation.NSURL
 import platform.Foundation.NSURLRequest
 import platform.WebKit.WKNavigation
@@ -25,6 +32,7 @@ actual fun PlatformWebView(
     isAllowedNavigation: (String) -> Boolean,
     onBackExhausted: () -> Unit,
     modifier: Modifier,
+    sessionCookie: String?,
 ) {
     // remember: WKWebView.navigationDelegate is weak, so the composition has to hold the
     // strong reference or the delegate is collected out from under the page.
@@ -48,7 +56,40 @@ actual fun PlatformWebView(
                 // in-page back there is. It stops at the root, which is why the app
                 // chrome's Close button is what actually leaves the screen.
                 allowsBackForwardNavigationGestures = true
-                loadRequest(NSURLRequest(uRL = NSURL(string = url)!!))
+                val request = NSURLRequest(uRL = NSURL(string = url)!!)
+                val cookies = parseCookieHeader(sessionCookie)
+                if (cookies.isEmpty()) {
+                    loadRequest(request)
+                } else {
+                    // setCookie is asynchronous, and a load started before the cookies
+                    // land goes out without them — which is exactly the "please sign in
+                    // again" this seeding exists to remove. So the load waits for the
+                    // last completion handler rather than racing them.
+                    var pending = cookies.size
+                    cookies.forEach { (name, value) ->
+                        val cookie = NSHTTPCookie.cookieWithProperties(
+                            mapOf<Any?, Any?>(
+                                NSHTTPCookieName to name,
+                                NSHTTPCookieValue to value,
+                                // Leading dot so the cookie also applies to www.ravelry.com,
+                                // which is where every page in this flow lives.
+                                NSHTTPCookieDomain to ".ravelry.com",
+                                NSHTTPCookiePath to "/",
+                                NSHTTPCookieSecure to "TRUE",
+                            ),
+                        )
+                        if (cookie == null) {
+                            DebugLog.log("WebPage could not build a cookie for $name")
+                            pending--
+                            if (pending == 0) loadRequest(request)
+                            return@forEach
+                        }
+                        configuration.websiteDataStore.httpCookieStore.setCookie(cookie) {
+                            pending--
+                            if (pending == 0) loadRequest(request)
+                        }
+                    }
+                }
             }
         },
         modifier = modifier,

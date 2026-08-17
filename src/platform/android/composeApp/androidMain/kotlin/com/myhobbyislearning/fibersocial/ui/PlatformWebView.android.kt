@@ -24,6 +24,11 @@ actual fun PlatformWebView(
     isAllowedNavigation: (String) -> Boolean,
     onBackExhausted: () -> Unit,
     modifier: Modifier,
+    // Unused on Android, and that is the point: this WebView and the login one share the
+    // app-global CookieManager, so the Ravelry session set during OAuth is already here.
+    // Only iOS has to be handed it, because its login web view uses a non-persistent
+    // store on purpose. See the expect declaration.
+    @Suppress("UNUSED_PARAMETER") sessionCookie: String?,
 ) {
     // Same shape as the login web view: AndroidView's factory is where the view exists,
     // and BackHandler re-evaluates every composition, so the reference is held here.

@@ -41,6 +41,17 @@ interface FeedScreenModel {
     /** Reads the picked image behind [uri] and uploads it for the feedback composer (issue #429). */
     fun attachFeedbackImage(uri: String)
 
+    /**
+     * The `www.ravelry.com` cookie captured at login (`AuthToken.sessionCookie`), or null.
+     *
+     * Seeds the in-app deletion page's web view so the user is not asked to sign in to
+     * Ravelry a second time just to delete their account. Android never needed it — its
+     * login WebView and deletion WebView share the app-global CookieManager — but the iOS
+     * login web view uses a non-persistent data store on purpose, so the captured string
+     * is the only copy of that session which outlives login.
+     */
+    suspend fun ravelrySessionCookie(): String?
+
     fun debugForceSessionExpiry()
 
     fun debugForceFeedError()

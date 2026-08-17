@@ -1018,6 +1018,50 @@ fun FeedScreen(
         return
     }
 
+    // Rendered before settings, same layering trick as About below: the deletion page
+    // (issue #478) shows over Settings, which is still open behind it.
+    webPageUrl?.let { pageUrl ->
+        // The web view is created once, by the platform view's factory, and loads
+        // immediately — so the cookie has to be in hand BEFORE the screen first composes.
+        // Rendering it with a null cookie and filling it in from a LaunchedEffect would
+        // land after that factory had already run, and the seeding would silently do
+        // nothing. Hence: hold the render until the (local, fast) read completes.
+        var deletionSessionCookie by remember { mutableStateOf<String?>(null) }
+        var deletionSessionRead by remember { mutableStateOf(false) }
+        LaunchedEffect(pageUrl) {
+            deletionSessionCookie = viewModel.ravelrySessionCookie()
+            deletionSessionRead = true
+        }
+        if (!deletionSessionRead) {
+            Box(Modifier.fillMaxSize())
+            return
+        }
+        WebPageScreen(
+            url = pageUrl,
+            title = "Delete account",
+            // Seeded so iOS doesn't ask the user to sign in to Ravelry a second time just
+            // to delete their account (Android already inherits the session).
+            sessionCookie = deletionSessionCookie,
+            // Only the pages the deletion flow actually walks — NOT "anything on
+            // ravelry.com". The 2.1(a) crash came from a reviewer roaming Ravelry inside
+            // a web view we had opened for them (issue #425); staying on Ravelry was
+            // never the safety property.
+            isAllowedNavigation = { isAllowedAccountDeletionNavigation(it, webPageUsername) },
+            // Signing out here rather than at the tap: returning from the deletion page
+            // should land on the login screen, not in the settings of an account that may
+            // no longer exist (the confirmation dialog says so). The app cannot observe
+            // whether the deletion went through, and of the two guesses this is the safe
+            // one — a session held open against a deleted account 403s on every call,
+            // while a user who changed their mind just signs back in.
+            onClose = {
+                webPageUrl = null
+                webPageUsername = null
+                onLogout()
+            },
+        )
+        return
+    }
+
     // Rendered before settings so "About FiberSocial" (opened from Settings, issue #289)
     // shows over it; backing out returns to the still-open settings screen.
     if (showAbout) {
