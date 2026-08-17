@@ -306,8 +306,13 @@ private class LoginNavigationDelegate(
 
     // The iOS analog of Android's onPageFinished logging: with it, the exported trace
     // distinguishes "requested but never loaded" from "loaded and then went wrong".
-    // Annotated for the same reason as didCommit above — and BOTH sides of a colliding
-    // pair need it; annotating one still leaves the other reported as conflicting.
+    //
+    // @ObjCSignatureOverride for the same reason didCommitNavigation above carries it,
+    // and it has to be on BOTH: `didCommitNavigation:` and `didFinishNavigation:` are
+    // distinct Objective-C selectors that map to the identical Kotlin signature
+    // `(WKWebView, WKNavigation?)`, so with only one annotated the pair still reads as
+    // conflicting overloads. Annotating just the newly added method is what left
+    // `:composeApp:compileKotlinIosSimulatorArm64` red at this declaration.
     @ObjCSignatureOverride
     override fun webView(webView: WKWebView, didFinishNavigation: WKNavigation?) {
         DebugLog.log("WebView page loaded: ${describeUrlForLog(webView.URL?.absoluteString ?: "")}")

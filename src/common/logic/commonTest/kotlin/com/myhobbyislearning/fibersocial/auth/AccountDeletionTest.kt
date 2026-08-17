@@ -133,4 +133,48 @@ class AccountDeletionTest {
             )
         }
     }
+
+    /**
+     * The same pinning, for handles that do NOT survive the path encoder untouched.
+     *
+     * `ravelrySafePath` rejects any `%` in a path — deliberately, so a prefix check can't
+     * be walked through `..%2f`. A handle needing escapes would therefore build a URL the
+     * allowlist refuses, and the web view would block its own first page: the deletion
+     * flow would open to a cancelled navigation with no way forward. The builder now
+     * falls back to the handle-less editor instead, which Ravelry redirects to the
+     * signed-in user's own, so the two stay in agreement whatever the handle contains.
+     */
+    @Test
+    fun `a handle the path encoder has to escape still opens a page the allowlist permits`() {
+        for (handle in listOf("a b", "ün", "a/b", "a%b", "a#b", "a?b")) {
+            val url = ravelryAccountDeletionUrl(handle)
+            assertTrue('%' !in url, "handle $handle built an unopenable escaped URL: $url")
+            assertTrue(
+                isAllowedAccountDeletionNavigation(url, handle),
+                "handle $handle built $url which its own allowlist rejects",
+            )
+        }
+    }
+
+    /**
+     * The allowlist must be evaluated against the identity the page was OPENED for, not
+     * against a live read of the signed-in user (issue #406's lesson, applied here).
+     *
+     * This is what makes that matter: asked about the real editor page with a null handle,
+     * the allowlist resolves to the handle-less `/people/edit` and refuses it. The feed's
+     * copy of the user IS momentarily null while the feed reloads — a rotation triggers
+     * exactly that — and the deletion page survives rotation, so a caller reading the user
+     * live would cancel the next navigation mid-flow: Ravelry's redirect, the login POST,
+     * or the delete link itself. FeedScreen captures the handle alongside the URL for this
+     * reason; if that ever regresses, this is the behaviour that makes it bite.
+     */
+    @Test
+    fun `a null handle does not authorise the page a real handle opened`() {
+        assertFalse(
+            isAllowedAccountDeletionNavigation(
+                "https://www.ravelry.com/people/torrey1028/edit",
+                null,
+            ),
+        )
+    }
 }
