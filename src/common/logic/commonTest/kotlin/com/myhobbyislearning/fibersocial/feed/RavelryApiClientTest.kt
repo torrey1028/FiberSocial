@@ -3598,6 +3598,73 @@ class RavelryApiClientTest {
 
         assertTrue(client.searchUsers("zzzz").isEmpty())
     }
+
+    // --- searchGroups: the in-app group browser's data source (issue #232) ---
+
+    @Test
+    fun `searchGroups returns the directory page and its pagination`() = runTest {
+        val client = routingApiClient {
+            """{"groups":[{"id":1,"name":"Lace","permalink":"lace","forum_id":11}],
+                "paginator":{"page":1,"page_count":3}}"""
+        }
+        val page = client.searchGroups(query = "lace")
+        assertEquals(1, page.groups.size)
+        assertEquals("Lace", page.groups[0].name)
+        assertEquals(1, page.page)
+        assertTrue(page.hasMore)
+    }
+
+    @Test
+    fun `searchGroups omits a blank query so the directory itself comes back`() = runTest {
+        // What makes the browser useful before the user has typed anything: Ravelry treats
+        // a missing query as "no filter", so sending an empty one buys nothing.
+        var seen: io.ktor.http.Url? = null
+        val client = suspendableRoutingApiClient { url ->
+            seen = url
+            """{"groups":[]}"""
+        }
+        client.searchGroups(query = "", sort = "favorites", page = 2, pageSize = 30)
+        assertEquals(null, seen?.parameters?.get("query"))
+        assertEquals("favorites", seen?.parameters?.get("sort"))
+        assertEquals("2", seen?.parameters?.get("page"))
+        assertEquals("30", seen?.parameters?.get("page_size"))
+    }
+
+    @Test
+    fun `searchGroups omits a blank sort`() = runTest {
+        var seen: io.ktor.http.Url? = null
+        val client = suspendableRoutingApiClient { url ->
+            seen = url
+            """{"groups":[]}"""
+        }
+        client.searchGroups(query = "socks")
+        assertEquals("socks", seen?.parameters?.get("query"))
+        assertEquals(null, seen?.parameters?.get("sort"))
+    }
+
+    @Test
+    fun `searchGroups reports no further pages on the last one`() = runTest {
+        val client = routingApiClient {
+            """{"groups":[{"id":2,"name":"Socks","permalink":"socks","forum_id":12}],
+                "paginator":{"page":3,"page_count":3}}"""
+        }
+        val page = client.searchGroups(query = "socks", page = 3)
+        assertEquals(3, page.page)
+        assertTrue(!page.hasMore)
+    }
+
+    @Test
+    fun `searchGroups tolerates a response with no paginator`() = runTest {
+        // Falls back to the requested page and stops paging, rather than looping forever
+        // on a response shape Ravelry might return for a single-page result.
+        val client = routingApiClient {
+            """{"groups":[{"id":3,"name":"Tiny","permalink":"tiny","forum_id":13}]}"""
+        }
+        val page = client.searchGroups(query = "tiny", page = 2)
+        assertEquals(2, page.page)
+        assertTrue(!page.hasMore)
+    }
+
 }
 
 private val MESSAGES_LIST_JSON = """

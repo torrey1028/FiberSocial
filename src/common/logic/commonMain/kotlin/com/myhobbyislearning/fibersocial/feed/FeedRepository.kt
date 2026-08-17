@@ -101,6 +101,14 @@ class FeedRepository(private val apiClient: RavelryApiClient) {
     suspend fun getUserGroups(username: String): List<Group> =
         apiClient.getUserGroups(username)
 
+    /** @see RavelryApiClient.searchGroups */
+    suspend fun searchGroups(
+        query: String = "",
+        sort: String = "",
+        page: Int = 1,
+        pageSize: Int = DEFAULT_FEED_PAGE_SIZE,
+    ): GroupsPage = apiClient.searchGroups(query, sort, page, pageSize)
+
     /** @see RavelryApiClient.joinGroup */
     suspend fun joinGroup(permalink: String) = apiClient.joinGroup(permalink)
 
