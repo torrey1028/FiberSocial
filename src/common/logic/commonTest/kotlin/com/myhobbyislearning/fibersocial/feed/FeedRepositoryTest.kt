@@ -432,6 +432,46 @@ class FeedRepositoryTest {
     }
 
     @Test
+    fun `getMyPostsPage drops a sticky topic whose forum matches no group`() = runTest {
+        // Issue #458: like the /discuss/browse page it twins, filtered_topics.json
+        // includes topics pinned in the user's forum-set forums regardless of
+        // status=posting — including Ravelry's main site forums, which correspond to no
+        // group. They arrive as sticky topics in a forum the user has no group for —
+        // drop them instead of showing a pinned stranger's post with no attribution.
+        val repo = repoWithRoute { path ->
+            when {
+                path.contains("filtered_topics") -> """{"topics":[
+                    {"id":100,"title":"CFOM July 2026","forum_id":999},
+                    {"id":200,"title":"Topic 200","forum_id":42}
+                ]}"""
+                path.contains("/topics/100") -> topicDetailJson(100L, sticky = true)
+                path.contains("/topics/200") -> topicDetailJson(200L)
+                else -> error("Unexpected: $path")
+            }
+        }
+        val page = repo.getMyPostsPage(twoGroups, page = 1)
+        assertEquals(listOf(200L), page.items.map { it.id })
+    }
+
+    @Test
+    fun `getMyPostsPage keeps a sticky topic attributed to one of the user's groups`() = runTest {
+        // The user's own post in a pinned topic of a group they're IN is genuine — only
+        // the sticky-AND-unattributed combination marks an injected announcement.
+        val repo = repoWithRoute { path ->
+            when {
+                path.contains("filtered_topics") ->
+                    """{"topics":[{"id":100,"title":"Pinned in my group","forum_id":42}]}"""
+                path.contains("/topics/100") -> topicDetailJson(100L, sticky = true)
+                else -> error("Unexpected: $path")
+            }
+        }
+        val item = repo.getMyPostsPage(twoGroups, page = 1).items.single()
+        assertEquals("KAL Hub", item.groupName)
+        // The kept pin retains its sticky flag, so My Posts still renders its label.
+        assertTrue(item.sticky)
+    }
+
+    @Test
     fun `getMyPostsPage sorts by recency only and ignores sticky`() = runTest {
         // Sticky means "pinned in its own forum" — meaningless across groups, so a
         // sticky topic with older activity must NOT jump ahead of a newer plain one.
@@ -750,7 +790,37 @@ class FeedRepositoryTest {
             ]}""",
         )
 
-        assertFalse(repo.getYourPostsUnread())
+        assertFalse(repo.getYourPostsUnread(setOf(42L)))
+    }
+
+    @Test
+    fun `getYourPostsUnread ignores an injected pin so the dot can't be lit by a hidden topic`() = runTest {
+        // The pin (sticky, forum matches no group, never read) is dropped from the My
+        // Posts page (issue #458) — counting it here would leave the dot permanently
+        // stuck, since only reading a topic clears it and this one can't be opened.
+        val repo = drawerRepo(
+            topicsByForumId = emptyMap(),
+            postingJson = """{"topics":[
+                {"id":9,"title":"CFOM July 2026","forum_id":999,"sticky":true,
+                 "forum_posts_count":50,"last_read":0},
+                {"id":1,"title":"A","forum_id":42,"forum_posts_count":3,"last_read":3}
+            ]}""",
+        )
+
+        assertFalse(repo.getYourPostsUnread(setOf(42L)))
+    }
+
+    @Test
+    fun `getYourPostsUnread still counts an unread sticky topic in the user's own group`() = runTest {
+        val repo = drawerRepo(
+            topicsByForumId = emptyMap(),
+            postingJson = """{"topics":[
+                {"id":2,"title":"Pinned here","forum_id":42,"sticky":true,
+                 "forum_posts_count":5,"last_read":1}
+            ]}""",
+        )
+
+        assertTrue(repo.getYourPostsUnread(setOf(42L)))
     }
 
     // ---- the messages leg (issue #372) ----
