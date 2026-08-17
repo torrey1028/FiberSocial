@@ -306,6 +306,9 @@ private class LoginNavigationDelegate(
 
     // The iOS analog of Android's onPageFinished logging: with it, the exported trace
     // distinguishes "requested but never loaded" from "loaded and then went wrong".
+    // Annotated for the same reason as didCommit above — and BOTH sides of a colliding
+    // pair need it; annotating one still leaves the other reported as conflicting.
+    @ObjCSignatureOverride
     override fun webView(webView: WKWebView, didFinishNavigation: WKNavigation?) {
         DebugLog.log("WebView page loaded: ${describeUrlForLog(webView.URL?.absoluteString ?: "")}")
     }

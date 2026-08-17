@@ -71,6 +71,27 @@ class AccountDeletionTest {
     }
 
     @Test
+    fun `the two steps behind ravelry's delete link are allowed`() {
+        // Both observed on device 2026-08-13, from blocked-navigation log lines, and both
+        // SIBLINGS of the editor rather than children — the prefix this list originally
+        // shipped with covered neither, and each step blanked in turn. This is why the
+        // list is only ever widened from a trace.
+        assertTrue(allowed("https://www.ravelry.com/people/torrey1028/confirm_delete"))
+        assertTrue(allowed("https://www.ravelry.com/people/torrey1028/delete"))
+        // Where deletion lands afterwards — the only page that tells the user it worked.
+        assertTrue(allowed("https://www.ravelry.com/account/closed"))
+        assertTrue(
+            isAllowedAccountDeletionNavigation(
+                "https://www.ravelry.com/people/confirm_delete",
+                null,
+            ),
+        )
+        // Still scoped to the signed-in user: nobody else's account is deletable here.
+        assertFalse(allowed("https://www.ravelry.com/people/someone-else/confirm_delete"))
+        assertFalse(allowed("https://www.ravelry.com/people/someone-else/delete"))
+    }
+
+    @Test
     fun `the rest of the ravelry site is NOT allowed just because it is ravelry`() {
         // The 2.1(a) crash came from roaming Ravelry inside a web view we opened; the
         // reviewer never left ravelry.com, so "still on Ravelry" is not the guarantee.

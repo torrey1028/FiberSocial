@@ -73,7 +73,17 @@ private fun accountDeletionPath(username: String?): String {
  */
 fun isAllowedAccountDeletionNavigation(url: String, username: String?): Boolean {
     val path = ravelrySafePath(url) ?: return false
-    if (path == "/account/login") return true
+    // Not user-scoped. /account/login is where Ravelry bounces a stale session (its form
+    // POSTs back to the same path); /account/closed is where deletion lands afterwards,
+    // and is the only page that confirms to the user that it worked.
+    if (path == "/account/login" || path == "/account/closed") return true
     val editor = accountDeletionPath(username)
-    return path == editor || path.startsWith("$editor/")
+    if (path == editor || path.startsWith("$editor/")) return true
+    val profile = editor.removeSuffix("/edit")
+    // The two steps behind Ravelry's "delete Ravelry account" link, both observed on
+    // device (2026-08-13) and neither derivable from outside: confirm_delete is the
+    // confirmation page, delete is what its "permanently delete my account" button
+    // submits to. Both are SIBLINGS of the editor rather than children, so the prefix
+    // this list originally shipped with covered neither — the page simply blanked.
+    return path == "$profile/confirm_delete" || path == "$profile/delete"
 }
