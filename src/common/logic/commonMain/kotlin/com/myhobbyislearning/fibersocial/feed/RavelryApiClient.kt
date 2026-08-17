@@ -1387,9 +1387,14 @@ class RavelryApiClient(
      * Returns one page of the signed-in user's private messages from [folder]
      * (`/messages/list.json`, issue #366, epic #365).
      *
-     * Needs NO extra OAuth scope — reading messages works with ordinary authentication,
-     * so this must not motivate a `SCOPE` change or a forced re-login. (The write half,
-     * issue #367, is the part that needs `message-write`.)
+     * NEEDS THE `message-read` SCOPE (issue #396). The original documentation implied
+     * otherwise and this KDoc used to say reads needed no extra scope — that was wrong,
+     * and it cost the epic a lot: every message read 403s with
+     * `{"error":"message-read scope is required for this action"}` on a token that lacks
+     * it. The scope is approval-gated, this app was granted it on 2026-08-06, and it is
+     * now in `RavelryAuthManager.SCOPE`. A token minted BEFORE that still lacks it and
+     * 403s until the user signs out and back in — see [messageReadForbiddenMessage],
+     * which is what turns that 403 into copy the user can act on.
      *
      * `folder` is REQUIRED by Ravelry; there is no "all messages" listing, so a caller
      * wanting the full picture pages [MessageFolder.INBOX] and [MessageFolder.SENT]
@@ -1450,17 +1455,19 @@ class RavelryApiClient(
         unreadOnly: Boolean = false,
         full: Boolean = false,
     ): MessagesPage {
-        val raw = authenticatedRequest {
-            httpClient.get("$BASE_URL/messages/list.json") {
-                header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
-                url.parameters.apply {
-                    append("folder", folder.wireName)
-                    append("sort", "time_")
-                    append("page", page.toString())
-                    append("page_size", pageSize.toString())
-                    if (unreadOnly) append("unread_only", "1")
-                    // Only `output_format` — NOT `format`, which is Rails-reserved. See KDoc.
-                    if (full) append("output_format", "full")
+        val raw = withMessageReadForbiddenMessage {
+            authenticatedRequest {
+                httpClient.get("$BASE_URL/messages/list.json") {
+                    header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
+                    url.parameters.apply {
+                        append("folder", folder.wireName)
+                        append("sort", "time_")
+                        append("page", page.toString())
+                        append("page_size", pageSize.toString())
+                        if (unreadOnly) append("unread_only", "1")
+                        // Only `output_format` — NOT `format`, Rails-reserved. See KDoc.
+                        if (full) append("output_format", "full")
+                    }
                 }
             }
         }
@@ -1481,9 +1488,11 @@ class RavelryApiClient(
      * @param messageId Ravelry message ID.
      */
     suspend fun getMessage(messageId: Long): Message {
-        val raw = authenticatedRequest {
-            httpClient.get("$BASE_URL/messages/$messageId.json") {
-                header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
+        val raw = withMessageReadForbiddenMessage {
+            authenticatedRequest {
+                httpClient.get("$BASE_URL/messages/$messageId.json") {
+                    header(HttpHeaders.Authorization, "Bearer ${accessToken()}")
+                }
             }
         }
         return lenientJson.decodeFromString<MessageResponse>(raw).message
@@ -1704,6 +1713,42 @@ class RavelryApiClient(
         "Ravelry wouldn't deliver this message. Either this person isn't accepting " +
             "private messages, or your sign-in predates messaging permission — signing " +
             "out and back in fixes that second case."
+
+    /**
+     * Replaces the generic "Permission denied for /path" text on a message *read* 403 with
+     * copy naming the one thing it can mean (issue #396).
+     *
+     * UNLIKE THE WRITE 403 ([messagingForbiddenMessage]), THIS ONE IS UNAMBIGUOUS. A read
+     * 403 has exactly one cause: the token lacks `message-read`, because it was minted
+     * before that scope joined `RavelryAuthManager.SCOPE`. Ravelry's messaging-disabled
+     * refusal applies to delivery, not to listing your own mail, and the ownership refusal
+     * ([getMessage] on someone else's message) can't arise because every id we fetch came
+     * out of the user's own folder listing. So this says exactly what to do instead of
+     * hedging across two causes the way the write copy has to.
+     *
+     * The fix is a re-login, NOT a refresh: scopes are fixed at grant time, so refreshing
+     * the token returns the same scope set forever. That is also why this must not be
+     * routed into session expiry — see below.
+     *
+     * WHAT MUST NOT HAPPEN: this is not session expiry. Like the write copy, the text
+     * deliberately contains no "403"/"401" digits, because `FeedErrorState` pattern-matches
+     * those in error text to route to the forced-logout UI. Getting dumped into a logout
+     * loop is especially wrong here — the user's session is perfectly valid, it just holds
+     * an older grant.
+     */
+    private suspend fun <T> withMessageReadForbiddenMessage(block: suspend () -> T): T =
+        try {
+            block()
+        } catch (e: ForbiddenException) {
+            // Same reasoning as withMessagingForbiddenMessage: the replacement drops the
+            // path the generic text named, so log it rather than lose it.
+            println("FiberSocial: message read forbidden — ${e.message}")
+            throw ForbiddenException(messageReadForbiddenMessage())
+        }
+
+    private fun messageReadForbiddenMessage(): String =
+        "Your sign-in predates FiberSocial's permission to read your Ravelry messages. " +
+            "Sign out and back in to fix it."
 
     /**
      * Archives a message (`/messages/{id}/archive.json`, issue #367) — moves it out of the

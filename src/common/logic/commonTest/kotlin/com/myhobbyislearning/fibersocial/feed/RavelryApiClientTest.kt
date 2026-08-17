@@ -3394,6 +3394,90 @@ class RavelryApiClientTest {
     }
 
     @Test
+    fun `a message-list 403 tells the user to sign out and back in`() = runTest {
+        // Unlike the write 403's two indistinguishable causes, a READ 403 has exactly one:
+        // the token predates message-read joining SCOPE (issue #396). Scopes are fixed at
+        // grant time, so a refresh can never fix it — only a re-login. The copy therefore
+        // commits to that one instruction instead of hedging.
+        var refreshCalled = false
+        val engine = MockEngine { request ->
+            if (request.url.encodedPath.contains("token")) refreshCalled = true
+            respond("", HttpStatusCode.Forbidden, headersOf())
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val client = RavelryApiClient(httpClient, FakeFeedTokenStorage())
+
+        val e = assertFailsWith<ForbiddenException> {
+            client.getMessages(MessageFolder.INBOX)
+        }
+
+        // A 403 is never session expiry (issue #82) — no refresh, no forced logout.
+        assertFalse(refreshCalled)
+        val message = e.message ?: ""
+        assertTrue(message.contains("Sign out and back in"), "no re-login instruction: $message")
+        // It must NOT degrade to the generic path-only text, which tells a user nothing.
+        assertFalse(message.contains("Permission denied"))
+        // FeedErrorState pattern-matches "401"/"403" in error text to detect expiry, so
+        // leaking the digits here would route a permission error into the logout UI.
+        assertFalse(message.contains("403"))
+        assertFalse(message.contains("401"))
+    }
+
+    @Test
+    fun `a dead token on a messages call is still session expiry not scope copy`() = runTest {
+        // The interaction between issue #418 and issue #396: BOTH failures arrive as a
+        // 403 on the same call, and only the body tells them apart. withMessageReadForbidden
+        // Message catches ForbiddenException, which authenticatedRequest throws only for a
+        // genuine permission 403 — an invalid-token 403 becomes SessionExpiredException
+        // instead and must sail straight through the wrapper untouched.
+        //
+        // Widening that catch (to Exception, or to a shared supertype if these two ever
+        // gain one) would swallow the expiry and hand a user whose session is actually
+        // dead the "sign out and back in" scope copy, with nothing ever routing them to
+        // the forced-logout UI. The advice would read plausibly and the logout would
+        // never happen, so nothing else in the suite would notice.
+        val engine = MockEngine {
+            respond(
+                "403 Forbidden. OAuth 2 token is not valid.",
+                HttpStatusCode.Forbidden,
+                headersOf("Content-Type", ContentType.Text.Html.toString()),
+            )
+        }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val client = RavelryApiClient(httpClient, FakeFeedTokenStorage())
+
+        // The retry 403s the same way, so this ends in expiry rather than a success.
+        val e = assertFailsWith<SessionExpiredException> { client.getMessages(MessageFolder.INBOX) }
+
+        val message = e.message ?: ""
+        assertFalse(
+            message.contains("Sign out and back in"),
+            "a dead session got the missing-scope copy: $message",
+        )
+    }
+
+    @Test
+    fun `a single-message 403 gets the same re-login copy as the list`() = runTest {
+        // getMessage is the body-backfill path, so a stale-scope token hits it too — a
+        // conversation that opened from cache would otherwise show the generic text.
+        val engine = MockEngine { respond("", HttpStatusCode.Forbidden, headersOf()) }
+        val httpClient = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val client = RavelryApiClient(httpClient, FakeFeedTokenStorage())
+
+        val e = assertFailsWith<ForbiddenException> { client.getMessage(1001L) }
+
+        val message = e.message ?: ""
+        assertTrue(message.contains("Sign out and back in"), "no re-login instruction: $message")
+        assertFalse(message.contains("Permission denied"))
+    }
+
+    @Test
     fun `archiveMessage and unarchiveMessage post to their own paths`() = runTest {
         // Distinct endpoints rather than one toggle: posting archive twice is not an
         // unarchive, so mixing them up leaves a message stuck out of the inbox.
