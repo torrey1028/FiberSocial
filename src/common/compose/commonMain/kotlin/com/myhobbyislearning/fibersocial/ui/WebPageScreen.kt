@@ -50,6 +50,7 @@ fun WebPageScreen(
     title: String,
     isAllowedNavigation: (String) -> Boolean,
     onClose: () -> Unit,
+    sessionCookie: String? = null,
 ) {
     Scaffold(
         topBar = {
@@ -77,6 +78,7 @@ fun WebPageScreen(
             isAllowedNavigation = isAllowedNavigation,
             onBackExhausted = onClose,
             modifier = Modifier.fillMaxSize().padding(padding),
+            sessionCookie = sessionCookie,
         )
     }
 }
@@ -102,6 +104,13 @@ internal fun webPageHost(url: String): String =
  *
  * @param onBackExhausted Called when the user presses back with no page history left.
  *   Android only; iOS has no system back, and its edge-swipe gesture stops at the root.
+ * @param sessionCookie The Ravelry session captured at login, seeded so the user is not
+ *   asked to sign in again just to delete their account. **iOS only** — Android's login
+ *   WebView and this one share the app-global CookieManager, so the session is already
+ *   there and re-setting it would be a no-op at best. Null skips seeding entirely, which
+ *   is not a failure: the flow allowlists `/account/login` precisely because a Ravelry
+ *   session can expire independently of the OAuth token, so signing in remains a
+ *   supported path rather than a dead end.
  */
 @Composable
 expect fun PlatformWebView(
@@ -109,4 +118,5 @@ expect fun PlatformWebView(
     isAllowedNavigation: (String) -> Boolean,
     onBackExhausted: () -> Unit,
     modifier: Modifier,
+    sessionCookie: String?,
 )

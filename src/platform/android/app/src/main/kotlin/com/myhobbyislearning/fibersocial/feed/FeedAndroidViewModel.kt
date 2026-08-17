@@ -142,6 +142,8 @@ class FeedAndroidViewModel(app: Application) : AndroidViewModel(app), FeedScreen
         projectPage.dismiss()
     }
 
+    override suspend fun ravelrySessionCookie(): String? = tokenStorage.load()?.sessionCookie
+
     override fun debugForceSessionExpiry() = feed.forceSessionExpiry()
 
     override fun debugForceFeedError() = feed.forceError()
