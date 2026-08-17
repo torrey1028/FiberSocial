@@ -1764,7 +1764,7 @@ fun FeedScreen(
                     val displayedItems = filterBlocked(filterUnread(s.items, showUnreadOnly), blockedUsernames)
                     // A brand-new Ravelry user with no groups would otherwise land on a
                     // blank page (issue #431) — welcome them and point at the same
-                    // Ravelry group-search link-out the drawer offers. Checked before the
+                    // in-app group browser the drawer offers. Checked before the
                     // unread filter so toggling the filter can't replace the onboarding
                     // with a misleading "No unread topics". Group feed only: Messages has
                     // its own empty presentation; My Posts renders a bare empty list for
@@ -2208,11 +2208,12 @@ internal fun UnreadFilterEmptyState(
  * groups at all (issue #431) — a brand-new Ravelry account would otherwise see a blank
  * page with no hint of what the app is for or what to do next.
  *
- * [onFindGroups] must be the same Ravelry group-search link-out as the drawer's "Find
- * groups" row: the app deliberately links out instead of rebuilding group search in-app
- * (issue #232). Scrollable (like [FeedErrorState]) so the surrounding [PullToRefreshBox]
- * still has a nested-scrolling child — pull-to-refresh is exactly how the user picks up
- * a group joined on the website, which is why the copy mentions it.
+ * [onFindGroups] must be the same in-app group browser the drawer's "Find groups" row
+ * opens: issue #232 was originally answered by linking out to Ravelry's website and is
+ * now built natively, so nothing here leaves the app. Scrollable (like [FeedErrorState])
+ * so the surrounding [PullToRefreshBox] still has a nested-scrolling child — the browser
+ * refreshes the feed itself after a join, but pull-to-refresh is still how a group joined
+ * on the website (outside the app entirely) gets picked up.
  */
 @Composable
 internal fun NoGroupsOnboarding(
@@ -2235,7 +2236,7 @@ internal fun NoGroupsOnboarding(
         Spacer(Modifier.height(12.dp))
         Text(
             text = "FiberSocial shows the discussions from your Ravelry groups, " +
-                "and you aren't in any groups yet. Join a group or two on Ravelry " +
+                "and you aren't in any groups yet. Find a group or two " +
                 "to get started.",
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -2243,10 +2244,11 @@ internal fun NoGroupsOnboarding(
             modifier = Modifier.padding(horizontal = 32.dp),
         )
         Spacer(Modifier.height(16.dp))
-        Button(onClick = onFindGroups) { Text("Find groups on Ravelry") }
+        Button(onClick = onFindGroups) { Text("Find groups") }
         Spacer(Modifier.height(12.dp))
         Text(
-            text = "Groups you join appear in the menu — pull down to refresh here when you're done.",
+            text = "Groups you join appear in the menu automatically. " +
+                "Joined one on Ravelry's website instead? Pull down to refresh here.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
@@ -2613,8 +2615,8 @@ internal fun GroupDrawer(
                                 ),
                         )
                     }
-                    // Discover and join more groups on Ravelry's own search page (issue #232 —
-                    // linking out rather than rebuilding search in-app).
+                    // Opens the in-app group browser (issue #232). This used to link out to
+                    // Ravelry's own search page in a real browser.
                     item(key = "find-groups") {
                         NavigationDrawerItem(
                             label = { Text("Find groups") },

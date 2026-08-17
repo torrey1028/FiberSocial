@@ -3,6 +3,7 @@ package com.myhobbyislearning.fibersocial.feed
 import com.myhobbyislearning.fibersocial.auth.SessionExpiredException
 import com.myhobbyislearning.fibersocial.auth.SessionExpirySignal
 import com.myhobbyislearning.fibersocial.feed.models.Group
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -138,6 +139,15 @@ class GroupSearchViewModel(
                 )
             } catch (e: SessionExpiredException) {
                 sessionExpirySignal.signal()
+            } catch (e: CancellationException) {
+                // Rethrow BEFORE the generic catch, the same shape FeedViewModel and
+                // FeedRepository use — and load-bearing here rather than boilerplate,
+                // because this is the one ViewModel that cancels its own job by design.
+                // CancellationException is an Exception, so the catch below would treat
+                // every superseded keystroke as a failed request and paint the error
+                // screen over results the user is still looking at. Swallowing it also
+                // breaks structured concurrency for the enclosing scope.
+                throw e
             } catch (e: Exception) {
                 println("FiberSocial: searchGroups(\"$query\") failed: ${e.message}")
                 _state.value = GroupSearchState.Error(
@@ -172,6 +182,8 @@ class GroupSearchViewModel(
                 )
             } catch (e: SessionExpiredException) {
                 sessionExpirySignal.signal()
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 println("FiberSocial: searchGroups page ${loaded.page + 1} failed: ${e.message}")
                 val current = _state.value as? GroupSearchState.Loaded ?: return@launch
@@ -196,6 +208,10 @@ class GroupSearchViewModel(
                 onGroupsChanged()
             } catch (e: SessionExpiredException) {
                 sessionExpirySignal.signal()
+            } catch (e: CancellationException) {
+                // The finally below still clears the spinner, so cancelling a join mid
+                // flight leaves the row tappable rather than stuck.
+                throw e
             } catch (e: Exception) {
                 println("FiberSocial: joinGroup(${group.permalink}) failed: ${e.message}")
                 _joinError.value = "Couldn't join ${group.name}. Please try again."
