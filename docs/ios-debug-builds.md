@@ -1,9 +1,12 @@
-# iOS debug builds without a Mac
+# iOS device builds without a Mac
 
 `.github/workflows/ios-debug-build.yml` builds an Ad Hoc-signed IPA on a
 GitHub Actions macOS runner and publishes it as an over-the-air (OTA) install
 link via GitHub Pages, so you can get a fresh build onto a real iPhone
 straight from a Linux/WSL machine with no Mac and no cable.
+
+It builds **Debug** by default and can build **Release** on request (see
+"Choosing a configuration" below).
 
 This is a developer convenience tool, separate from the release pipeline
 (`release.yml`'s `ios-release` job, `docs/ios-device-checklist.md`) — it has
@@ -25,29 +28,35 @@ Or use the "Run workflow" button on the workflow's Actions page and pick the
 branch and configuration there. It's `workflow_dispatch`-only (no automatic
 trigger) since every run costs macOS runner time, the most expensive tier.
 
-### Which configuration?
-
-**Reach for `Release` whenever what you're checking differs between build
-types** — otherwise the build cannot show you the thing you're trying to
-verify:
-
-- Anything gated on `DebugFlags.debugToolsAvailable` — the login web view's
-  "Share log" button, the Settings "Debug panel" row. A Debug IPA shows those,
-  so it can't confirm what a release user sees in their place.
-- Anything gated out by `FeatureFlags` (e.g. `messagesEnabled`), which is
-  compiled out of release builds entirely.
-
-`Debug` is still the default, and is the right pick when you want those tools —
-above all the login web view's log export, which is the only way to get a trace
-off an OTA-installed iPhone.
-
-Either way it's an Ad Hoc build for your own registered devices, not a release
-artifact: no tests, no QA gate, and it never reaches TestFlight or the store.
-
 When it finishes, open **`https://torrey1028.github.io/FiberSocial/ios-debug/`**
 in **Safari on the iPhone** (the `itms-services://` install link only works
 from Mobile Safari — Chrome or any in-app browser won't trigger it) and tap
 Install. The run's job summary links there too.
+
+## Choosing a configuration
+
+**Debug** (the default) is the everyday choice: faster to build, and it has
+every feature the code has.
+
+**Release** matters when a feature is *compile-time gated*. `FeatureFlags`'s
+iOS implementation is `Platform.isDebugBinary`, so anything behind a flag —
+today, Messages (#415) — is present in a Debug build and **absent in a
+Release build**. A Debug OTA build therefore can't tell you what App Store
+users will actually see; a Release one can. It costs extra runner time
+(Kotlin/Native builds a release framework, which is much slower than the
+debug one), so it isn't the default.
+
+It also matters for anything gated on `DebugFlags.debugToolsAvailable` — the
+login web view's "Share log" button, the Settings "Debug panel" row. A Debug
+IPA shows those, so it can't confirm what a release user sees in their place.
+
+That cuts both ways, and is the reason to stay on `Debug` unless you need
+otherwise: the log export is the only way to get a trace off an OTA-installed
+iPhone, and a Release build doesn't have it.
+
+Note the install page and the OTA link are the same URL either way — a new
+build replaces the previous one, whatever its configuration. The page says
+which configuration it is.
 
 ## One-time setup
 
