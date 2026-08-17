@@ -17,6 +17,7 @@ import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlinx.coroutines.flow.first
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -357,4 +358,76 @@ class GroupSearchViewModelTest {
         // joining two groups from one gesture is never what the user meant.
         assertEquals(1, joins)
     }
+
+    /**
+     * A superseded keystroke must not paint the error screen (the debounce's own guard
+     * turning on the user).
+     *
+     * `onQueryChanged` cancels the in-flight search on purpose — that is what stops an
+     * older response landing after a newer one. But `CancellationException` IS an
+     * `Exception`, so before the rethrow the generic catch treated every cancelled search
+     * as a failed request and set
+     * `Error("Couldn't search groups. Check your connection and try again.")` over results
+     * the user was still looking at. Verified against the unfixed version, which reported
+     * exactly that state here.
+     *
+     * Reachable whenever a request outlives the next keystroke — i.e. pausing longer than
+     * the debounce, then resuming, on a slow connection. The flash is transient (the new
+     * search overwrites it) but it is a full-screen error, and it also logged a spurious
+     * network-failure line.
+     *
+     * Same rethrow-before-generic-catch shape as `FeedViewModel` and `FeedRepository`.
+     */
+    @Test
+    fun `a superseded keystroke does not surface as a search failure`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val release = kotlinx.coroutines.CompletableDeferred<Unit>()
+            val vm = GroupSearchViewModel(
+                FeedRepository(
+                    suspendableRoutingApiClient { _ ->
+                        release.await()
+                        searchJson(groupJson(1, "Socks", "socks"))
+                    },
+                ),
+                this,
+            )
+            vm.start()
+            // The first request is parked in flight; this keystroke cancels it.
+            vm.onQueryChanged("so")
+
+            assertTrue(
+                vm.state.value !is GroupSearchState.Error,
+                "a cancelled search surfaced as an error: ${vm.state.value}",
+            )
+
+            release.complete(Unit)
+            awaitChildren(coroutineContext[Job]!!)
+            // And the replacement search still lands, so the cancel didn't strand the screen.
+            val loaded = vm.state.value as? GroupSearchState.Loaded
+            assertTrue(loaded != null, "expected results after the cancel, got ${vm.state.value}")
+            assertEquals(listOf("socks"), loaded.groups.map { it.permalink })
+        }
+
+    /**
+     * A session expiry must reach the host, which routes to the login screen.
+     *
+     * This ViewModel's `sessionExpired` was missing from BOTH platforms' `merge(...)`
+     * lists — the only one of the ~14 that was — so the signal fired into a flow nobody
+     * collected. `search` also leaves the state on `Loading` in that branch (deliberately,
+     * since the host tears the screen down), which without the wiring meant a spinner that
+     * never resolved and no way back. This pins the ViewModel half; the platform half is
+     * the one-line addition next to `feed.sessionExpired` in FeedAndroidViewModel/IosModels.
+     */
+    @Test
+    fun `a session expiry while searching signals the host`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val vm = GroupSearchViewModel(
+                FeedRepository(sessionExpiredApiClient(FakeFeedTokenStorage())),
+                this,
+            )
+            vm.start()
+            awaitChildren(coroutineContext[Job]!!)
+
+            assertEquals(Unit, vm.sessionExpired.first())
+        }
 }

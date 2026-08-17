@@ -104,6 +104,7 @@ class FeedAndroidViewModel(app: Application) : AndroidViewModel(app), FeedScreen
     /** Emits when any screen's data source encounters a session expiry. */
     val sessionExpired: Flow<Unit> = merge(
         feed.sessionExpired,
+        groupSearch.sessionExpired,
         topicDetail.sessionExpired,
         newTopic.sessionExpired,
         newTopicImage.sessionExpired,

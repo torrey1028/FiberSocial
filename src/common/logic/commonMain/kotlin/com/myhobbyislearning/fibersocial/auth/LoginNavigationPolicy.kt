@@ -23,8 +23,13 @@ import io.ktor.http.Url
  * platform navigation handlers intercept before this policy runs, but is allowed
  * here too so correctness doesn't depend on their check ordering).
  *
- * That is the whole OAuth flow and nothing else. The login page's two detour links —
- * "Sign Up" and "I forgot" — are deliberately NOT here; see [isExternalLoginDetour].
+ * The login page's two auth-adjacent detours are here too, and load in place: password
+ * reset (`/account/forgot`, query variants share the path) and Ravelry's invitation-based
+ * sign-up (`/invitations` and its sub-steps). A dead "forgot your password?" link strands
+ * the people who need it most, and App Review rejected 0.3.2 (3002) under guideline 4 for
+ * sending sign-up out to the default browser instead — "please revise the app to enable
+ * users to sign in or register for an account in the app" (issue #481). Those two pages
+ * render the site's full footer, but its links are blocked like any other.
  *
  * Host and path are compared on a parsed URL, not by string prefix, so lookalike
  * hosts (`www.ravelry.com.evil.com`) don't pass. The host compares case-insensitively
@@ -41,45 +46,63 @@ fun isAllowedLoginNavigation(url: String): Boolean {
     if (url == "about:blank") return true
     val path = ravelrySafePath(url) ?: return false
     return path.startsWith("/oauth2/") ||
-        path == "/account/login" ||
-        path == "/consent"
+        (path == "/account/login" && !isOffFlowLoginPage(url)) ||
+        path == "/account/forgot" ||
+        path == "/consent" ||
+        path == "/invitations" ||
+        path.startsWith("/invitations/")
 }
 
 /**
- * Whether [url] is one of the login page's two detour links — Ravelry's invitation-based
- * sign-up (`/invitations` and its sub-steps, the "Sign Up" button) or password reset
- * (`/account/forgot`, the "I forgot" link; query variants share the path).
+ * Whether [url] is a Ravelry login page that would sign the user in **somewhere other
+ * than this OAuth flow** — a login form whose `return_to` points away from it.
  *
- * These get handed to the system browser rather than loaded in place, because **neither
- * can finish inside the app**. Both end the same way: Ravelry emails a link, and that
- * link opens in the real browser. `/invitations` even says so — it is "Step 1 of 2 — get
- * a signup link". Running step 1 in the login WebView splits one flow across two cookie
- * jars — the WebView's is deliberately non-persistent, a fresh jar per login so the
- * captured `_ravelry_session` is the only copy that survives — and parks the user on a
- * "check your email" page inside a screen whose only purpose is logging in. Opening them
- * in the browser puts both steps in the same place with the same session, and leaves the
- * login screen sitting on the login form for when the user comes back with an account or
- * a new password.
+ * The dead end this closes, from an on-device trace (2026-08-13): from the login page the
+ * user taps "Sign Up", lands on `/invitations`, and taps the *"sign in"* link in that
+ * page's own header. That link is `/account/login?return_to=/invitations`. Matching
+ * `/account/login` on path alone let it through, so the user signed in, Ravelry honoured
+ * `return_to`, and they were returned to the sign-up page — signed in to the website, but
+ * with the OAuth flow abandoned. No consent page, no code, no way forward, and nothing
+ * looked broken enough to explain why.
  *
- * This is not a reversal of the #425 lockdown: an off-flow *browse* attempt is still
- * cancelled in place (bouncing those to the browser was tried and felt broken mid-login).
- * These two are the navigations a user takes knowing they are leaving the login attempt
- * behind, which is exactly when an external hand-off reads as intended rather than as
- * being thrown out of the app.
+ * The distinguishing signal is the query, and it is empirical: the real OAuth login page
+ * carries **no** `return_to` (the consent id lives in the session, see the same trace),
+ * while the stale-challenge bounce carries one pointing back into the flow
+ * (`/account/login?prompt=1&return_to=/consent?...`, issue #434). So a `return_to` aimed
+ * anywhere else means this login cannot finish the flow.
+ *
+ * Callers treat it as a restart rather than a block, because the user asking to sign in
+ * is a reasonable thing to want — they should land on a login page that actually works,
+ * not have the tap silently swallowed.
  */
-fun isExternalLoginDetour(url: String): Boolean {
-    val path = ravelrySafePath(url) ?: return false
-    return path == "/invitations" ||
-        path.startsWith("/invitations/") ||
-        path == "/account/forgot"
+fun isOffFlowLoginPage(url: String): Boolean {
+    if (ravelrySafePath(url) != "/account/login") return false
+    val parsed = runCatching { Url(url) }.getOrNull() ?: return false
+    val returnTo = parsed.parameters["return_to"] ?: return false
+    return !returnTo.pointsInsideAuthFlow()
+}
+
+/**
+ * Whether this `return_to` value addresses the OAuth flow, matched on a delimiter
+ * boundary rather than a bare prefix: `/consent-evil` starts with `/consent` but is a
+ * different Rails route entirely, and treating it as in-flow would hand back exactly the
+ * escape [isOffFlowLoginPage] exists to close. Same rule, same reason, as [isAuthRedirect].
+ */
+private fun String.pointsInsideAuthFlow(): Boolean {
+    for (route in listOf("/consent", "/oauth2")) {
+        if (!startsWith(route)) continue
+        val rest = substring(route.length)
+        if (rest.isEmpty() || rest[0] == '/' || rest[0] == '?' || rest[0] == '#') return true
+    }
+    return false
 }
 
 /**
  * The `encodedPath` of [url] if it is an https URL on Ravelry's own host whose path is
  * free of the escapes a prefix check could be walked through, else null. Shared by the
- * allowlist and [isExternalLoginDetour] so neither can drift into a weaker host check.
+ * allowlist so a prefix check cannot be walked through a dot-segment or %-escape.
  */
-private fun ravelrySafePath(url: String): String? {
+internal fun ravelrySafePath(url: String): String? {
     val parsed = runCatching { Url(url) }.getOrElse {
         println("FiberSocial: login navigation policy could not parse ${url.take(120)}")
         return null
@@ -93,6 +116,28 @@ private fun ravelrySafePath(url: String): String? {
     }
     return path
 }
+
+/**
+ * What to do about a page the login WebView has already *started loading* — the second
+ * line of defense behind [loginNavigationDecision] (issue #447).
+ *
+ * The navigation hooks are not a complete filter. Android documents
+ * `shouldOverrideUrlLoading` as **not invoked for POST requests**, so a form submission
+ * from an allowed page can move the main frame anywhere with the policy never consulted,
+ * and the docs list further non-invocation cases. The observed symptom is the one that
+ * matters: take long enough over the login form and the authorize challenge goes stale,
+ * Ravelry drops the `return_to`, and the user lands on the **Ravelry home page inside the
+ * app** (issue #434) — the whole logged-in website, which is the escape class #425 exists
+ * to close, and what App Review crashed the app through under 2.1(a).
+ *
+ * So every page load is re-checked as it begins, and anything off the flow is stopped
+ * before it can be shown. [userInitiated] is deliberately not a parameter: by this point
+ * the navigation is happening regardless of who started it, and "cancel and stay put"
+ * (what a user tap gets at decide-time) is not available — the page is already loading,
+ * so the only ways out are a fresh authorize URL or giving up.
+ */
+fun loginPageLoadDecision(url: String, restartsUsed: Int): LoginNavigationDecision =
+    loginNavigationDecision(url, userInitiated = false, restartsUsed = restartsUsed)
 
 /**
  * Whether [url] is the app's own OAuth redirect ([RavelryAuthManager.REDIRECT_URI]),
@@ -113,9 +158,6 @@ fun isAuthRedirect(url: String): Boolean {
 enum class LoginNavigationDecision {
     /** On the auth flow — load it. */
     ALLOW,
-
-    /** A sign-up / password-reset detour — cancel it and hand the URL to the browser. */
-    OPEN_EXTERNALLY,
 
     /** Off the flow by the user's own tap — cancel it and stay put. */
     BLOCK,
@@ -161,11 +203,15 @@ fun loginNavigationDecision(
     restartsUsed: Int,
 ): LoginNavigationDecision = when {
     isAllowedLoginNavigation(url) -> LoginNavigationDecision.ALLOW
-    // Ahead of the userInitiated split on purpose: a detour is a hand-off whichever way
-    // it was reached. Ravelry moves `/invitations` → `/invitations/ask` itself after the
-    // form POST, and reading that as an off-flow server redirect would restart the login
-    // flow underneath someone in the middle of creating an account.
-    isExternalLoginDetour(url) -> LoginNavigationDecision.OPEN_EXTERNALLY
+    // Ahead of the userInitiated split: a login page pointed away from this flow is a
+    // dead end whoever asked for it, and the user tapping "sign in" wants a login page
+    // that works — not a silently swallowed tap. Restarting gives them exactly that.
+    isOffFlowLoginPage(url) ->
+        if (restartsUsed < MAX_LOGIN_FLOW_RESTARTS) {
+            LoginNavigationDecision.RESTART_FLOW
+        } else {
+            LoginNavigationDecision.FAIL_LOGIN
+        }
     userInitiated -> LoginNavigationDecision.BLOCK
     restartsUsed < MAX_LOGIN_FLOW_RESTARTS -> LoginNavigationDecision.RESTART_FLOW
     else -> LoginNavigationDecision.FAIL_LOGIN

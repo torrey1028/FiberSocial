@@ -116,6 +116,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import com.myhobbyislearning.fibersocial.about.AboutScreen
 import com.myhobbyislearning.fibersocial.app.ForegroundActivations
+import com.myhobbyislearning.fibersocial.auth.isAllowedAccountDeletionNavigation
 import com.myhobbyislearning.fibersocial.auth.ravelryAccountDeletionUrl
 import com.myhobbyislearning.fibersocial.debug.DebugPanel
 import com.myhobbyislearning.fibersocial.events.EventDetailScreen
@@ -161,6 +162,7 @@ import com.myhobbyislearning.fibersocial.ui.AppBranding
 import com.myhobbyislearning.fibersocial.ui.GroupBadge
 import com.myhobbyislearning.fibersocial.ui.PullToRefreshBox
 import com.myhobbyislearning.fibersocial.ui.appLogoResource
+import com.myhobbyislearning.fibersocial.ui.WebPageScreen
 import com.myhobbyislearning.fibersocial.ui.UserAvatar
 import io.ktor.http.encodeURLParameter
 import kotlinx.coroutines.NonCancellable
@@ -584,6 +586,20 @@ fun FeedScreen(
     // and from the no-groups onboarding. rememberSaveable so a rotation mid-search keeps
     // the screen open.
     var showGroupSearch by rememberSaveable { mutableStateOf(false) }
+    // Non-null while the in-app Ravelry web page is open — currently only the
+    // account-deletion page (issues #478, #481). rememberSaveable so it survives the
+    // configuration change a rotation causes mid-flow.
+    var webPageUrl by rememberSaveable { mutableStateOf<String?>(null) }
+    // Captured at the same instant as webPageUrl, and saved beside it, so the allowlist
+    // is evaluated against the identity the page was OPENED for (issue #406's lesson).
+    // Reading `user?.username` live at navigation time instead would be wrong for
+    // exactly the reason #406 documents: the feed's copy of the signed-in user is
+    // momentarily null while the feed reloads, which a rotation triggers — and this page
+    // survives rotation (rememberSaveable). During that window the allowlist would
+    // resolve to the handle-less /people/edit while the page sits on
+    // /people/<handle>/edit, so the next navigation — Ravelry's own redirect, the login
+    // POST, the delete link itself — would be cancelled as off-flow.
+    var webPageUsername by rememberSaveable { mutableStateOf<String?>(null) }
     var composingTopic by rememberSaveable { mutableStateOf(false) }
     // The message composer (issue #374), following composingTopic's shape exactly: a
     // rememberSaveable flag plus an early return, not a new navigation mechanism.
@@ -1044,7 +1060,6 @@ fun FeedScreen(
     }
 
     if (showSettings) {
-        val uriHandler = LocalUriHandler.current
         // notificationSettings and its one-shot load are hoisted to FeedScreen's state block
         // (see #360 there) so the optimistic value survives leaving and re-entering Settings.
         // Optimistically update local state, then persist. Null (still loading) is a no-op.
@@ -1107,31 +1122,19 @@ fun FeedScreen(
             },
             onOpenAbout = { showAbout = true },
             onOpenBlockedUsers = { showBlockedUsers = true },
-            // Guideline 5.1.1(v). The system browser, not a WebView: Ravelry's deletion
-            // control is a logged-in profile-edit link, so the user usually has to sign
-            // in to Ravelry on the way — and the app's only WebView is the login one,
-            // deliberately confined to the OAuth flow (issue #425).
+            // Guideline 5.1.1(v). Ravelry's deletion control is a logged-in
+            // profile-edit link with no API behind it, so the last step is necessarily a
+            // web page — but it opens IN the app, not by punting to the default browser,
+            // which is what guideline 4 rejected 0.3.2 for (issue #481). Sign-out happens
+            // when that page is closed, not here: this screen is inside FeedScreen, so
+            // logging out now would tear the page down before the user ever saw it.
             onDeleteAccount = {
-                // runCatching, matching ReportPostDialog/EventDetailScreen: openUri
-                // rethrows an unresolvable ACTION_VIEW as IllegalArgumentException, and
-                // an uncaught throw out of a click handler crashes the app — on the one
-                // path App Review is explicitly told to walk (5.1.1(v)), on a device
-                // with no browser able to handle https.
-                val opened = runCatching {
-                    uriHandler.openUri(ravelryAccountDeletionUrl(user?.username))
-                }.onFailure { println("FiberSocial: openUri failed: ${it.message}") }.isSuccess
-                // Sign out on the way out, so returning from the browser lands on the
-                // login screen rather than back in the settings of an account that may
-                // no longer exist. The app cannot observe whether the deletion actually
-                // went through, and of the two guesses this is the safe one: a session
-                // held open against a deleted account 403s on every call, while a user
-                // who changed their mind just logs back in. Ordered after openUri
-                // because signing out tears this screen down.
-                //
-                // Only when the browser actually opened, though: signing out after a
-                // failed hand-off would strand the user with neither the deletion page
-                // nor the session the dialog promised they could return to.
-                if (opened) onLogout()
+                // Both captured from the same read of `user`, so the page and the
+                // allowlist guarding it can never be resolved against different
+                // identities. See webPageUsername's declaration.
+                val handle = user?.username
+                webPageUsername = handle
+                webPageUrl = ravelryAccountDeletionUrl(handle)
             },
         )
         return
@@ -1763,7 +1766,7 @@ fun FeedScreen(
                     val displayedItems = filterBlocked(filterUnread(s.items, showUnreadOnly), blockedUsernames)
                     // A brand-new Ravelry user with no groups would otherwise land on a
                     // blank page (issue #431) — welcome them and point at the same
-                    // Ravelry group-search link-out the drawer offers. Checked before the
+                    // in-app group browser the drawer offers. Checked before the
                     // unread filter so toggling the filter can't replace the onboarding
                     // with a misleading "No unread topics". Group feed only: Messages has
                     // its own empty presentation; My Posts renders a bare empty list for
@@ -2207,11 +2210,12 @@ internal fun UnreadFilterEmptyState(
  * groups at all (issue #431) — a brand-new Ravelry account would otherwise see a blank
  * page with no hint of what the app is for or what to do next.
  *
- * [onFindGroups] must be the same Ravelry group-search link-out as the drawer's "Find
- * groups" row: the app deliberately links out instead of rebuilding group search in-app
- * (issue #232). Scrollable (like [FeedErrorState]) so the surrounding [PullToRefreshBox]
- * still has a nested-scrolling child — pull-to-refresh is exactly how the user picks up
- * a group joined on the website, which is why the copy mentions it.
+ * [onFindGroups] must be the same in-app group browser the drawer's "Find groups" row
+ * opens: issue #232 was originally answered by linking out to Ravelry's website and is
+ * now built natively, so nothing here leaves the app. Scrollable (like [FeedErrorState])
+ * so the surrounding [PullToRefreshBox] still has a nested-scrolling child — the browser
+ * refreshes the feed itself after a join, but pull-to-refresh is still how a group joined
+ * on the website (outside the app entirely) gets picked up.
  */
 @Composable
 internal fun NoGroupsOnboarding(
@@ -2234,7 +2238,7 @@ internal fun NoGroupsOnboarding(
         Spacer(Modifier.height(12.dp))
         Text(
             text = "FiberSocial shows the discussions from your Ravelry groups, " +
-                "and you aren't in any groups yet. Join a group or two on Ravelry " +
+                "and you aren't in any groups yet. Find a group or two " +
                 "to get started.",
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -2242,10 +2246,11 @@ internal fun NoGroupsOnboarding(
             modifier = Modifier.padding(horizontal = 32.dp),
         )
         Spacer(Modifier.height(16.dp))
-        Button(onClick = onFindGroups) { Text("Find groups on Ravelry") }
+        Button(onClick = onFindGroups) { Text("Find groups") }
         Spacer(Modifier.height(12.dp))
         Text(
-            text = "Groups you join appear in the menu — pull down to refresh here when you're done.",
+            text = "Groups you join appear in the menu automatically. " +
+                "Joined one on Ravelry's website instead? Pull down to refresh here.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
@@ -2612,8 +2617,8 @@ internal fun GroupDrawer(
                                 ),
                         )
                     }
-                    // Discover and join more groups on Ravelry's own search page (issue #232 —
-                    // linking out rather than rebuilding search in-app).
+                    // Opens the in-app group browser (issue #232). This used to link out to
+                    // Ravelry's own search page in a real browser.
                     item(key = "find-groups") {
                         NavigationDrawerItem(
                             label = { Text("Find groups") },
