@@ -7,6 +7,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
+import kotlinx.coroutines.flow.first
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
@@ -214,5 +215,31 @@ class GroupPreviewViewModelTest {
             // The spinner has to clear or the footer spins forever on a transient failure.
             assertTrue(!after.loadingMore)
             assertEquals(before, after.items.size)
+        }
+
+    /**
+     * A session expiry must reach the host, which routes to the login screen.
+     *
+     * Twin of the GroupSearchViewModel test next door, and it exists for the same reason:
+     * this ViewModel's `sessionExpired` was missing from BOTH platforms' `merge(...)`
+     * lists, so the signal fired into a flow nobody collected. `load` also leaves the
+     * state on `Loading(group)` in that branch — correct on its own, since the host is
+     * meant to tear the screen down — which without the wiring meant a spinner that never
+     * resolved and no route back to login.
+     *
+     * That is two sibling ViewModels added to this PR with the same omission, which is
+     * why it is worth a test on each rather than one shared note.
+     */
+    @Test
+    fun `a session expiry while loading signals the host`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val vm = GroupPreviewViewModel(
+                FeedRepository(sessionExpiredApiClient(FakeFeedTokenStorage())),
+                this,
+            )
+            vm.open(lace)
+            awaitChildren(coroutineContext[Job]!!)
+
+            assertEquals(Unit, vm.sessionExpired.first())
         }
 }

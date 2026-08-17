@@ -10,6 +10,7 @@ import com.myhobbyislearning.fibersocial.events.NewEventViewModel
 import com.myhobbyislearning.fibersocial.feed.FeedRepository
 import com.myhobbyislearning.fibersocial.feed.FeedScreenModel
 import com.myhobbyislearning.fibersocial.feed.FeedViewModel
+import com.myhobbyislearning.fibersocial.feed.GroupPreviewViewModel
 import com.myhobbyislearning.fibersocial.feed.GroupSearchViewModel
 import com.myhobbyislearning.fibersocial.feed.ImageAttachmentViewModel
 import com.myhobbyislearning.fibersocial.feed.KeyValueGroupLastViewedStore
@@ -179,6 +180,7 @@ class IosFeedModel(scope: CoroutineScope) : FeedScreenModel {
     val sessionExpired: Flow<Unit> = merge(
         feed.sessionExpired,
         groupSearch.sessionExpired,
+        groupPreview.sessionExpired,
         topicDetail.sessionExpired,
         newTopic.sessionExpired,
         newTopicImage.sessionExpired,

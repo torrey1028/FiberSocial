@@ -105,6 +105,7 @@ class FeedAndroidViewModel(app: Application) : AndroidViewModel(app), FeedScreen
     val sessionExpired: Flow<Unit> = merge(
         feed.sessionExpired,
         groupSearch.sessionExpired,
+        groupPreview.sessionExpired,
         topicDetail.sessionExpired,
         newTopic.sessionExpired,
         newTopicImage.sessionExpired,

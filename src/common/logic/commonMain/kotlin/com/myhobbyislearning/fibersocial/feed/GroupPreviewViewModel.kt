@@ -4,6 +4,7 @@ import com.myhobbyislearning.fibersocial.auth.SessionExpiredException
 import com.myhobbyislearning.fibersocial.auth.SessionExpirySignal
 import com.myhobbyislearning.fibersocial.feed.models.FeedItem
 import com.myhobbyislearning.fibersocial.feed.models.Group
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -97,6 +98,12 @@ class GroupPreviewViewModel(
             )
         } catch (e: SessionExpiredException) {
             sessionExpirySignal.signal()
+        } catch (e: CancellationException) {
+            // Same rethrow-before-generic-catch the sibling GroupSearchViewModel and
+            // FeedViewModel use: CancellationException is an Exception, so the catch below
+            // would render a scope teardown as a load failure, and swallowing it breaks
+            // structured concurrency for the enclosing scope.
+            throw e
         } catch (e: Exception) {
             println("FiberSocial: group preview ${group.permalink} failed: ${e.message}")
             _state.value = GroupPreviewState.Error(
@@ -127,6 +134,8 @@ class GroupPreviewViewModel(
                 )
             } catch (e: SessionExpiredException) {
                 sessionExpirySignal.signal()
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 println("FiberSocial: group preview page ${loaded.page + 1} failed: ${e.message}")
                 val current = _state.value as? GroupPreviewState.Loaded ?: return@launch
