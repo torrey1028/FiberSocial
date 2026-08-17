@@ -47,43 +47,32 @@ class LoginNavigationPolicyTest {
         assertTrue(isAllowedLoginNavigation("about:blank"))
     }
 
-    // --- The login page's two detour links go OUT to the browser, not in-app ---
-    // Both finish via an emailed link that opens in the real browser, so running their
-    // first step in the WebView's throwaway cookie jar only splits the flow in two.
+    // --- The login page's auth-adjacent detours load in-app ---
+    // They went out to the system browser briefly (#479) and App Review rejected that
+    // under guideline 4 — "revise the app to enable users to sign in or register for an
+    // account in the app" (#481). Back in the allowlist, where they started.
 
     @Test
-    fun `the forgot password page and its query variants are external detours`() {
-        assertTrue(isExternalLoginDetour("https://www.ravelry.com/account/forgot"))
-        assertTrue(isExternalLoginDetour("https://www.ravelry.com/account/forgot?forgot=username"))
-        // And no longer loadable in place.
-        assertFalse(isAllowedLoginNavigation("https://www.ravelry.com/account/forgot"))
+    fun `allows the forgot password page and its query variants`() {
+        assertTrue(isAllowedLoginNavigation("https://www.ravelry.com/account/forgot"))
+        assertTrue(isAllowedLoginNavigation("https://www.ravelry.com/account/forgot?forgot=username"))
     }
 
     @Test
-    fun `the invitations sign-up flow and its sub-steps are external detours`() {
-        assertTrue(isExternalLoginDetour("https://www.ravelry.com/invitations"))
-        // /invitations/ask is where Ravelry's own POST lands, so it has to be covered
-        // too — otherwise the form submission reads as an off-flow server redirect.
-        assertTrue(isExternalLoginDetour("https://www.ravelry.com/invitations/ask"))
-        assertFalse(isAllowedLoginNavigation("https://www.ravelry.com/invitations"))
-        assertFalse(isAllowedLoginNavigation("https://www.ravelry.com/invitations/ask"))
+    fun `allows the invitations sign-up flow and its sub-steps`() {
+        assertTrue(isAllowedLoginNavigation("https://www.ravelry.com/invitations"))
+        // Where Ravelry's own form POST lands, so it has to be allowed too — otherwise
+        // submitting the sign-up form reads as an off-flow server redirect and restarts
+        // the login flow underneath someone creating an account.
+        assertTrue(isAllowedLoginNavigation("https://www.ravelry.com/invitations/ask"))
     }
 
     @Test
-    fun `the detour check applies the same host and escape guards as the allowlist`() {
-        // It feeds openUri, so a lookalike host passing here would hand the user's real
-        // browser a page of someone else's choosing.
-        assertFalse(isExternalLoginDetour("https://www.ravelry.com.evil.com/invitations"))
-        assertFalse(isExternalLoginDetour("https://evil.com/invitations"))
-        assertFalse(isExternalLoginDetour("http://www.ravelry.com/invitations"))
-        assertFalse(isExternalLoginDetour("https://www.ravelry.com/invitations/..%2fmessages"))
-    }
-
-    @Test
-    fun `the auth flow itself is never treated as a detour`() {
-        assertFalse(isExternalLoginDetour("https://www.ravelry.com/account/login"))
-        assertFalse(isExternalLoginDetour("https://www.ravelry.com/consent?consent=8ed98e71"))
-        assertFalse(isExternalLoginDetour("https://www.ravelry.com/oauth2/auth?client_id=x"))
+    fun `the detours get no weaker host or escape checks than the rest of the allowlist`() {
+        assertFalse(isAllowedLoginNavigation("https://www.ravelry.com.evil.com/invitations"))
+        assertFalse(isAllowedLoginNavigation("https://evil.com/invitations"))
+        assertFalse(isAllowedLoginNavigation("http://www.ravelry.com/invitations"))
+        assertFalse(isAllowedLoginNavigation("https://www.ravelry.com/invitations/..%2fmessages"))
     }
 
     // --- The rest of the Ravelry site is not ---
@@ -244,25 +233,87 @@ class LoginNavigationPolicyTest {
     }
 
     @Test
-    fun `a detour opens externally however it was reached and whatever the budget`() {
+    fun `a detour loads in place however it was reached and whatever the budget`() {
         // The server-driven case is the one that matters: Ravelry POSTs /invitations to
-        // /invitations/ask itself. Ordered ahead of the restart branch so that redirect
-        // can't restart the login flow underneath someone creating an account.
+        // /invitations/ask itself, and that must not read as the flow going off the rails.
         for (url in listOf(
             "https://www.ravelry.com/invitations",
             "https://www.ravelry.com/invitations/ask",
             "https://www.ravelry.com/account/forgot",
         )) {
             assertEquals(
-                LoginNavigationDecision.OPEN_EXTERNALLY,
+                LoginNavigationDecision.ALLOW,
                 loginNavigationDecision(url, userInitiated = true, restartsUsed = 0),
                 url,
             )
             assertEquals(
-                LoginNavigationDecision.OPEN_EXTERNALLY,
+                LoginNavigationDecision.ALLOW,
                 loginNavigationDecision(url, userInitiated = false, restartsUsed = MAX_LOGIN_FLOW_RESTARTS),
                 url,
             )
         }
+    }
+
+
+    // --- A login page pointed away from this flow is a dead end (device trace 2026-08-13) ---
+
+    @Test
+    fun `the sign-in link on the sign-up page is not treated as the oauth login page`() {
+        // The observed dead end: Sign Up -> /invitations -> its header's "sign in" link,
+        // which is /account/login?return_to=/invitations. Path-only matching let it
+        // through, the user signed in, Ravelry honoured return_to, and the OAuth flow was
+        // silently abandoned on the sign-up page.
+        val url = "https://www.ravelry.com/account/login?return_to=/invitations"
+        assertTrue(isOffFlowLoginPage(url))
+        assertFalse(isAllowedLoginNavigation(url))
+    }
+
+    @Test
+    fun `the real oauth login page carries no return_to and stays allowed`() {
+        // Empirical: the OAuth flow's own login page has no return_to at all — the
+        // consent id lives in the session (same trace).
+        assertFalse(isOffFlowLoginPage("https://www.ravelry.com/account/login"))
+        assertTrue(isAllowedLoginNavigation("https://www.ravelry.com/account/login"))
+    }
+
+    @Test
+    fun `a return_to pointing back into the flow stays allowed`() {
+        // The stale-challenge bounce (issue #434) looks like this, and it CAN finish the
+        // flow — restarting on it would throw away a login that was about to work.
+        for (url in listOf(
+            "https://www.ravelry.com/account/login?prompt=1&return_to=/consent?consent=8ed98e71",
+            "https://www.ravelry.com/account/login?return_to=/oauth2/auth?client_id=x",
+        )) {
+            assertFalse(isOffFlowLoginPage(url), url)
+            assertTrue(isAllowedLoginNavigation(url), url)
+        }
+    }
+
+    @Test
+    fun `an off-flow login page restarts rather than being blocked or loaded`() {
+        // Restart, not BLOCK: the user asking to sign in should get a working login page,
+        // not a tap that does nothing. Ahead of the userInitiated split for that reason.
+        val url = "https://www.ravelry.com/account/login?return_to=/invitations"
+        assertEquals(
+            LoginNavigationDecision.RESTART_FLOW,
+            loginNavigationDecision(url, userInitiated = true, restartsUsed = 0),
+        )
+        assertEquals(
+            LoginNavigationDecision.RESTART_FLOW,
+            loginNavigationDecision(url, userInitiated = false, restartsUsed = 0),
+        )
+        // Still bounded by the same budget as every other restart.
+        assertEquals(
+            LoginNavigationDecision.FAIL_LOGIN,
+            loginNavigationDecision(url, userInitiated = true, restartsUsed = MAX_LOGIN_FLOW_RESTARTS),
+        )
+    }
+
+    @Test
+    fun `an off-site return_to does not sneak through as a flow-completing login`() {
+        assertTrue(isOffFlowLoginPage("https://www.ravelry.com/account/login?return_to=https://evil.com"))
+        // Lookalike prefixes must not read as the consent page.
+        assertTrue(isOffFlowLoginPage("https://www.ravelry.com/account/login?return_to=/consent-evil"))
+        assertTrue(isOffFlowLoginPage("https://www.ravelry.com/account/login?return_to=/oauth2evil"))
     }
 }

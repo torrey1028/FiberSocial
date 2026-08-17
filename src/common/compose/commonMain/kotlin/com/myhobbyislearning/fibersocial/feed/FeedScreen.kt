@@ -116,6 +116,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import com.myhobbyislearning.fibersocial.about.AboutScreen
 import com.myhobbyislearning.fibersocial.app.ForegroundActivations
+import com.myhobbyislearning.fibersocial.auth.isAllowedAccountDeletionNavigation
 import com.myhobbyislearning.fibersocial.auth.ravelryAccountDeletionUrl
 import com.myhobbyislearning.fibersocial.debug.DebugPanel
 import com.myhobbyislearning.fibersocial.events.EventDetailScreen
@@ -161,6 +162,7 @@ import com.myhobbyislearning.fibersocial.ui.AppBranding
 import com.myhobbyislearning.fibersocial.ui.GroupBadge
 import com.myhobbyislearning.fibersocial.ui.PullToRefreshBox
 import com.myhobbyislearning.fibersocial.ui.appLogoResource
+import com.myhobbyislearning.fibersocial.ui.WebPageScreen
 import com.myhobbyislearning.fibersocial.ui.UserAvatar
 import io.ktor.http.encodeURLParameter
 import kotlinx.coroutines.NonCancellable
@@ -580,6 +582,20 @@ fun FeedScreen(
     var showAbout by remember { mutableStateOf(false) }
     // Opened from Settings, same nav shape as showAbout (issue #410).
     var showBlockedUsers by remember { mutableStateOf(false) }
+    // Non-null while the in-app Ravelry web page is open — currently only the
+    // account-deletion page (issues #478, #481). rememberSaveable so it survives the
+    // configuration change a rotation causes mid-flow.
+    var webPageUrl by rememberSaveable { mutableStateOf<String?>(null) }
+    // Captured at the same instant as webPageUrl, and saved beside it, so the allowlist
+    // is evaluated against the identity the page was OPENED for (issue #406's lesson).
+    // Reading `user?.username` live at navigation time instead would be wrong for
+    // exactly the reason #406 documents: the feed's copy of the signed-in user is
+    // momentarily null while the feed reloads, which a rotation triggers — and this page
+    // survives rotation (rememberSaveable). During that window the allowlist would
+    // resolve to the handle-less /people/edit while the page sits on
+    // /people/<handle>/edit, so the next navigation — Ravelry's own redirect, the login
+    // POST, the delete link itself — would be cancelled as off-flow.
+    var webPageUsername by rememberSaveable { mutableStateOf<String?>(null) }
     var composingTopic by rememberSaveable { mutableStateOf(false) }
     // The message composer (issue #374), following composingTopic's shape exactly: a
     // rememberSaveable flag plus an early return, not a new navigation mechanism.
@@ -998,6 +1014,32 @@ fun FeedScreen(
         return
     }
 
+    // Rendered before settings, same layering trick as About below: the deletion page
+    // (issue #478) shows over Settings, which is still open behind it.
+    webPageUrl?.let { pageUrl ->
+        WebPageScreen(
+            url = pageUrl,
+            title = "Delete account",
+            // Only the pages the deletion flow actually walks — NOT "anything on
+            // ravelry.com". The 2.1(a) crash came from a reviewer roaming Ravelry inside
+            // a web view we had opened for them (issue #425); staying on Ravelry was
+            // never the safety property.
+            isAllowedNavigation = { isAllowedAccountDeletionNavigation(it, webPageUsername) },
+            // Signing out here rather than at the tap: returning from the deletion page
+            // should land on the login screen, not in the settings of an account that may
+            // no longer exist (the confirmation dialog says so). The app cannot observe
+            // whether the deletion went through, and of the two guesses this is the safe
+            // one — a session held open against a deleted account 403s on every call,
+            // while a user who changed their mind just signs back in.
+            onClose = {
+                webPageUrl = null
+                webPageUsername = null
+                onLogout()
+            },
+        )
+        return
+    }
+
     // Rendered before settings so "About FiberSocial" (opened from Settings, issue #289)
     // shows over it; backing out returns to the still-open settings screen.
     if (showAbout) {
@@ -1040,7 +1082,6 @@ fun FeedScreen(
     }
 
     if (showSettings) {
-        val uriHandler = LocalUriHandler.current
         // notificationSettings and its one-shot load are hoisted to FeedScreen's state block
         // (see #360 there) so the optimistic value survives leaving and re-entering Settings.
         // Optimistically update local state, then persist. Null (still loading) is a no-op.
@@ -1103,31 +1144,19 @@ fun FeedScreen(
             },
             onOpenAbout = { showAbout = true },
             onOpenBlockedUsers = { showBlockedUsers = true },
-            // Guideline 5.1.1(v). The system browser, not a WebView: Ravelry's deletion
-            // control is a logged-in profile-edit link, so the user usually has to sign
-            // in to Ravelry on the way — and the app's only WebView is the login one,
-            // deliberately confined to the OAuth flow (issue #425).
+            // Guideline 5.1.1(v). Ravelry's deletion control is a logged-in
+            // profile-edit link with no API behind it, so the last step is necessarily a
+            // web page — but it opens IN the app, not by punting to the default browser,
+            // which is what guideline 4 rejected 0.3.2 for (issue #481). Sign-out happens
+            // when that page is closed, not here: this screen is inside FeedScreen, so
+            // logging out now would tear the page down before the user ever saw it.
             onDeleteAccount = {
-                // runCatching, matching ReportPostDialog/EventDetailScreen: openUri
-                // rethrows an unresolvable ACTION_VIEW as IllegalArgumentException, and
-                // an uncaught throw out of a click handler crashes the app — on the one
-                // path App Review is explicitly told to walk (5.1.1(v)), on a device
-                // with no browser able to handle https.
-                val opened = runCatching {
-                    uriHandler.openUri(ravelryAccountDeletionUrl(user?.username))
-                }.onFailure { println("FiberSocial: openUri failed: ${it.message}") }.isSuccess
-                // Sign out on the way out, so returning from the browser lands on the
-                // login screen rather than back in the settings of an account that may
-                // no longer exist. The app cannot observe whether the deletion actually
-                // went through, and of the two guesses this is the safe one: a session
-                // held open against a deleted account 403s on every call, while a user
-                // who changed their mind just logs back in. Ordered after openUri
-                // because signing out tears this screen down.
-                //
-                // Only when the browser actually opened, though: signing out after a
-                // failed hand-off would strand the user with neither the deletion page
-                // nor the session the dialog promised they could return to.
-                if (opened) onLogout()
+                // Both captured from the same read of `user`, so the page and the
+                // allowlist guarding it can never be resolved against different
+                // identities. See webPageUsername's declaration.
+                val handle = user?.username
+                webPageUsername = handle
+                webPageUrl = ravelryAccountDeletionUrl(handle)
             },
         )
         return

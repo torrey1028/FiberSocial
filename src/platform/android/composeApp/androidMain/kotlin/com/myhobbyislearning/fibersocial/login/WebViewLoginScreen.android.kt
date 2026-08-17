@@ -2,6 +2,7 @@
 
 package com.myhobbyislearning.fibersocial.login
 
+import android.graphics.Bitmap
 import android.webkit.CookieManager
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
@@ -19,7 +20,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.backhandler.BackHandler
-import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.viewinterop.AndroidView
 import com.myhobbyislearning.fibersocial.auth.AuthCallback
 import com.myhobbyislearning.fibersocial.auth.MALFORMED_AUTH_CALLBACK_MESSAGE
@@ -28,7 +28,9 @@ import com.myhobbyislearning.fibersocial.auth.LOGIN_FLOW_LOST_MESSAGE
 import com.myhobbyislearning.fibersocial.auth.LoginNavigationDecision
 import com.myhobbyislearning.fibersocial.auth.authFailureMessage
 import com.myhobbyislearning.fibersocial.auth.describeAuthFailureForLog
+import com.myhobbyislearning.fibersocial.auth.isAllowedLoginNavigation
 import com.myhobbyislearning.fibersocial.auth.isAuthRedirect
+import com.myhobbyislearning.fibersocial.auth.loginPageLoadDecision
 import com.myhobbyislearning.fibersocial.auth.loginNavigationDecision
 import com.myhobbyislearning.fibersocial.auth.parseAuthCallback
 import com.myhobbyislearning.fibersocial.debug.DebugLog
@@ -46,17 +48,11 @@ actual fun WebViewLoginScreen(
     // AndroidView's factory runs once the underlying view exists, which BackHandler
     // (evaluated on every composition) can't reach any other way.
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
-    // Sign-up and password reset both finish via an emailed link that opens in the
-    // browser, so they are handed off there rather than run in this WebView — see
-    // isExternalLoginDetour. Captured here because the WebViewClient below is built
-    // inside AndroidView's factory, where no composition-local is readable.
-    val uriHandler = LocalUriHandler.current
-    // System back navigates the WEB flow's own history first — the OAuth flow's own
-    // pages, since the login page's sign-up and password-reset links now leave for the
-    // browser instead of loading here — and only leaves the screen entirely once there's
-    // nowhere further back to go within it. Without this, nothing here handles back at
-    // all, so it falls through to the Activity default and exits the app outright
-    // (issue #308).
+    // System back navigates the WEB flow's own history first — e.g. backing out of the
+    // sign-up or password-reset detour taken from the login page — and only leaves the
+    // screen entirely once there's nowhere further back to go within it. Without this,
+    // nothing here handles back at all, so it falls through to the Activity default and
+    // exits the app outright (issue #308).
     BackHandler {
         val webView = webViewRef
         if (webView != null && webView.canGoBack()) {
@@ -146,20 +142,6 @@ actual fun WebViewLoginScreen(
                         val userInitiated = request.hasGesture() && !request.isRedirect
                         return when (loginNavigationDecision(url, userInitiated, flowRestarts)) {
                             LoginNavigationDecision.ALLOW -> false
-                            LoginNavigationDecision.OPEN_EXTERNALLY -> {
-                                DebugLog.log("WebView handed off to the browser: ${describeUrlForLog(url)}")
-                                // AndroidUriHandler turns an unresolvable ACTION_VIEW into an
-                                // IllegalArgumentException, and this is a WebViewClient callback
-                                // on the UI thread — an uncaught throw here takes the app down
-                                // mid-login on any device with no browser able to handle https
-                                // (none installed, or one disabled by a managed profile). The
-                                // navigation is cancelled either way, so failing here just
-                                // leaves the user on the login form, which is recoverable.
-                                runCatching { uriHandler.openUri(url) }.onFailure {
-                                    DebugLog.log("WebView browser hand-off failed: ${it.message}")
-                                }
-                                true
-                            }
                             LoginNavigationDecision.BLOCK -> {
                                 DebugLog.log("WebView cancelled non-login navigation to ${describeUrlForLog(url)}")
                                 true
@@ -187,6 +169,33 @@ actual fun WebViewLoginScreen(
                             "WebView error ${error.errorCode} ${error.description} " +
                                 "url=${describeUrlForLog(request.url.toString())}",
                         )
+                    }
+
+                    // Second line of defense (issue #447). shouldOverrideUrlLoading is
+                    // documented as NOT invoked for POST requests, so a form submission
+                    // from an allowed page can move the main frame anywhere without the
+                    // policy ever running — and the observed result is the whole Ravelry
+                    // home page rendered inside the login WebView when the authorize
+                    // challenge goes stale (issue #434). Re-check here, where every load
+                    // passes, and stop anything off-flow before it can be shown.
+                    override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
+                        if (isAllowedLoginNavigation(url)) return
+                        DebugLog.log("WebView caught an off-flow page load: ${describeUrlForLog(url)}")
+                        // stopLoading alone would leave whatever already rendered on
+                        // screen, so blank it before deciding what to do next.
+                        view.stopLoading()
+                        view.loadUrl("about:blank")
+                        when (loginPageLoadDecision(url, flowRestarts)) {
+                            LoginNavigationDecision.FAIL_LOGIN -> {
+                                DebugLog.log("login flow lost after $flowRestarts restarts — giving up")
+                                onAuthError(LOGIN_FLOW_LOST_MESSAGE)
+                            }
+                            else -> {
+                                flowRestarts++
+                                DebugLog.log("off-flow page load — restart #$flowRestarts")
+                                view.loadUrl(buildAuthUrl())
+                            }
+                        }
                     }
 
                     override fun onPageFinished(view: WebView, url: String) {
