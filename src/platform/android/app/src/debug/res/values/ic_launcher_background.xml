@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Debug-build override of the launcher-icon background: near-black instead
+         of the release build's lavender, so the two installs (they coexist —
+         the debug build has its own applicationId) are told apart at a glance
+         on the home screen. Pairs with this source set's own light-purple
+         ic_launcher_foreground.png; both come from FiberSocialLogo_darkmode.svg
+         via scripts/generate_launcher_icons.py. -->
+    <color name="ic_launcher_background">#121212</color>
+</resources>

@@ -17,8 +17,31 @@ Built as an adaptive icon (`res/mipmap-anydpi-v26/ic_launcher.xml`):
 a lavender `#EEE9FF` background (`@color/ic_launcher_background`) behind the
 transparent logo foreground (`res/mipmap-*/ic_launcher_foreground.png`, the
 logo scaled to ~62 % of the 108 dp layer so it sits inside the mask safe zone).
+iOS uses the same art and the same 62 % framing as one flat 1024 px square
+(`Assets.xcassets/AppIcon.appiconset`) with the background baked in and the
+alpha channel dropped, which App Store Connect requires.
 
 The foreground/logo PNGs are raster because the monogram's "FS" is set in the
 Excalifont typeface embedded in the SVG — Android `VectorDrawable` has no font
-support, so the SVGs are rendered to PNG at each density instead. Regenerate
-from the SVGs above if the mark changes.
+support, so the SVGs are rendered to PNG at each density instead.
+
+### Debug variant
+
+Debug builds install as their own app beside the store build (Android
+`applicationIdSuffix`, an iOS Debug-configuration bundle id), so they get their
+own icon from `FiberSocialLogo_darkmode.svg` — the light-purple mark on
+`#121212` — to tell the two apart on a home screen. It lives in the Android
+`debug` source set (`app/src/debug/res/`, overriding both the background colour
+and the foreground layer) and in `Assets.xcassets/AppIconDebug.appiconset`.
+
+### Regenerating
+
+```bash
+scripts/generate_launcher_icons.py               # debug (dark) icon
+scripts/generate_launcher_icons.py --variant all # both, if the mark itself changed
+```
+
+Needs `rsvg-convert` (librsvg). It only writes the debug icon by default: a
+re-render of the release icon under a different librsvg version is
+cosmetically identical but byte-different, and there's no reason to churn the
+shipped store icon.

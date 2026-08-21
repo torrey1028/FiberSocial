@@ -97,6 +97,13 @@ Or step by step:
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
+**Debug builds are a separate app.** They carry `applicationIdSuffix ".debug"`,
+so `com.myhobbyislearning.fibersocial.debug` installs next to a Play Store
+FiberSocial rather than replacing it — Android scopes every per-app store to
+the applicationId, so the two share no data at all and each needs its own
+login. The debug build is labelled "FiberSocial Debug" and carries the dark
+launcher icon so the two are distinguishable on the home screen.
+
 ---
 
 ## Testing

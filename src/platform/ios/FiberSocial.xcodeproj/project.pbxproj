@@ -272,7 +272,8 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = AA00000000000000000000F4 /* Config.xcconfig */;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				APP_DISPLAY_NAME = "FiberSocial Debug";
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIconDebug;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
@@ -292,7 +293,7 @@
 					"-framework",
 					ComposeApp,
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.myhobbyislearning.fibersocial;
+				PRODUCT_BUNDLE_IDENTIFIER = com.myhobbyislearning.fibersocial.debug;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -303,6 +304,7 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = AA00000000000000000000F4 /* Config.xcconfig */;
 			buildSettings = {
+				APP_DISPLAY_NAME = FiberSocial;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;

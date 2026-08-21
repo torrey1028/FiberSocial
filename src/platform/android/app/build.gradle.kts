@@ -74,6 +74,29 @@ android {
     } else null
 
     buildTypes {
+        debug {
+            // A distinct applicationId, so a debug build installs alongside the
+            // Play Store build instead of replacing it. Android scopes every
+            // per-app store to the applicationId, so this alone isolates all of
+            // the debug build's data — its own /data/data directory (both the
+            // plain and the EncryptedSharedPreferences files, the Tink keyset
+            // behind them, WorkManager's database), its own notification
+            // channels, its own permission grants. Nothing is shared with the
+            // store build; the two are unrelated apps as far as the OS cares,
+            // and each has to be logged in separately.
+            //
+            // Safe because nothing in this app hard-codes the package name:
+            // the OAuth redirect (fibersocial://auth/callback) is intercepted
+            // inside the login WebView rather than by an intent-filter, so it
+            // needs no per-app scheme, and the notification deep links are
+            // explicit-component PendingIntents. The `namespace` above is
+            // deliberately NOT suffixed — it names the Kotlin/R/BuildConfig
+            // package, which stays the same in both builds.
+            applicationIdSuffix = ".debug"
+            // Surfaces in the feedback form's device context (DeviceContext.kt),
+            // so a report from the side-by-side debug install says so.
+            versionNameSuffix = "-debug"
+        }
         release {
             isMinifyEnabled = false
             // Signs both ./gradlew assembleRelease (APK) and bundleRelease (the .aab Play
