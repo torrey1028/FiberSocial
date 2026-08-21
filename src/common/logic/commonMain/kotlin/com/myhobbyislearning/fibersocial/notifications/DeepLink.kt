@@ -59,6 +59,17 @@ sealed interface DeepLink {
     data class Message(val threadRootId: Long, val messageId: Long) : DeepLink
 
     /**
+     * Opens a group's feed, from a "new posts in a group you subscribed to" notification
+     * (issue #510).
+     *
+     * Only the id travels: `FeedScreen` resolves it against the groups the feed has
+     * already loaded, and simply drops the link if the user has since left the group —
+     * selecting a `Group` the drawer no longer lists would strand the feed on a filter
+     * with no row to navigate back out of.
+     */
+    data class Group(val groupId: Long) : DeepLink
+
+    /**
      * Opens the Messages destination with no conversation selected. Used by Android's
      * new-message group summary, which spans several conversations and so has no single
      * right one to open — the messages counterpart of [MyPosts].

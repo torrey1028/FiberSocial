@@ -14,6 +14,8 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.test.runTest
 import kotlin.time.Instant
 import kotlinx.datetime.TimeZone
@@ -51,6 +53,18 @@ private class InMemoryMutedTopicsStore(initial: Set<Long> = emptySet()) : MutedT
         val updated = transform(muted)
         if (updated != muted) save(updated)
         return updated
+    }
+}
+
+private class InMemorySubscribedGroupsStore(initial: Set<Long> = emptySet()) : SubscribedGroupsStore {
+    private val ids = MutableStateFlow(initial)
+    override val subscribedGroupIds: StateFlow<Set<Long>> = ids
+    override suspend fun load() = Unit
+    override suspend fun setSubscribed(groupId: Long, subscribed: Boolean) {
+        ids.value = if (subscribed) ids.value + groupId else ids.value - groupId
+    }
+    override suspend fun retainAll(groupIds: Set<Long>) {
+        ids.value = ids.value.intersect(groupIds)
     }
 }
 
@@ -577,5 +591,224 @@ class EventSyncRunnerTest {
         assertTrue(plan.remindersToSchedule.isEmpty())
         assertEquals(first.remindersToSchedule.toSet(), plan.remindersToCancel.toSet())
         assertTrue(plan.newState.scheduledReminders.isEmpty())
+    }
+
+    // --- Group activity (issue #510) ---
+
+    /**
+     * Adds `/forums/{id}/topics.json` (the subscribed-group scrape) to the base fixture.
+     * Every other path behaves exactly as in [syncApiClient]; anything unexpected still
+     * errors, which is what lets the tests below prove a leg was *not* scraped.
+     */
+    private fun syncApiClientWithGroupTopic(
+        repliedAt: () -> String,
+        lastRead: () -> Int = { 0 },
+    ): RavelryApiClient {
+        val engine = MockEngine { request ->
+            val path = request.url.encodedPath
+            val (body, type) = when {
+                // `/forums/{id}/topics.json`, the subscribed-group scrape. Matched on the
+                // suffix, not the `/forums/` prefix: `/forums/filtered_topics.json` (the My
+                // Posts leg) shares that prefix, and letting it serve topic 800 too would
+                // quietly put the topic in knownTopics and invalidate the mute-pruning test.
+                path.contains("/topics.json") ->
+                    """{"topics":[{"id":800,"title":"Yarn swap","forum_id":9,
+                        "forum_posts_count":12,"last_read":${lastRead()},
+                        "replied_at":"${repliedAt()}"}]}""" to ContentType.Application.Json
+                path.contains("filtered_topics") ->
+                    """{"topics":[]}""" to ContentType.Application.Json
+                path.contains("/messages/list") ->
+                    """{"messages":[]}""" to ContentType.Application.Json
+                path.contains("current_user") ->
+                    """{"user":{"username":"yarnie"}}""" to ContentType.Application.Json
+                path.contains("memberships") ->
+                    """<a href="https://www.ravelry.com/groups/kirkland-fiber-arts-circle-2">K</a>""" to ContentType.Text.Html
+                path.contains("groups/search") ->
+                    """{"groups":[{"id":1,"name":"Kirkland Fiber Arts Circle","permalink":"kirkland-fiber-arts-circle-2","forum_id":9}]}""" to ContentType.Application.Json
+                path.endsWith("/events/saved") ->
+                    """<div class="event_list"></div>""" to ContentType.Text.Html
+                path.contains("/groups/") ->
+                    """<div id="upcoming_events"></div>""" to ContentType.Text.Html
+                else -> error("Unexpected path: $path")
+            }
+            respond(body, HttpStatusCode.OK, headersOf("Content-Type", type.toString()))
+        }
+        val client = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        return RavelryApiClient(client, FakeFeedTokenStorage())
+    }
+
+    @Test
+    fun `a subscribed group seeds silently then notifies on the next new post`() = runTest {
+        var repliedAt = "2026/07/02 06:00:00 +0000"
+        val store = InMemoryStateStore()
+        val runner = EventSyncRunner(
+            syncApiClientWithGroupTopic({ repliedAt }),
+            store,
+            InMemorySettingsStore(),
+            subscribedGroupsStore = InMemorySubscribedGroupsStore(setOf(1L)),
+        )
+
+        val first = runner.sync(NOW, ZONE)
+        assertTrue(first.newGroupActivityNotifications.isEmpty())
+        assertTrue(first.newState.knownGroups.containsKey(1L))
+
+        repliedAt = "2026/07/03 06:00:00 +0000"
+        val second = runner.sync(NOW, ZONE)
+
+        val notification = second.newGroupActivityNotifications.single()
+        assertEquals(1L, notification.groupId)
+        assertEquals("Kirkland Fiber Arts Circle", notification.groupName)
+        assertEquals(listOf("Yarn swap"), notification.topicTitles)
+    }
+
+    @Test
+    fun `an unsubscribed group is never scraped`() = runTest {
+        // The base fixture errors on /forums/, so a scrape here would fail the sync
+        // outright. Subscription is opt-in: an empty store means no per-group requests.
+        val plan = EventSyncRunner(
+            syncApiClient(),
+            InMemoryStateStore(),
+            InMemorySettingsStore(),
+            subscribedGroupsStore = InMemorySubscribedGroupsStore(),
+        ).sync(NOW, ZONE)
+
+        assertTrue(plan.newGroupActivityNotifications.isEmpty())
+        assertTrue(plan.newState.knownGroups.isEmpty())
+    }
+
+    @Test
+    fun `group activity disabled skips the scrape even for a subscribed group`() = runTest {
+        // Same proof-by-fixture: reaching /forums/ would throw.
+        val plan = EventSyncRunner(
+            syncApiClient(),
+            InMemoryStateStore(),
+            InMemorySettingsStore(NotificationSettings(groupActivityEnabled = false)),
+            subscribedGroupsStore = InMemorySubscribedGroupsStore(setOf(1L)),
+        ).sync(NOW, ZONE)
+
+        assertTrue(plan.newGroupActivityNotifications.isEmpty())
+    }
+
+    @Test
+    fun `re-enabling group activity seeds silently rather than firing the backlog`() = runTest {
+        var repliedAt = "2026/07/02 06:00:00 +0000"
+        val store = InMemoryStateStore()
+        val subscribed = InMemorySubscribedGroupsStore(setOf(1L))
+        val enabled = InMemorySettingsStore()
+        val disabled = InMemorySettingsStore(NotificationSettings(groupActivityEnabled = false))
+
+        EventSyncRunner(
+            syncApiClientWithGroupTopic({ repliedAt }), store, enabled, subscribedGroupsStore = subscribed,
+        ).sync(NOW, ZONE)
+        // A week of posts arrives while the kind is off; the marks are cleared.
+        val off = EventSyncRunner(
+            syncApiClient(), store, disabled, subscribedGroupsStore = subscribed,
+        ).sync(NOW, ZONE)
+        assertTrue(off.newState.knownGroups.isEmpty())
+
+        repliedAt = "2026/07/03 06:00:00 +0000"
+        val reenabled = EventSyncRunner(
+            syncApiClientWithGroupTopic({ repliedAt }), store, enabled, subscribedGroupsStore = subscribed,
+        ).sync(NOW, ZONE)
+
+        assertTrue(reenabled.newGroupActivityNotifications.isEmpty())
+        assertTrue(reenabled.newState.knownGroups.containsKey(1L))
+    }
+
+    @Test
+    fun `a subscription to a group the user has left is dropped`() = runTest {
+        // The fixture's membership list holds only group 1, so 77 is a group they left.
+        val subscribed = InMemorySubscribedGroupsStore(setOf(1L, 77L))
+        EventSyncRunner(
+            syncApiClientWithGroupTopic({ "2026/07/02 06:00:00 +0000" }),
+            InMemoryStateStore(),
+            InMemorySettingsStore(),
+            subscribedGroupsStore = subscribed,
+        ).sync(NOW, ZONE)
+
+        assertEquals(setOf(1L), subscribed.subscribedGroupIds.value)
+    }
+
+    @Test
+    fun `a topic muted from its thread stays quiet on the group leg too`() = runTest {
+        var repliedAt = "2026/07/02 06:00:00 +0000"
+        val store = InMemoryStateStore()
+        val runner = EventSyncRunner(
+            syncApiClientWithGroupTopic({ repliedAt }),
+            store,
+            InMemorySettingsStore(),
+            InMemoryMutedTopicsStore(setOf(800L)),
+            InMemorySubscribedGroupsStore(setOf(1L)),
+        )
+        runner.sync(NOW, ZONE)
+
+        repliedAt = "2026/07/03 06:00:00 +0000"
+        val second = runner.sync(NOW, ZONE)
+
+        assertTrue(second.newGroupActivityNotifications.isEmpty())
+    }
+
+    @Test
+    fun `a subscribed group whose page fails is skipped without sinking the sync`() = runTest {
+        // Fail-fast here would take the reminder and reply legs down with one 500.
+        val engine = MockEngine { request ->
+            val path = request.url.encodedPath
+            // `/forums/{id}/topics.json` only — `/forums/filtered_topics.json` is the My
+            // Posts leg, which shares the prefix and must keep working here.
+            if (path.contains("/topics.json")) {
+                respond("boom", HttpStatusCode.InternalServerError, headersOf("Content-Type", "text/plain"))
+            } else {
+                val (body, type) = when {
+                    path.contains("filtered_topics") -> """{"topics":[]}""" to ContentType.Application.Json
+                    path.contains("/messages/list") -> """{"messages":[]}""" to ContentType.Application.Json
+                    path.contains("current_user") ->
+                        """{"user":{"username":"yarnie"}}""" to ContentType.Application.Json
+                    path.contains("memberships") ->
+                        """<a href="https://www.ravelry.com/groups/kirkland-fiber-arts-circle-2">K</a>""" to ContentType.Text.Html
+                    path.contains("groups/search") ->
+                        """{"groups":[{"id":1,"name":"Kirkland Fiber Arts Circle","permalink":"kirkland-fiber-arts-circle-2","forum_id":9}]}""" to ContentType.Application.Json
+                    path.endsWith("/events/saved") -> """<div class="event_list"></div>""" to ContentType.Text.Html
+                    path.contains("/groups/") -> """<div id="upcoming_events"></div>""" to ContentType.Text.Html
+                    else -> error("Unexpected path: $path")
+                }
+                respond(body, HttpStatusCode.OK, headersOf("Content-Type", type.toString()))
+            }
+        }
+        val client = HttpClient(engine) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val store = InMemoryStateStore()
+
+        val plan = EventSyncRunner(
+            RavelryApiClient(client, FakeFeedTokenStorage()),
+            store,
+            InMemorySettingsStore(),
+            subscribedGroupsStore = InMemorySubscribedGroupsStore(setOf(1L)),
+        ).sync(NOW, ZONE)
+
+        assertTrue(plan.newGroupActivityNotifications.isEmpty())
+        // No snapshot means no mark: the next sync compares against the same baseline
+        // (here, none at all) rather than recording a bogus one.
+        assertTrue(plan.newState.knownGroups.isEmpty())
+        // ...and the rest of the cycle still ran.
+        assertEquals(1, store.saveCount)
+    }
+
+    @Test
+    fun `a mute on a topic seen only in a subscribed group survives pruning`() = runTest {
+        // knownTopics never sees topic 800 (the user hasn't posted in it), so pruning
+        // against knownTopics alone would silently un-mute it on the next sync.
+        val muted = InMemoryMutedTopicsStore(setOf(800L))
+        EventSyncRunner(
+            syncApiClientWithGroupTopic({ "2026/07/02 06:00:00 +0000" }),
+            InMemoryStateStore(),
+            InMemorySettingsStore(),
+            muted,
+            InMemorySubscribedGroupsStore(setOf(1L)),
+        ).sync(NOW, ZONE)
+
+        assertEquals(setOf(800L), muted.muted)
     }
 }

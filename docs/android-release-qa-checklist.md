@@ -25,6 +25,10 @@ they can't cover: does it actually behave right on a device.
 ## Notifications
 - [ ] New-post/reply notification arrives and tapping it opens the right topic
 - [ ] Notification settings toggles (e.g. "New messages") take effect
+- [ ] With "New posts in groups" on, the bell FAB appears on a group's feed;
+      subscribing to a busy group produces a "New posts in <group>" notification
+      on the next sync, and tapping it selects that group. Turning the setting
+      off hides the bell again.
 
 ## Anything changed since the last release
 - [ ] Skim the GitHub Release's auto-generated notes for this tag and spot

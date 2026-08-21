@@ -45,10 +45,18 @@ const val EXTRA_MESSAGE_ID = "message_id"
 /** Intent extra: a tapped new-message summary opens the Messages destination. */
 const val EXTRA_OPEN_MESSAGES = "open_messages"
 
+/**
+ * Intent extra carrying the group a group-activity notification is about (issue #510); a
+ * tap selects that group's feed. Distinct from [EXTRA_EVENT_GROUP_ID], which qualifies an
+ * event deep link rather than being the destination itself.
+ */
+const val EXTRA_GROUP_ID = "group_id"
+
 private const val CHANNEL_REMINDERS = "event_reminders"
 private const val CHANNEL_NEW_EVENTS = "new_events"
 private const val CHANNEL_MY_POSTS = "my_posts_replies"
 private const val CHANNEL_NEW_MESSAGES = "new_messages"
+private const val CHANNEL_GROUP_ACTIVITY = "group_activity"
 
 /** Notification group collecting the per-topic reply children under one summary. */
 private const val GROUP_MY_POSTS_REPLIES = "my_posts_replies_group"
@@ -114,6 +122,17 @@ class EventNotifier(private val context: Context) {
                 "New messages",
                 NotificationManager.IMPORTANCE_HIGH,
             ).apply { description = "New private messages sent to you" },
+        )
+        // Its own channel, not the replies one: a public group's forum is a different
+        // (and potentially much noisier) firehose than threads the user posted in, so the
+        // system settings have to let them be silenced independently. DEFAULT rather than
+        // HIGH for the same reason — this is opt-in ambient activity, not mail.
+        manager.createNotificationChannel(
+            NotificationChannel(
+                CHANNEL_GROUP_ACTIVITY,
+                "New posts in groups",
+                NotificationManager.IMPORTANCE_DEFAULT,
+            ).apply { description = "New forum posts in groups you subscribed to" },
         )
     }
 
@@ -274,6 +293,54 @@ class EventNotifier(private val context: Context) {
             .setGroupSummary(true)
             .build()
         NotificationManagerCompat.from(context).notify(MESSAGES_SUMMARY_TAG, 0, summary)
+    }
+
+    /**
+     * Announces new forum posts in the groups the user subscribed to (issue #510), one
+     * banner per GROUP: the tag is the group id, so a later sync replaces that group's
+     * earlier banner with a current summary instead of stacking a running log, while
+     * different groups stack.
+     *
+     * No group summary (unlike the replies and messages legs): those fan out one child per
+     * topic or conversation and can produce a dozen at once, whereas this leg posts at most
+     * one per subscribed group — a set the user opted into one at a time. Tapping a banner
+     * selects that group's feed.
+     */
+    fun showGroupActivity(batch: List<NewGroupActivityNotification>) {
+        if (batch.isEmpty()) return
+        if (!canNotify()) {
+            println("FiberSocial: EventNotifier skipping ${batch.size} group-activity notifications — not permitted")
+            return
+        }
+        batch.forEach { notification ->
+            val id = GroupActivityNotificationContent.groupActivityNotificationId(notification.groupId)
+            val built = NotificationCompat.Builder(context, CHANNEL_GROUP_ACTIVITY)
+                .setSmallIcon(R.drawable.ic_notification_group)
+                .setContentTitle(GroupActivityNotificationContent.groupActivityTitle(notification))
+                .setContentText(GroupActivityNotificationContent.groupActivityText(notification))
+                .setContentIntent(groupTapIntent(id, notification.groupId))
+                .setAutoCancel(true)
+                .build()
+            NotificationManagerCompat.from(context).notify(groupTag(notification.groupId), id, built)
+        }
+    }
+
+    private fun groupTag(groupId: Long): String = "group-$groupId"
+
+    private fun groupTapIntent(requestCode: Int, groupId: Long): PendingIntent {
+        val tapIntent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            // Distinct per group for the same reason as the topic and conversation paths:
+            // PendingIntents are matched by Intent.filterEquals, which ignores extras.
+            data = Uri.parse("fibersocial://group/$groupId")
+            putExtra(EXTRA_GROUP_ID, groupId)
+        }
+        return PendingIntent.getActivity(
+            context,
+            requestCode,
+            tapIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
     }
 
     private fun messageTag(threadRootId: Long): String = "message-$threadRootId"

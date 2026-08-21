@@ -32,6 +32,7 @@ import com.myhobbyislearning.fibersocial.notifications.IosEventNotifier
 import com.myhobbyislearning.fibersocial.login.WebViewLoginScreen
 import com.myhobbyislearning.fibersocial.moderation.KeyValueBlockedUsersStore
 import com.myhobbyislearning.fibersocial.notifications.KeyValueMutedTopicsStore
+import com.myhobbyislearning.fibersocial.notifications.KeyValueSubscribedGroupsStore
 import com.myhobbyislearning.fibersocial.notifications.KeyValueNotificationSettingsStore
 import com.myhobbyislearning.fibersocial.settings.CURRENT_TERMS_VERSION
 import com.myhobbyislearning.fibersocial.settings.KeyValueTermsAcceptanceStore
@@ -228,6 +229,13 @@ private fun IosApp(authModel: IosAuthModel, feedModel: IosFeedModel) {
                             NsUserDefaultsKeyValueStore(NOTIFICATION_STATE_STORE_NAME),
                         )
                     }
+                    // Per-group notification subscriptions (issue #510). One shared
+                    // instance for the whole tree — see MainActivity's twin for why.
+                    val subscribedGroupsStore = remember {
+                        KeyValueSubscribedGroupsStore(
+                            NsUserDefaultsKeyValueStore(NOTIFICATION_STATE_STORE_NAME),
+                        )
+                    }
                     // Local blocked-users list (issue #410); see MainActivity's twin for
                     // why this is `remember`, not `rememberSaveable`.
                     val blockedUsersStore = remember {
@@ -250,6 +258,7 @@ private fun IosApp(authModel: IosAuthModel, feedModel: IosFeedModel) {
                         IosEventNotifier().requestAuthorization()
                     }
                     LaunchedEffect(blockedUsersStore) { blockedUsersStore.load() }
+                    LaunchedEffect(subscribedGroupsStore) { subscribedGroupsStore.load() }
                     // On session expiry: show WebView login before clearing auth so
                     // there's no LoginScreen flash (same as MainActivity).
                     LaunchedEffect(feedModel) {
@@ -287,6 +296,7 @@ private fun IosApp(authModel: IosAuthModel, feedModel: IosFeedModel) {
                             },
                             notificationSettingsStore = notificationSettingsStore,
                             mutedTopicsStore = mutedTopicsStore,
+                            subscribedGroupsStore = subscribedGroupsStore,
                             blockedUsersStore = blockedUsersStore,
                             lastDestinationStore = lastDestinationStore,
                             // A cadence change re-baselines the next background-refresh

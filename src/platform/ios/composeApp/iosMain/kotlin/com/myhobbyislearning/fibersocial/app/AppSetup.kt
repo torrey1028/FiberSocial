@@ -4,6 +4,7 @@ import com.myhobbyislearning.fibersocial.notifications.DeepLink
 import com.myhobbyislearning.fibersocial.notifications.EventSync
 import com.myhobbyislearning.fibersocial.notifications.NOTIFICATION_EVENT_GROUP_ID_KEY
 import com.myhobbyislearning.fibersocial.notifications.NOTIFICATION_EVENT_PERMALINK_KEY
+import com.myhobbyislearning.fibersocial.notifications.NOTIFICATION_GROUP_ID_KEY
 import com.myhobbyislearning.fibersocial.notifications.NOTIFICATION_MESSAGE_ID_KEY
 import com.myhobbyislearning.fibersocial.notifications.NOTIFICATION_MESSAGE_THREAD_ID_KEY
 import com.myhobbyislearning.fibersocial.notifications.NOTIFICATION_OPEN_MY_POSTS_KEY
@@ -104,6 +105,7 @@ private class NotificationDelegate : NSObject(), UNUserNotificationCenterDelegat
                 messageId = (this[NOTIFICATION_MESSAGE_ID_KEY] as? String)?.toLongOrNull() ?: 0L,
             )
         }
+        (this[NOTIFICATION_GROUP_ID_KEY] as? String)?.toLongOrNull()?.let { return DeepLink.Group(it) }
         if (this[NOTIFICATION_OPEN_MY_POSTS_KEY] != null) return DeepLink.MyPosts
         return null
     }

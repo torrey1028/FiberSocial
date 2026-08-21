@@ -32,6 +32,10 @@ internal fun Intent.toDeepLink(): DeepLink? {
         // only a conversation to point at shouldn't be forced to invent one).
         return DeepLink.Message(threadRootId, getLongExtra(EXTRA_MESSAGE_ID, 0L))
     }
+    // 0 doubles as "absent" here too (no Ravelry group has id 0). Below the topic and
+    // conversation cases because those are more specific destinations, above the two bare
+    // summary flags because a group id is more specific than either.
+    getLongExtra(EXTRA_GROUP_ID, 0L).takeIf { it != 0L }?.let { return DeepLink.Group(it) }
     if (getBooleanExtra(EXTRA_OPEN_MESSAGES, false)) return DeepLink.Messages
     if (getBooleanExtra(EXTRA_OPEN_MY_POSTS, false)) return DeepLink.MyPosts
     return null

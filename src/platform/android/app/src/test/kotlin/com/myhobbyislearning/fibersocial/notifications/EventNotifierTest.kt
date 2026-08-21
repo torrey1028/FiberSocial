@@ -348,6 +348,61 @@ class EventNotifierTest {
         assertEquals(setOf(false to false, true to false, false to true), kinds.toSet())
     }
 
+    // --- Group activity (issue #510) ---
+
+    private fun groupActivity(groupId: Long, vararg titles: String) = NewGroupActivityNotification(
+        groupId = groupId,
+        groupName = "Group $groupId",
+        topicTitles = titles.toList(),
+    )
+
+    @Test
+    fun `a group-activity notification carries the group deep-link extra`() {
+        notifier.showGroupActivity(listOf(groupActivity(1L, "Yarn swap")))
+
+        val posted = shadowOf(manager).allNotifications.single()
+        assertEquals("New posts in Group 1", shadowOf(posted).contentTitle)
+        assertEquals("Yarn swap", shadowOf(posted).contentText)
+        assertEquals(1L, shadowOf(posted.contentIntent).savedIntent.getLongExtra(EXTRA_GROUP_ID, 0L))
+    }
+
+    @Test
+    fun `a later batch for one group replaces its banner while other groups stack`() {
+        notifier.showGroupActivity(listOf(groupActivity(1L, "Yarn swap"), groupActivity(2L, "Swatches")))
+        notifier.showGroupActivity(listOf(groupActivity(1L, "Yarn swap", "Finished objects")))
+
+        assertEquals(2, manager.activeNotifications.size)
+        val replaced = manager.activeNotifications.single { it.tag == "group-1" }
+        assertEquals("2 topics, including Yarn swap", shadowOf(replaced.notification).contentText)
+    }
+
+    @Test
+    fun `two groups' banners get distinct PendingIntents`() {
+        // PendingIntents match on Intent.filterEquals, which ignores extras — without the
+        // per-group data URI, one group's tap could deep-link to the other.
+        notifier.showGroupActivity(listOf(groupActivity(1L, "Yarn swap"), groupActivity(2L, "Swatches")))
+
+        val first = manager.activeNotifications.single { it.tag == "group-1" }.notification.contentIntent
+        val second = manager.activeNotifications.single { it.tag == "group-2" }.notification.contentIntent
+        assertNotEquals(first, second)
+        assertNotEquals(shadowOf(first).savedIntent.data, shadowOf(second).savedIntent.data)
+    }
+
+    @Test
+    fun `group activity has its own channel so it can be silenced separately`() {
+        notifier.showGroupActivity(listOf(groupActivity(1L, "Yarn swap")))
+
+        assertTrue("group_activity" in manager.notificationChannels.map { it.id })
+        assertEquals("group_activity", shadowOf(manager).allNotifications.single().channelId)
+    }
+
+    @Test
+    fun `nothing is posted for group activity without the notification permission`() {
+        shadowOf(app).denyPermissions(android.Manifest.permission.POST_NOTIFICATIONS)
+        notifier.showGroupActivity(listOf(groupActivity(1L, "Yarn swap")))
+        assertTrue(shadowOf(manager).allNotifications.isEmpty())
+    }
+
     @Test
     fun `nothing is posted for messages without the notification permission`() {
         shadowOf(app).denyPermissions(android.Manifest.permission.POST_NOTIFICATIONS)

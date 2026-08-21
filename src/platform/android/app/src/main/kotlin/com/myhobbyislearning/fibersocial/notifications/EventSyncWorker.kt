@@ -28,9 +28,10 @@ import kotlin.time.Clock
 import kotlinx.datetime.TimeZone
 
 /**
- * Periodic background sync for event and reply notifications: scrapes the user's groups
- * and saved events, then applies the [EventSyncRunner]'s plan — posts "new event" and
- * "new reply" notifications and (re)schedules reminder alarms.
+ * Periodic background sync for event, reply and group-activity notifications: scrapes the
+ * user's groups and saved events, then applies the [EventSyncRunner]'s plan — posts
+ * "new event", "new reply" and "new posts in a group" notifications and (re)schedules
+ * reminder alarms.
  */
 class EventSyncWorker(
     context: Context,
@@ -58,6 +59,9 @@ class EventSyncWorker(
                 KeyValueNotificationStateStore(plainKeyValueStore(applicationContext, NOTIFICATION_STATE_PREFS_NAME)),
                 KeyValueNotificationSettingsStore(plainKeyValueStore(applicationContext, NOTIFICATION_SETTINGS_PREFS_NAME)),
                 KeyValueMutedTopicsStore(plainKeyValueStore(applicationContext, NOTIFICATION_STATE_PREFS_NAME)),
+                KeyValueSubscribedGroupsStore(
+                    plainKeyValueStore(applicationContext, NOTIFICATION_STATE_PREFS_NAME),
+                ),
             )
             val plan = runner.sync(Clock.System.now(), TimeZone.currentSystemDefault())
             apply(plan)
@@ -85,6 +89,7 @@ class EventSyncWorker(
         // Messages is compile-time gated out of release builds (see FeatureFlags) — a
         // notification that deep-links to a hidden destination would be a dead end.
         if (FeatureFlags.messagesEnabled) notifier.showNewMessages(plan.newMessageNotifications)
+        notifier.showGroupActivity(plan.newGroupActivityNotifications)
         val scheduler = ReminderScheduler(applicationContext)
         plan.remindersToCancel.forEach { scheduler.cancel(it) }
         // Re-arm everything still in the future, not just the plan's diff: state is

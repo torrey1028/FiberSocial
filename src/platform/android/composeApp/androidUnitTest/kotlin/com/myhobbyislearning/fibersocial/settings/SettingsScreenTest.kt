@@ -275,6 +275,34 @@ class SettingsScreenTest {
         compose.onNodeWithText("New group events").assertIsDisplayed()
         compose.onNodeWithText("Replies to your topics").assertIsDisplayed()
         compose.onNodeWithText("New messages").assertIsDisplayed()
+        compose.onNodeWithText("New posts in groups").assertIsDisplayed()
+    }
+
+    @Test
+    fun `toggling group activity invokes its callback with the flipped value`() {
+        var groupActivity: Boolean? = null
+        compose.setContent {
+            SettingsScreen(
+                user = user, onBack = {}, onSignOut = {},
+                pollCadence = PollCadence.A_FEW_TIMES_A_DAY,
+                groupActivityEnabled = true,
+                onGroupActivityEnabledChange = { groupActivity = it },
+            )
+        }
+        compose.onNodeWithText("New posts in groups").performClick()
+        compose.runOnIdle { assertEquals(false, groupActivity) }
+    }
+
+    @Test
+    fun `the group activity row reflects a disabled setting`() {
+        compose.setContent {
+            SettingsScreen(
+                user = user, onBack = {}, onSignOut = {},
+                pollCadence = PollCadence.A_FEW_TIMES_A_DAY,
+                groupActivityEnabled = false,
+            )
+        }
+        compose.onNodeWithText("New posts in groups").assertIsOff()
     }
 
     @Test

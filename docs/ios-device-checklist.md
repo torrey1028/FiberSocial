@@ -28,6 +28,12 @@ device-only.
       matches the documented limitation) and resumes after next manual open
 - [ ] New-event banner while the app is open (foreground presentation) —
       trigger: have another account add an event, then reopen the app
+- [ ] Group-activity subscriptions (#510): with "New posts in groups" on in
+      Settings, the bell FAB shows above the calendar on a group's feed; tap to
+      subscribe (it fills in). After a new post lands in that group, the next
+      foreground sync posts "New posts in <group>", and tapping it selects that
+      group's feed. Subscription survives a relaunch; the bell disappears when
+      the settings toggle is turned off.
 
 ## Composers & uploads
 - [ ] Attach image from your projects ✅(sim)

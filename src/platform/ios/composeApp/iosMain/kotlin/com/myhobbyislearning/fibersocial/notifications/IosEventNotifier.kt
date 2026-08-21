@@ -56,6 +56,14 @@ const val NOTIFICATION_MESSAGE_THREAD_ID_KEY = "message_thread_id"
 const val NOTIFICATION_MESSAGE_ID_KEY = "message_id"
 
 /**
+ * userInfo key: the group a group-activity notification is about (issue #510); the tap
+ * handler selects that group's feed. Decimal string, same convention as
+ * [NOTIFICATION_EVENT_GROUP_ID_KEY] — and a distinct key from it, since that one qualifies
+ * an event deep link rather than being the destination itself.
+ */
+const val NOTIFICATION_GROUP_ID_KEY = "group_id"
+
+/**
  * Posts the two kinds of event notifications via `UNUserNotificationCenter` — the iOS
  * counterpart of Android's `EventNotifier` + `ReminderScheduler` in one: on iOS a
  * scheduled local notification IS the reminder, fired by the OS with no receiver or
@@ -184,6 +192,34 @@ class IosEventNotifier(
         center.replaceDelivered(identifier)
         center.addNotificationRequest(request) { error ->
             error?.let { println("FiberSocial: showNewMessages($rootId) failed: ${it.localizedDescription}") }
+        }
+    }
+
+    /**
+     * Announces new forum posts in a group the user subscribed to (issue #510), one banner
+     * per group. The identifier is per-group, so a later sync replaces that group's earlier
+     * banner with a current summary while different groups stack; `threadIdentifier`
+     * coalesces them into one Notification Center stack, iOS's own grouping.
+     */
+    fun showGroupActivity(notification: NewGroupActivityNotification) {
+        val content = UNMutableNotificationContent().apply {
+            setTitle(GroupActivityNotificationContent.groupActivityTitle(notification))
+            setBody(GroupActivityNotificationContent.groupActivityText(notification))
+            setSound(UNNotificationSound.defaultSound)
+            setUserInfo(mapOf(NOTIFICATION_GROUP_ID_KEY to notification.groupId.toString()))
+            setThreadIdentifier("group-activity")
+        }
+        val identifier = "group-activity/${notification.groupId}"
+        val request = UNNotificationRequest.requestWithIdentifier(
+            identifier,
+            content = content,
+            trigger = null, // deliver now
+        )
+        center.replaceDelivered(identifier)
+        center.addNotificationRequest(request) { error ->
+            error?.let {
+                println("FiberSocial: showGroupActivity(${notification.groupId}) failed: ${it.localizedDescription}")
+            }
         }
     }
 

@@ -42,6 +42,7 @@ import com.myhobbyislearning.fibersocial.notifications.toDeepLink
 import com.myhobbyislearning.fibersocial.notifications.EventSyncWorker
 import com.myhobbyislearning.fibersocial.moderation.KeyValueBlockedUsersStore
 import com.myhobbyislearning.fibersocial.notifications.KeyValueMutedTopicsStore
+import com.myhobbyislearning.fibersocial.notifications.KeyValueSubscribedGroupsStore
 import com.myhobbyislearning.fibersocial.notifications.KeyValueNotificationSettingsStore
 import com.myhobbyislearning.fibersocial.settings.CURRENT_TERMS_VERSION
 import com.myhobbyislearning.fibersocial.settings.KeyValueTermsAcceptanceStore
@@ -218,6 +219,16 @@ class MainActivity : ComponentActivity() {
                                     plainKeyValueStore(this@MainActivity, NOTIFICATION_STATE_PREFS_NAME),
                                 )
                             }
+                            // Per-group notification subscriptions (issue #510). One shared
+                            // instance for the whole tree, same reasoning as
+                            // blockedUsersStore below: the feed's subscribe control renders
+                            // off this store's flow, so a second instance would hold its own
+                            // independently-loaded copy and the control would go stale.
+                            val subscribedGroupsStore = remember {
+                                KeyValueSubscribedGroupsStore(
+                                    plainKeyValueStore(this@MainActivity, NOTIFICATION_STATE_PREFS_NAME),
+                                )
+                            }
                             // Local blocked-users list (issue #410). remember, not
                             // rememberSaveable — the store is a plain object wrapping a
                             // SharedPreferences handle, not serializable state; its own
@@ -245,6 +256,7 @@ class MainActivity : ComponentActivity() {
                                 )
                             }
                             LaunchedEffect(blockedUsersStore) { blockedUsersStore.load() }
+                            LaunchedEffect(subscribedGroupsStore) { subscribedGroupsStore.load() }
                             // On session expiry: show WebView login before clearing auth so there's no
                             // LoginScreen flash between the state change and the WebView appearing.
                             LaunchedEffect(feedVm) {
@@ -281,6 +293,7 @@ class MainActivity : ComponentActivity() {
                                 },
                                 notificationSettingsStore = notificationSettingsStore,
                                 mutedTopicsStore = mutedTopicsStore,
+                                subscribedGroupsStore = subscribedGroupsStore,
                                 blockedUsersStore = blockedUsersStore,
                                 lastDestinationStore = lastDestinationStore,
                                 // UPDATE policy re-registers the periodic sync at the new cadence.

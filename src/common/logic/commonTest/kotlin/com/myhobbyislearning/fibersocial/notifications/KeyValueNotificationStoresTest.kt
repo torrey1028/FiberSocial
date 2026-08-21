@@ -50,6 +50,27 @@ class KeyValueNotificationStateStoreTest {
     }
 
     @Test
+    fun `state persisted before knownGroups existed still loads`() = runTest {
+        val fake = FakeKeyValueStore()
+        fake.putString(
+            "state",
+            """{"knownEvents":{"cozy-meetup":123},"scheduledReminders":[],"knownTopics":{}}""",
+        )
+        val state = KeyValueNotificationStateStore(fake).load()
+        assertEquals(emptyMap(), state?.knownGroups)
+    }
+
+    @Test
+    fun `knownGroups round-trips`() = runTest {
+        val store = KeyValueNotificationStateStore(FakeKeyValueStore())
+        val state = NotificationState(
+            knownGroups = mapOf(1L to KnownGroupActivity(latestActivityMs = 123L, lastSeenMs = 456L)),
+        )
+        store.save(state)
+        assertEquals(state, store.load())
+    }
+
+    @Test
     fun `knownTopics round-trips`() = runTest {
         val store = KeyValueNotificationStateStore(FakeKeyValueStore())
         val state = NotificationState(
@@ -151,6 +172,95 @@ class KeyValueMutedTopicsStoreTest {
         }
 
         assertEquals(setOf(500L, 731L), storeA.load())
+    }
+}
+
+class KeyValueSubscribedGroupsStoreTest {
+
+    @Test
+    fun `nothing is subscribed before anything is saved`() = runTest {
+        val store = KeyValueSubscribedGroupsStore(FakeKeyValueStore())
+        store.load()
+        assertEquals(emptySet(), store.subscribedGroupIds.value)
+    }
+
+    @Test
+    fun `subscribing publishes immediately and survives a reload`() = runTest {
+        val backing = FakeKeyValueStore()
+        val store = KeyValueSubscribedGroupsStore(backing)
+        store.setSubscribed(1L, subscribed = true)
+
+        assertEquals(setOf(1L), store.subscribedGroupIds.value)
+        val reloaded = KeyValueSubscribedGroupsStore(backing)
+        reloaded.load()
+        assertEquals(setOf(1L), reloaded.subscribedGroupIds.value)
+    }
+
+    @Test
+    fun `unsubscribing removes just that group`() = runTest {
+        val store = KeyValueSubscribedGroupsStore(FakeKeyValueStore())
+        store.setSubscribed(1L, subscribed = true)
+        store.setSubscribed(2L, subscribed = true)
+        store.setSubscribed(1L, subscribed = false)
+
+        assertEquals(setOf(2L), store.subscribedGroupIds.value)
+    }
+
+    @Test
+    fun `retainAll drops subscriptions to groups the user has left`() = runTest {
+        val store = KeyValueSubscribedGroupsStore(FakeKeyValueStore())
+        store.setSubscribed(1L, subscribed = true)
+        store.setSubscribed(2L, subscribed = true)
+
+        store.retainAll(setOf(2L))
+
+        assertEquals(setOf(2L), store.subscribedGroupIds.value)
+    }
+
+    @Test
+    fun `corrupt data degrades to nothing subscribed`() = runTest {
+        val fake = FakeKeyValueStore()
+        fake.putString("subscribed_groups", "not json")
+        val store = KeyValueSubscribedGroupsStore(fake)
+        store.load()
+        assertEquals(emptySet(), store.subscribedGroupIds.value)
+    }
+
+    @Test
+    fun `it does not collide with the state or muted-topics stores`() = runTest {
+        // All three share one KeyValueStore in production, keyed apart.
+        val backing = FakeKeyValueStore()
+        KeyValueNotificationStateStore(backing).save(
+            NotificationState(knownGroups = mapOf(1L to KnownGroupActivity(123L, 456L))),
+        )
+        KeyValueMutedTopicsStore(backing).save(setOf(500L))
+        val store = KeyValueSubscribedGroupsStore(backing)
+        store.setSubscribed(1L, subscribed = true)
+
+        assertEquals(setOf(1L), store.subscribedGroupIds.value)
+        assertEquals(setOf(500L), KeyValueMutedTopicsStore(backing).load())
+        assertEquals(
+            mapOf(1L to KnownGroupActivity(123L, 456L)),
+            KeyValueNotificationStateStore(backing).load()?.knownGroups,
+        )
+    }
+
+    @Test
+    fun `concurrent subscribes across separate instances do not clobber each other`() = runTest {
+        // Same shape as the muted-topics test above: the UI's bell tap and the sync's
+        // retainAll each hold their own instance over one backing store.
+        val backing = YieldingKeyValueStore(FakeKeyValueStore())
+        val storeA = KeyValueSubscribedGroupsStore(backing)
+        val storeB = KeyValueSubscribedGroupsStore(backing)
+
+        coroutineScope {
+            launch { storeA.setSubscribed(1L, subscribed = true) }
+            launch { storeB.setSubscribed(2L, subscribed = true) }
+        }
+
+        val reloaded = KeyValueSubscribedGroupsStore(backing)
+        reloaded.load()
+        assertEquals(setOf(1L, 2L), reloaded.subscribedGroupIds.value)
     }
 }
 

@@ -87,6 +87,7 @@ object EventSync {
                 KeyValueNotificationStateStore(NsUserDefaultsKeyValueStore(NOTIFICATION_STATE_STORE_NAME)),
                 KeyValueNotificationSettingsStore(NsUserDefaultsKeyValueStore(NOTIFICATION_SETTINGS_STORE_NAME)),
                 KeyValueMutedTopicsStore(NsUserDefaultsKeyValueStore(NOTIFICATION_STATE_STORE_NAME)),
+                KeyValueSubscribedGroupsStore(NsUserDefaultsKeyValueStore(NOTIFICATION_STATE_STORE_NAME)),
             )
             val plan = runner.sync(Clock.System.now(), TimeZone.currentSystemDefault())
             apply(plan)
@@ -115,6 +116,7 @@ object EventSync {
         // Whole batch, not forEach: the messages notifier collapses several messages in one
         // conversation into a single banner (see IosEventNotifier.showNewMessages).
         if (FeatureFlags.messagesEnabled) notifier.showNewMessages(plan.newMessageNotifications)
+        plan.newGroupActivityNotifications.forEach { notifier.showGroupActivity(it) }
         plan.remindersToCancel.forEach { notifier.cancelReminder(it) }
         // Re-arm everything still in the future, not just the plan's diff — same
         // crash-safety reasoning as Android's EventSyncWorker: state persists before
