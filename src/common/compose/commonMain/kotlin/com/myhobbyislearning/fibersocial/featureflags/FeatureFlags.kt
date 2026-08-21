@@ -10,4 +10,14 @@ package com.myhobbyislearning.fibersocial.featureflags
 expect object FeatureFlags {
     /** Direct messages (epic #365): drawer entry, deep links, and new-message notifications. */
     val messagesEnabled: Boolean
+
+    /**
+     * Activity feed (epic #483): the group view's Topics/Activity tabs, the activity unread
+     * dot and tab badge, and new-activity notifications.
+     *
+     * Gating the whole feature on one flag is what lets the tab row be *absent* rather than
+     * merely empty in release builds — a release group view stays exactly as it is today,
+     * with its topic list flush under the top bar.
+     */
+    val activityFeedEnabled: Boolean
 }

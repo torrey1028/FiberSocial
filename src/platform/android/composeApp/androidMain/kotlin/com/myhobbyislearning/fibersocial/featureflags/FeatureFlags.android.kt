@@ -4,4 +4,5 @@ import com.myhobbyislearning.fibersocial.composeapp.BuildConfig
 
 actual object FeatureFlags {
     actual val messagesEnabled: Boolean = BuildConfig.DEBUG
+    actual val activityFeedEnabled: Boolean = BuildConfig.DEBUG
 }
