@@ -54,10 +54,12 @@ data class SyncPlan(
     val remindersToCancel: List<ScheduledReminder>,
     val newState: NotificationState,
     // Defaulted because EventNotificationPlanner plans events only; EventSyncRunner
-    // merges the My Posts leg ([MyPostsNotificationPlanner]) and the messages leg
-    // ([MessageNotificationPlanner]) in afterwards.
+    // merges the My Posts leg ([MyPostsNotificationPlanner]), the messages leg
+    // ([MessageNotificationPlanner]) and the group-activity leg
+    // ([GroupActivityNotificationPlanner]) in afterwards.
     val newReplyNotifications: List<NewReplyNotification> = emptyList(),
     val newMessageNotifications: List<NewMessageNotification> = emptyList(),
+    val newGroupActivityNotifications: List<NewGroupActivityNotification> = emptyList(),
 )
 
 /**

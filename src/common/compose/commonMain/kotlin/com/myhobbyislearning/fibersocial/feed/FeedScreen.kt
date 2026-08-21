@@ -47,6 +47,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.materialIcon
@@ -97,7 +98,9 @@ import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.addPathNodes
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -151,6 +154,7 @@ import com.myhobbyislearning.fibersocial.profile.UserProfileScreen
 import com.myhobbyislearning.fibersocial.profile.UserProfileState
 import com.myhobbyislearning.fibersocial.notifications.DeepLink
 import com.myhobbyislearning.fibersocial.notifications.MutedTopicsStore
+import com.myhobbyislearning.fibersocial.notifications.SubscribedGroupsStore
 import com.myhobbyislearning.fibersocial.notifications.NotificationSettings
 import com.myhobbyislearning.fibersocial.notifications.NotificationSettingsStore
 import com.myhobbyislearning.fibersocial.notifications.PollCadence
@@ -261,6 +265,25 @@ private val FilterListIcon: ImageVector by lazy {
             horizontalLineToRelative(-12.0f)
             close()
         }
+    }
+}
+
+/**
+ * Material's "notifications_none" glyph — the hollow bell that pairs with the filled
+ * `Icons.Default.Notifications`, for the unsubscribed state of the feed's subscribe
+ * control (issue #510). Defined inline for the same reason [FilterListIcon] is: the app
+ * only ships material-icons-core, which carries the filled bell but not the outline one.
+ */
+private val NotificationsNoneIcon: ImageVector by lazy {
+    materialIcon(name = "Filled.NotificationsNone") {
+        addPath(
+            pathData = addPathNodes(
+                "M12 22c1.1 0 2-.9 2-2h-4c0 1.1.89 2 2 2zm6-6v-5c0-3.07-1.64-5.64-4.5-6.32V4c0" +
+                    "-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.63 5.36 6 7.92 6 11v5l-2 2v1h16v" +
+                    "-1l-2-2zm-2 1H8v-6c0-2.48 1.51-4.5 4-4.5s4 2.02 4 4.5v6z",
+            ),
+            fill = SolidColor(Color.Black),
+        )
     }
 }
 
@@ -391,6 +414,11 @@ fun FeedScreen(
     // Where per-topic reply mutes are persisted (issue #338); read for the topic overflow
     // menu's mute state and written when the user toggles it.
     mutedTopicsStore: MutedTopicsStore? = null,
+    // Which groups the user wants forum-activity notifications for (issue #510). Reactive,
+    // like blockedUsersStore below: the feed's subscribe control renders off this flow, so
+    // a tap flips the bell without waiting on the disk write. Null in previews/tests, which
+    // hides the control the same way turning the settings toggle off does.
+    subscribedGroupsStore: SubscribedGroupsStore? = null,
     // Local blocked-users list (issue #410). Reactive: every surface that filters user
     // content below collects blockedUsersStore.blockedUsernames directly (not a one-shot
     // load()), so a block/unblock takes effect instantly everywhere without a refresh.
@@ -415,6 +443,10 @@ fun FeedScreen(
     // no host wires blockedUsersStore in previews/tests, hence the empty fallback State.
     val blockedUsernames by blockedUsersStore?.blockedUsernames?.collectAsState()
         ?: remember { mutableStateOf(emptySet<String>()) }
+    // Same shape for the group subscriptions (issue #510) — collected, not read once, so
+    // the subscribe control reflects a tap immediately.
+    val subscribedGroupIds by subscribedGroupsStore?.subscribedGroupIds?.collectAsState()
+        ?: remember { mutableStateOf(emptySet<Long>()) }
     // THE conversation-detail nav flag (issue #371). Non-null means a thread is open, and
     // it is the ViewModel's own state rather than a screen-level `mutableStateOf` like the
     // other destinations here: the thread's content, its mark-read pass and the list row's
@@ -559,16 +591,21 @@ fun FeedScreen(
     // load()s it — so once loaded the in-memory value is authoritative and re-reading buys
     // nothing but that race.
     var notificationSettings by remember { mutableStateOf<NotificationSettings?>(null) }
-    // Lazy, not eager: load on first Settings open and keep it, so opening Settings still
-    // costs the one disk read it always did and app start doesn't gain one for the users who
-    // never open it. The null guard is what makes it once-only — after that this re-runs on
-    // each open and immediately no-ops, so it can never clobber an in-flight optimistic edit.
-    // Closing Settings mid-load cancels the read and leaves it null; the next open retries.
+    // Loaded once on first composition, not lazily on the first Settings open as it was
+    // before #510: the feed's own subscribe control is gated on groupActivityEnabled, so
+    // the value is needed by users who never open Settings at all. Still one local disk
+    // read for the whole session — the null guard is what makes it once-only, so this
+    // re-runs on each Settings open and immediately no-ops rather than clobbering an
+    // in-flight optimistic edit. A cancelled read leaves it null and the next open retries.
     LaunchedEffect(showSettings) {
-        if (showSettings && notificationSettings == null) {
+        if (notificationSettings == null) {
             notificationSettingsStore?.let { notificationSettings = it.load() }
         }
     }
+    // Same reasoning as the scopes below, for the subscribe control's write: tapping the
+    // bell and immediately opening a topic (or backing out of the group) must not cancel
+    // the persist half of the optimistic update.
+    val subscribeScope = rememberCoroutineScope()
     // Same reasoning as settingsScope above, for the topic-detail mute toggle's early-return
     // block: hoisted here so tapping Back right after toggling mute doesn't cancel the write.
     val muteScope = rememberCoroutineScope()
@@ -776,6 +813,29 @@ fun FeedScreen(
                 if (!feedIsLoaded) return@LaunchedEffect
                 clearNavigationForDeepLink()
                 showMyPostsFeed(alreadyShowing = loaded?.myPosts == true)
+                onDeepLinkConsumed()
+            }
+
+            // Feed-backed like the two above, so it waits for the load: the notification
+            // carries only a group id, and the Group it resolves to is the one the drawer
+            // lists (selectGroup takes the whole object, and a synthesized one would carry
+            // a forum id nothing verified).
+            is DeepLink.Group -> {
+                if (!feedIsLoaded) return@LaunchedEffect // re-runs when it loads
+                clearNavigationForDeepLink()
+                val group = groups.firstOrNull { it.id == link.groupId }
+                if (group != null) {
+                    // selectGroup no-ops when that group is already the active filter — the
+                    // state a second tap on the same group's notification arrives in — so
+                    // refresh instead, exactly as showMyPostsFeed does for replies.
+                    if (loaded?.selectedGroup?.id == group.id) viewModel.feed.refresh()
+                    else viewModel.feed.selectGroup(group)
+                    viewModel.feed.refreshDrawerUnread()
+                } else {
+                    // Left the group since the notification was posted; there is no row to
+                    // land on, so the tap just opens the app where it already was.
+                    println("FiberSocial: group deep link -> ${link.groupId} is no longer joined")
+                }
                 onDeepLinkConsumed()
             }
 
@@ -1157,6 +1217,16 @@ fun FeedScreen(
                 // skips the inbox fetch and clears the mark (EventSyncRunner.sync), which
                 // is exactly what the other two alarm-less kinds do.
                 updateSettings { it.copy(newMessagesEnabled = enabled) }
+            },
+            groupActivityEnabled = notificationSettings?.groupActivityEnabled ?: true,
+            onGroupActivityEnabledChange = { enabled ->
+                // No onRunEventSync() here, same as the messages toggle: no OS alarms are
+                // queued for this kind, so there is nothing an immediate sync would cancel.
+                // Turning it off makes the next sync skip the per-group topic pages and
+                // clear the marks (EventSyncRunner.sync); the per-group subscriptions
+                // themselves are deliberately left alone, so turning it back on restores
+                // the user's choices instead of asking them to pick every group again.
+                updateSettings { it.copy(groupActivityEnabled = enabled) }
             },
             // Debug panel now lives in Settings (debug builds only) instead of the top bar (#207).
             onOpenDebugPanel = if (debugPanelEnabled) {
@@ -1721,6 +1791,18 @@ fun FeedScreen(
                 } else if (loaded != null && groups.isNotEmpty()) {
                     FeedFabs(
                         selectedGroup = loaded.selectedGroup,
+                        // Null — hiding the bell — whenever the kind is off, no store is
+                        // wired (previews/tests), or the settings are still loading: a bell
+                        // rendered from a not-yet-known setting would flip under the user.
+                        subscribedGroupIds = subscribedGroupIds.takeIf {
+                            subscribedGroupsStore != null && notificationSettings?.groupActivityEnabled == true
+                        },
+                        onToggleSubscribe = { group, subscribe ->
+                            val store = subscribedGroupsStore ?: return@FeedFabs
+                            subscribeScope.launch {
+                                withContext(NonCancellable) { store.setSubscribed(group.id, subscribe) }
+                            }
+                        },
                         onGroupEventsClick = { group -> eventsGroup = group },
                         onNewTopicClick = {
                             viewModel.newTopic.reset()
@@ -2774,20 +2856,50 @@ private fun ProfileFooter(user: RavelryUser?, onClick: () -> Unit) {
 }
 
 /**
- * The feed's floating action buttons: a small calendar button for the selected group's
- * events (issue #179) stacked above the new-topic button. The calendar button needs a
- * group to open events for, so it renders only when [selectedGroup] is non-null; at the
- * FeedScreen call site that is the currently-viewed group, which is null both when the
- * user belongs to no groups and while viewing the cross-group My Posts feed.
+ * The feed's floating action buttons: a small notification-subscribe bell (issue #510) and
+ * a small calendar button for the selected group's events (issue #179), stacked above the
+ * new-topic button. Both small buttons act on a group, so they render only when
+ * [selectedGroup] is non-null; at the FeedScreen call site that is the currently-viewed
+ * group, which is null both when the user belongs to no groups and while viewing the
+ * cross-group My Posts feed.
+ *
+ * @param subscribedGroupIds The groups the user gets forum-activity notifications for, or
+ *   null to hide the bell entirely — which is what happens when the settings-level
+ *   "New posts in groups" switch is off. A hidden control is deliberate rather than a
+ *   disabled one: with the kind off the toggle would record a preference nothing acts on.
+ * @param onToggleSubscribe Invoked with the group and its new subscribed state.
  */
 @Composable
 internal fun FeedFabs(
     selectedGroup: Group?,
     onGroupEventsClick: (Group) -> Unit,
     onNewTopicClick: () -> Unit,
+    subscribedGroupIds: Set<Long>? = null,
+    onToggleSubscribe: (Group, Boolean) -> Unit = { _, _ -> },
 ) {
     Column(horizontalAlignment = Alignment.End) {
         selectedGroup?.let { group ->
+            if (subscribedGroupIds != null) {
+                val subscribed = group.id in subscribedGroupIds
+                SmallFloatingActionButton(
+                    onClick = { onToggleSubscribe(group, !subscribed) },
+                    modifier = Modifier.testTag("SubscribeFab"),
+                ) {
+                    // Filled bell subscribed, hollow bell not — the same filled/outline
+                    // pair Material uses for favourite toggles. The state also has to reach
+                    // a screen reader, hence a contentDescription that names the action
+                    // rather than the glyph.
+                    Icon(
+                        imageVector = if (subscribed) Icons.Default.Notifications else NotificationsNoneIcon,
+                        contentDescription = if (subscribed) {
+                            "Stop notifying me about new posts in ${group.name}"
+                        } else {
+                            "Notify me about new posts in ${group.name}"
+                        },
+                    )
+                }
+                Spacer(Modifier.height(16.dp))
+            }
             SmallFloatingActionButton(onClick = { onGroupEventsClick(group) }) {
                 Icon(Icons.Default.DateRange, contentDescription = "Group events")
             }

@@ -57,6 +57,7 @@ class NotificationSettingsTest {
         assertEquals(true, settings.newGroupEventsEnabled)
         assertEquals(true, settings.topicRepliesEnabled)
         assertEquals(true, settings.newMessagesEnabled)
+        assertEquals(true, settings.groupActivityEnabled)
     }
 
     @Test
@@ -69,6 +70,7 @@ class NotificationSettingsTest {
         assertEquals(true, legacy.newGroupEventsEnabled)
         assertEquals(true, legacy.topicRepliesEnabled)
         assertEquals(true, legacy.newMessagesEnabled)
+        assertEquals(true, legacy.groupActivityEnabled)
     }
 
     @Test
@@ -95,6 +97,7 @@ class NotificationSettingsTest {
             newGroupEventsEnabled = true,
             topicRepliesEnabled = false,
             newMessagesEnabled = false,
+            groupActivityEnabled = false,
         )
         assertEquals(settings, json.decodeFromString(json.encodeToString(settings)))
     }
@@ -103,6 +106,20 @@ class NotificationSettingsTest {
     fun `the new-messages toggle holds exactly what was constructed with`() {
         assertEquals(false, NotificationSettings(newMessagesEnabled = false).newMessagesEnabled)
         assertEquals(true, NotificationSettings().newMessagesEnabled)
+    }
+
+    @Test
+    fun `JSON saved before the group-activity toggle deserializes with it on`() {
+        // A pre-#510 install: every earlier key present, no groupActivityEnabled. It
+        // defaults on, which is silent by itself — the per-group subscriptions it gates
+        // start empty (see SubscribedGroupsStore).
+        val json = Json { ignoreUnknownKeys = true }
+        val legacy = json.decodeFromString<NotificationSettings>(
+            """{"pollCadence":"HOURLY","eventRemindersEnabled":true,""" +
+                """"newGroupEventsEnabled":true,"topicRepliesEnabled":true,"newMessagesEnabled":false}""",
+        )
+        assertEquals(true, legacy.groupActivityEnabled)
+        assertEquals(false, legacy.newMessagesEnabled)
     }
 }
 

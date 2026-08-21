@@ -3,6 +3,8 @@ package com.myhobbyislearning.fibersocial.notifications
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.minutes
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.serialization.Serializable
 
 /**
@@ -22,6 +24,9 @@ import kotlinx.serialization.Serializable
  *   ([MessageNotificationPlanner], issue #375). Null before the first messages sync — and
  *   set back to null when the kind is disabled — so a re-enable seeds silently. Defaulted
  *   so state persisted before this field existed still deserializes.
+ * @property knownGroups Per-group forum-activity marks for the groups the user subscribed
+ *   to ([GroupActivityNotificationPlanner], issue #510), keyed by group id. Defaulted so
+ *   state persisted before this field existed still deserializes.
  */
 @Serializable
 data class NotificationState(
@@ -29,6 +34,7 @@ data class NotificationState(
     val scheduledReminders: List<ScheduledReminder> = emptyList(),
     val knownTopics: Map<Long, KnownTopicActivity> = emptyMap(),
     val knownMessages: KnownMessages? = null,
+    val knownGroups: Map<Long, KnownGroupActivity> = emptyMap(),
 )
 
 /**
@@ -101,9 +107,15 @@ fun pollCadenceLabel(cadence: PollCadence): String = when (cadence) {
  * @property newMessagesEnabled Whether "a new private message arrived" notifications post
  *   (the messages leg, issue #375). The Settings *row* for this toggle is issue #376; the
  *   field and its gating land here so the row is a pure-UI change.
+ * @property groupActivityEnabled Whether "new posts in a group you subscribed to"
+ *   notifications post (the group-activity leg, issue #510). Unlike the other four kinds
+ *   this switch alone notifies about nothing: it is a master switch over a per-group
+ *   opt-in ([SubscribedGroupsStore]), which starts empty. That is why it can default on
+ *   like its siblings without making any existing install noisier — what it actually
+ *   controls is whether the per-group subscribe control is offered at all.
  *
- * The four per-kind switches all default on and are defaulted fields, so JSON stored
- * before they existed (issues #335, #375) deserializes with every kind enabled — the
+ * The five per-kind switches all default on and are defaulted fields, so JSON stored
+ * before they existed (issues #335, #375, #510) deserializes with every kind enabled — the
  * pre-#335 behavior. They gate *what* to notify about; [pollCadence] stays orthogonal
  * (*how often* to check). See [EventSyncRunner] for how a disabled kind skips its scrape
  * and re-seeds silently on re-enable.
@@ -115,6 +127,7 @@ data class NotificationSettings(
     val newGroupEventsEnabled: Boolean = true,
     val topicRepliesEnabled: Boolean = true,
     val newMessagesEnabled: Boolean = true,
+    val groupActivityEnabled: Boolean = true,
     // Legacy precise-hours setting, superseded by [pollCadence] (issue #113). Retained,
     // internal to this module, purely so a store holding pre-migration JSON migrates to
     // a qualitative bucket via [effectivePollCadence] instead of silently resetting to
@@ -183,6 +196,60 @@ interface MutedTopicsStore {
             override suspend fun load(): Set<Long> = emptySet()
             override suspend fun save(mutedTopicIds: Set<Long>) = Unit
             override suspend fun mutate(transform: (Set<Long>) -> Set<Long>): Set<Long> = transform(emptySet())
+        }
+    }
+}
+
+/**
+ * Persistence for the set of group ids the user has subscribed to forum-activity
+ * notifications for (issue #510) — the per-group opt-in that
+ * [NotificationSettings.groupActivityEnabled] is the master switch over.
+ *
+ * **Opt-in, not opt-out**: an empty set is the default and means "notify about no group",
+ * so turning the master switch on is by itself silent. This is the opposite default from
+ * [MutedTopicsStore], which is an opt-*out* list — a busy public forum is a firehose in a
+ * way a thread you personally posted in is not.
+ *
+ * Reactive, like [com.myhobbyislearning.fibersocial.moderation.BlockedUsersStore] and
+ * unlike the plain load/save stores in this module: the feed's subscribe control renders
+ * straight off [subscribedGroupIds], so a tap flips the icon without waiting on a disk
+ * round-trip or a screen refresh. That means a single instance must be shared across the
+ * authenticated app tree (constructed once via `remember` in `MainActivity` /
+ * `MainViewController`); the background sync constructs its own and only reads it.
+ *
+ * Kept out of [NotificationState] for the same reason [MutedTopicsStore] is: the UI must
+ * be able to mutate it without a read-modify-write race against the sync's state save.
+ */
+interface SubscribedGroupsStore {
+    /** The subscribed group ids. Empty until [load] completes — call [load] once, early. */
+    val subscribedGroupIds: StateFlow<Set<Long>>
+
+    /** Loads the persisted set into [subscribedGroupIds]. Safe to call more than once. */
+    suspend fun load()
+
+    /** Adds or removes [groupId], publishing the change immediately, then persists. */
+    suspend fun setSubscribed(groupId: Long, subscribed: Boolean)
+
+    /**
+     * Atomically drops every id outside [groupIds] — used by the sync to forget groups the
+     * user has left, so a subscription set can't grow forever. Goes through the same lock
+     * as [setSubscribed] so a subscribe landing mid-prune isn't clobbered by a stale
+     * snapshot (see [MutedTopicsStore.mutate], whose reasoning this mirrors).
+     */
+    suspend fun retainAll(groupIds: Set<Long>)
+
+    companion object {
+        /**
+         * A store that subscribes to nothing and persists nothing — the null-object
+         * default for an [EventSyncRunner] whose caller doesn't wire subscriptions (and
+         * for tests that don't exercise them). Real callers inject a
+         * [KeyValueSubscribedGroupsStore].
+         */
+        val EMPTY: SubscribedGroupsStore = object : SubscribedGroupsStore {
+            override val subscribedGroupIds: StateFlow<Set<Long>> = MutableStateFlow(emptySet())
+            override suspend fun load() = Unit
+            override suspend fun setSubscribed(groupId: Long, subscribed: Boolean) = Unit
+            override suspend fun retainAll(groupIds: Set<Long>) = Unit
         }
     }
 }

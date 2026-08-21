@@ -73,6 +73,10 @@ import com.myhobbyislearning.fibersocial.ui.UserAvatar
  * @param onTopicRepliesEnabledChange Invoked with the new value when toggled.
  * @param newMessagesEnabled Whether new private-message notifications are on (issue #376).
  * @param onNewMessagesEnabledChange Invoked with the new value when toggled.
+ * @param groupActivityEnabled Whether group-activity notifications are on (issue #510).
+ *   The master switch over the feed's per-group subscribe control — see
+ *   [com.myhobbyislearning.fibersocial.notifications.SubscribedGroupsStore].
+ * @param onGroupActivityEnabledChange Invoked with the new value when toggled.
  * @param onOpenAbout Opens the "About FiberSocial" disclosure screen (issue #289).
  * @param onOpenBlockedUsers Opens the blocked-users manage/unblock list (issue #410).
  * @param onDeleteAccount Opens Ravelry's profile editor, where the account-deletion link
@@ -99,6 +103,8 @@ fun SettingsScreen(
     onTopicRepliesEnabledChange: (Boolean) -> Unit = {},
     newMessagesEnabled: Boolean = true,
     onNewMessagesEnabledChange: (Boolean) -> Unit = {},
+    groupActivityEnabled: Boolean = true,
+    onGroupActivityEnabledChange: (Boolean) -> Unit = {},
     // Non-null on debug builds only: shows a "Debug panel" entry (issue #207).
     onOpenDebugPanel: (() -> Unit)? = null,
     onOpenAbout: () -> Unit = {},
@@ -271,6 +277,17 @@ fun SettingsScreen(
                     subtitle = "New replies in topics you've posted in",
                     checked = topicRepliesEnabled,
                     onCheckedChange = onTopicRepliesEnabledChange,
+                )
+                // Unlike its siblings, this switch notifies about nothing on its own: it
+                // decides whether the feed offers the per-group subscribe control at all,
+                // and the subscription itself is opt-in per group (issue #510). Hence the
+                // subtitle naming where the opt-in lives, rather than describing an effect
+                // flipping this alone would have.
+                SwitchSettingRow(
+                    title = "New posts in groups",
+                    subtitle = "For groups you subscribe to from the group's feed",
+                    checked = groupActivityEnabled,
+                    onCheckedChange = onGroupActivityEnabledChange,
                 )
                 // Messages is compile-time gated out of release builds (see FeatureFlags) —
                 // this toggle would otherwise control notifications for a destination the

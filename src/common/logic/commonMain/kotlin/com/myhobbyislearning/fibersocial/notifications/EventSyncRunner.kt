@@ -1,8 +1,10 @@
 package com.myhobbyislearning.fibersocial.notifications
 
+import com.myhobbyislearning.fibersocial.auth.SessionExpiredException
 import com.myhobbyislearning.fibersocial.events.GroupEvent
 import com.myhobbyislearning.fibersocial.feed.RavelryApiClient
 import com.myhobbyislearning.fibersocial.messages.MessageFolder
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -24,6 +26,7 @@ class EventSyncRunner(
     private val stateStore: NotificationStateStore,
     private val settingsStore: NotificationSettingsStore,
     private val mutedTopicsStore: MutedTopicsStore = MutedTopicsStore.EMPTY,
+    private val subscribedGroupsStore: SubscribedGroupsStore = SubscribedGroupsStore.EMPTY,
 ) {
 
     // Background sync fans out one request per group plus one per saved event; a user
@@ -34,10 +37,11 @@ class EventSyncRunner(
     /**
      * Runs one sync cycle.
      *
-     * Each notification kind the user turned off (issues #335, #375) is gated here rather
-     * than suppressed downstream: a disabled kind skips its scrape entirely (no
+     * Each notification kind the user turned off (issues #335, #375, #510) is gated here
+     * rather than suppressed downstream: a disabled kind skips its scrape entirely (no
      * `getMyTopics` for replies, no group-event scrape for new events, no saved-event
-     * fetch for reminders, no inbox list for messages) and contributes nothing to the plan. Its detection state is cleared so
+     * fetch for reminders, no inbox list for messages, no per-group topic pages for group
+     * activity) and contributes nothing to the plan. Its detection state is cleared so
      * a later re-enable *seeds silently* through the planners' empty-map rule instead of
      * announcing everything that piled up while it was off — carrying the stale pre-off
      * counts forward would do the opposite and unleash exactly that backlog storm. (A
@@ -79,19 +83,38 @@ class EventSyncRunner(
             }
         }
 
+        // The group-activity leg (issue #510): one page of topics per SUBSCRIBED group, for
+        // "new posts in a group you follow". Read before anything is fetched because it is
+        // what decides whether the leg has any work at all — subscription is opt-in and
+        // starts empty, and an empty set must not make the sync fetch a groups list it has
+        // no use for. The store read itself is local.
+        val subscribedGroupIds = if (settings.groupActivityEnabled) {
+            // The sync owns its own store instance, so its StateFlow starts empty and this
+            // load() IS the read (the UI's shared instance is a different object).
+            subscribedGroupsStore.load()
+            subscribedGroupsStore.subscribedGroupIds.value
+        } else {
+            emptySet()
+        }
+        val groupActivityWanted = subscribedGroupIds.isNotEmpty()
+
         // The signed-in user is needed by two independent things: group membership (for
-        // the event scrape and reply attribution) and message direction detection. Fetched
-        // once when any of them is on, rather than once per leg.
+        // the event scrape, reply attribution and the group-activity leg) and message
+        // direction detection. Fetched once when any of them is on, rather than per leg.
         val currentUser = if (
-            settings.newGroupEventsEnabled || settings.topicRepliesEnabled || settings.newMessagesEnabled
+            settings.newGroupEventsEnabled || settings.topicRepliesEnabled ||
+            settings.newMessagesEnabled || groupActivityWanted
         ) {
             apiClient.getCurrentUser()
         } else {
             null
         }
-        // Groups feed both the new-event scrape and reply attribution; fetch them only
-        // when at least one of those kinds is on.
-        val groups = if (currentUser != null && (settings.newGroupEventsEnabled || settings.topicRepliesEnabled)) {
+        // Groups feed the new-event scrape, reply attribution and the group-activity leg;
+        // fetch them only when at least one of those kinds is on.
+        val groupsWanted = settings.newGroupEventsEnabled ||
+            settings.topicRepliesEnabled ||
+            groupActivityWanted
+        val groups = if (currentUser != null && groupsWanted) {
             apiClient.getUserGroups(currentUser.username)
         } else {
             emptyList()
@@ -112,6 +135,44 @@ class EventSyncRunner(
             emptyList()
         }
 
+        val groupSnapshots: List<GroupTopicsSnapshot> = groups
+            .filter { it.id in subscribedGroupIds }
+            .map { group ->
+                async {
+                    scrapeConcurrency.withPermit {
+                        // Per-group failure is isolated rather than left to awaitAll's
+                        // fail-fast, mirroring FeedRepository.getGroupActivity: one
+                        // inaccessible group must not sink the whole sync (which would take
+                        // the reminder and reply legs down with it). A skipped group simply
+                        // contributes no snapshot, so its mark is left untouched and the
+                        // next sync compares against the same baseline. Session expiry and
+                        // cancellation are the two exceptions and DO propagate — see that
+                        // function for why softening either hides a real problem.
+                        try {
+                            GroupTopicsSnapshot(
+                                group = group,
+                                topics = apiClient.getGroupTopics(
+                                    group.forumId,
+                                    page = 1,
+                                    pageSize = GROUP_ACTIVITY_TOPIC_PAGE_SIZE,
+                                ).topics,
+                            )
+                        } catch (e: SessionExpiredException) {
+                            throw e
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            println(
+                                "FiberSocial: EventSyncRunner: skipping group ${group.id} (${e.message})",
+                            )
+                            null
+                        }
+                    }
+                }
+            }
+            .awaitAll()
+            .filterNotNull()
+
         val state = stateStore.load()
         val eventPlan = EventNotificationPlanner.plan(
             state = state,
@@ -120,22 +181,37 @@ class EventSyncRunner(
             now = now,
             timeZone = timeZone,
         )
+        // Mutes gate two legs now (replies, and group activity — a topic muted from its
+        // thread must not shout through the other leg instead), so they are loaded once
+        // here rather than inside either branch.
+        val mutedTopics = if (settings.topicRepliesEnabled || settings.groupActivityEnabled) {
+            mutedTopicsStore.load()
+        } else {
+            emptySet()
+        }
         val myPostsPlan = if (settings.topicRepliesEnabled) {
-            val muted = mutedTopicsStore.load()
             val plan = MyPostsNotificationPlanner.plan(
                 knownTopics = state?.knownTopics,
                 myTopics = myTopicsDeferred.await(),
                 groupNamesByForumId = groups.associateBy({ it.forumId }, { it.name }),
                 nowMs = now.toEpochMilliseconds(),
-                mutedTopics = muted,
+                mutedTopics = mutedTopics,
             )
             // Prune mutes for topics that have aged out of knownTopics (issue #338): a
             // muted id absent from the refreshed set was unseen through the whole
             // retention window (or was never a tracked topic), so the mute can't grow the
-            // set forever. Goes through mutate() (not load-then-save against the [muted]
-            // snapshot above) so a concurrent UI mute/unmute landing between that snapshot
-            // and this write is intersected against the fresh value, not clobbered by it.
-            mutedTopicsStore.mutate { it.intersect(plan.newKnownTopics.keys) }
+            // set forever. Goes through mutate() (not load-then-save against the
+            // [mutedTopics] snapshot above) so a concurrent UI mute/unmute landing between
+            // that snapshot and this write is intersected against the fresh value, not
+            // clobbered by it.
+            //
+            // Topics seen in this cycle's subscribed-group pages count as "still tracked"
+            // too: a topic the user muted but never posted in is invisible to knownTopics,
+            // and pruning its mute would quietly un-silence it on the group-activity leg.
+            val stillSeen = plan.newKnownTopics.keys + groupSnapshots.flatMap { snapshot ->
+                snapshot.topics.map { it.id }
+            }
+            mutedTopicsStore.mutate { it.intersect(stillSeen) }
             plan
         } else {
             // Cleared, not frozen: re-enabling then re-seeds silently (see sync()'s doc).
@@ -157,14 +233,32 @@ class EventSyncRunner(
             // announcing every message that arrived while the kind was off.
             MessagesPlan(notifications = emptyList(), newKnownMessages = null)
         }
+        val groupActivityPlan = if (settings.groupActivityEnabled) {
+            // Subscriptions to groups the user has left are dropped here, the same way
+            // stale mutes are above: the drawer no longer offers a control to unsubscribe
+            // with, so nothing else ever would. Only when the groups list was actually
+            // fetched — pruning against an empty list would wipe every subscription.
+            if (groups.isNotEmpty()) subscribedGroupsStore.retainAll(groups.map { it.id }.toSet())
+            GroupActivityNotificationPlanner.plan(
+                knownGroups = state?.knownGroups,
+                snapshots = groupSnapshots,
+                nowMs = now.toEpochMilliseconds(),
+                mutedTopics = mutedTopics,
+            )
+        } else {
+            // Cleared, not frozen — same re-enable-seeds-silently rule as the other kinds.
+            GroupActivityPlan(notifications = emptyList(), newKnownGroups = emptyMap())
+        }
         val plan = eventPlan.copy(
             newReplyNotifications = myPostsPlan.notifications,
             newMessageNotifications = messagesPlan.notifications,
+            newGroupActivityNotifications = groupActivityPlan.notifications,
             newState = eventPlan.newState.copy(
                 // Same clear-so-re-enable-seeds-silently rule for the new-event kind.
                 knownEvents = if (settings.newGroupEventsEnabled) eventPlan.newState.knownEvents else emptyMap(),
                 knownTopics = myPostsPlan.newKnownTopics,
                 knownMessages = messagesPlan.newKnownMessages,
+                knownGroups = groupActivityPlan.newKnownGroups,
             ),
         )
         stateStore.save(plan.newState)
@@ -173,7 +267,8 @@ class EventSyncRunner(
                 "${plan.remindersToSchedule.size} reminders to schedule, " +
                 "${plan.remindersToCancel.size} to cancel, " +
                 "${plan.newReplyNotifications.size} topics with new replies, " +
-                "${plan.newMessageNotifications.size} new messages",
+                "${plan.newMessageNotifications.size} new messages, " +
+                "${plan.newGroupActivityNotifications.size} groups with new posts",
         )
         plan
     }

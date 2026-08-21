@@ -33,6 +33,17 @@ class IntentDeepLinksTest {
     }
 
     @Test
+    fun `a group-activity notification maps to its group`() {
+        assertEquals(DeepLink.Group(1L), Intent().putExtra(EXTRA_GROUP_ID, 1L).toDeepLink())
+    }
+
+    @Test
+    fun `a group-activity id loses to the more specific topic destination`() {
+        val intent = Intent().putExtra(EXTRA_GROUP_ID, 1L).putExtra(EXTRA_TOPIC_ID, 7L)
+        assertEquals(DeepLink.Topic(7L), intent.toDeepLink())
+    }
+
+    @Test
     fun `the reply group summary maps to the My Posts feed`() {
         assertEquals(DeepLink.MyPosts, Intent().putExtra(EXTRA_OPEN_MY_POSTS, true).toDeepLink())
     }
