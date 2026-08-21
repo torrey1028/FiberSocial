@@ -21,6 +21,7 @@ import com.myhobbyislearning.fibersocial.events.NewEventFormParser
 import com.myhobbyislearning.fibersocial.events.NewEventInput
 import com.myhobbyislearning.fibersocial.events.SavedEvent
 import com.myhobbyislearning.fibersocial.events.SavedEventsParser
+import com.myhobbyislearning.fibersocial.feed.models.ActivityType
 import com.myhobbyislearning.fibersocial.feed.models.Group
 import com.myhobbyislearning.fibersocial.feed.models.Post
 import com.myhobbyislearning.fibersocial.feed.models.RavelryUser
@@ -373,6 +374,53 @@ class RavelryApiClient(
      */
     suspend fun getGroupEvents(groupPermalink: String): List<EventSummary> =
         getGroupPage(groupPermalink).events
+
+    /**
+     * Fetches one page of a group's member activity — project photos, stash, favorites and
+     * the rest (epic #483).
+     *
+     * Ravelry has no group-activity JSON API (its whole `groups` namespace is
+     * `groups/search.json`, and `/people/{username}/friends/activity.json` is scoped to
+     * friends rather than group members), so this scrapes the website with the session
+     * cookie and parses it with [GroupActivityParser].
+     *
+     * **Deliberately requests `/groups/browse/activity/{permalink}` rather than the prettier
+     * `/groups/{permalink}/activity`.** The pretty URL renders whatever type filter the user
+     * last chose on the Ravelry *website* — that selection is sticky server-side and appears
+     * nowhere in the URL, so requesting it would silently inherit a browser-side preference
+     * and could drop up to seven of the eight activity types, with nothing in the response
+     * indicating anything was missing. The `browse` route takes the types as explicit query
+     * parameters; it is also the route Ravelry's own paginator links to.
+     *
+     * All eight types are always requested ([ActivityType.allQueryKeys]) — per-type
+     * filtering is not a product requirement, and an omitted type is content silently gone.
+     *
+     * **Naming:** not `getGroupActivity`. [FeedRepository] already has a private helper by
+     * that name meaning "newest reply timestamp per group", which feeds the drawer's dots
+     * and is unrelated to this feature.
+     *
+     * @param groupPermalink The group's permalink, e.g. `kirkland-fiber-arts-circle-2`.
+     * @param page 1-based page number. Ravelry serves [GroupActivityParser.PAGE_SIZE] items
+     *   per page over a rolling ~30-day window.
+     * @throws ForbiddenException on 403 — valid session, but no permission for this group.
+     * @throws SessionExpiredException if the session cookie is rejected (401, or a redirect
+     *   off the groups path — Ravelry sends expired sessions to the login page).
+     * @throws IllegalStateException on any other non-2xx response.
+     */
+    suspend fun getGroupActivityPage(groupPermalink: String, page: Int): ActivityPage {
+        val types = ActivityType.allQueryKeys.joinToString("&") { "$it=1" }
+        val html = scrapeHtml(
+            "$WWW_URL/groups/browse/activity/$groupPermalink?page=$page&$types",
+            "/groups/",
+            "Activity page $page for $groupPermalink",
+        )
+        val activityPage = GroupActivityParser.parse(html)
+        println(
+            "FiberSocial: getGroupActivityPage($groupPermalink, page=$page) -> " +
+                "${activityPage.items.size} items, hasMore=${activityPage.hasMore}",
+        )
+        return activityPage
+    }
 
     /**
      * Scrapes a group's page once for both its upcoming events and whether the current
