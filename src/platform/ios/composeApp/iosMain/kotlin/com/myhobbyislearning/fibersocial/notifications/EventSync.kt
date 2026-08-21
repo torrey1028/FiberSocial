@@ -29,6 +29,7 @@ import kotlinx.datetime.TimeZone
 import platform.BackgroundTasks.BGAppRefreshTask
 import platform.BackgroundTasks.BGAppRefreshTaskRequest
 import platform.BackgroundTasks.BGTaskScheduler
+import platform.Foundation.NSBundle
 import platform.Foundation.NSDate
 import platform.Foundation.NSError
 import platform.Foundation.dateWithTimeIntervalSinceNow
@@ -46,7 +47,16 @@ import platform.Foundation.dateWithTimeIntervalSinceNow
 @OptIn(ExperimentalForeignApi::class)
 object EventSync {
 
-    const val REFRESH_TASK_IDENTIFIER = "com.myhobbyislearning.fibersocial.refresh"
+    /**
+     * Must match the entry in `Info.plist`'s `BGTaskSchedulerPermittedIdentifiers`, which
+     * is `$(PRODUCT_BUNDLE_IDENTIFIER).refresh` — a registration for an identifier the
+     * plist doesn't list throws. Derived from the bundle id rather than hard-coded because
+     * the Debug configuration builds under its own bundle id (`…fibersocial.debug`) so it
+     * can sit on the home screen next to the App Store build, and that build's
+     * background-refresh task has to be its own.
+     */
+    val REFRESH_TASK_IDENTIFIER: String =
+        "${NSBundle.mainBundle.bundleIdentifier ?: "com.myhobbyislearning.fibersocial"}.refresh"
 
     private val scope: CoroutineScope = MainScope()
     private var inFlight: Job? = null

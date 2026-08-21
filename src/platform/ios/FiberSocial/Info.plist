@@ -14,15 +14,30 @@
 	<string>6.0</string>
 	<key>CFBundleName</key>
 	<string>FiberSocial</string>
+	<!--
+	  Set per configuration (APP_DISPLAY_NAME in project.pbxproj) so the Debug
+	  build, which installs under its own bundle id alongside the App Store one,
+	  is labelled "FiberSocial Debug" on the home screen — with the dark app icon
+	  (AppIconDebug) as the other half of telling the two apart.
+	-->
+	<key>CFBundleDisplayName</key>
+	<string>$(APP_DISPLAY_NAME)</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<!--
+	  Derived from the bundle id rather than hard-coded, so the Debug build's
+	  own bundle id keeps its background-refresh task distinct from the App
+	  Store build's when both are installed. EventSync.REFRESH_TASK_IDENTIFIER
+	  builds the same string at runtime; the two must agree or BGTaskScheduler
+	  refuses the registration.
+	-->
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
-		<string>com.myhobbyislearning.fibersocial.refresh</string>
+		<string>$(PRODUCT_BUNDLE_IDENTIFIER).refresh</string>
 	</array>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>

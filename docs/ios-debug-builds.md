@@ -44,6 +44,17 @@ off an OTA-installed iPhone.
 Either way it's an Ad Hoc build for your own registered devices, not a release
 artifact: no tests, no QA gate, and it never reaches TestFlight or the store.
 
+The two configurations also differ in **whether they can coexist with the App
+Store app**. The Debug configuration builds bundle id
+`com.myhobbyislearning.fibersocial.debug` under the name "FiberSocial Debug"
+with the dark app icon, so it installs as its own app beside the store one, with
+its own container, keychain items and notification state — nothing is shared,
+and you log in separately. The Release configuration keeps the real bundle id on
+purpose (it exists to reproduce exactly what ships), so installing it *replaces*
+an App Store install of FiberSocial — and, being Ad Hoc-signed rather than store-
+signed, it can't upgrade it in place: you have to delete the App Store app first
+and reinstall it from the store afterwards.
+
 When it finishes, open **`https://torrey1028.github.io/FiberSocial/ios-debug/`**
 in **Safari on the iPhone** (the `itms-services://` install link only works
 from Mobile Safari — Chrome or any in-app browser won't trigger it) and tap
@@ -74,13 +85,19 @@ name for the device.
 
 ### 2. Create an Ad Hoc provisioning profile and add it as a secret
 
-Certificates, IDs & Profiles → **Profiles** → **+** → **Ad Hoc** →
-select the `com.myhobbyislearning.fibersocial` App ID → select the existing
-**Apple Distribution** certificate (the same one `release.yml`'s
-`ios-release` job already uses — Ad Hoc profiles are signed with a
-Distribution cert, just scoped to specific devices, so no new certificate is
-needed) → select the device(s) registered in step 1 → generate and download
-the `.mobileprovision` file.
+A profile covers one App ID, and the two configurations build two different
+bundle ids (`…fibersocial.debug` for Debug, `…fibersocial` for Release — see
+"Which configuration?" above). **The simplest setup is one wildcard profile
+that covers both.**
+
+Certificates, IDs & Profiles → **Identifiers** → **+** → App IDs → choose
+**Wildcard** and register `com.myhobbyislearning.*` (skip this if you'd rather
+keep explicit App IDs — see the two-profile note below). Then **Profiles** →
+**+** → **Ad Hoc** → select that App ID → select the existing **Apple
+Distribution** certificate (the same one `release.yml`'s `ios-release` job
+already uses — Ad Hoc profiles are signed with a Distribution cert, just scoped
+to specific devices, so no new certificate is needed) → select the device(s)
+registered in step 1 → generate and download the `.mobileprovision` file.
 
 Base64 it and add as a repo secret, same pattern as the App Store profile:
 
@@ -91,9 +108,17 @@ base64 -i AdHoc.mobileprovision | tr -d '\n' | pbcopy   # or xclip/clip.exe on L
 Add the result as the `IOS_ADHOC_PROVISIONING_PROFILE_BASE64` repo secret
 (Settings → Secrets and variables → Actions).
 
-No new secrets needed beyond that — signing certificate, `APPLE_TEAM_ID`, and
-the Ravelry OAuth credentials are all reused from `release.yml`'s
-`ios-release` job's existing setup.
+**Two explicit profiles instead of one wildcard:** register a
+`com.myhobbyislearning.fibersocial.debug` App ID alongside the existing
+`com.myhobbyislearning.fibersocial` one, make an Ad Hoc profile for each, and
+put the second in the optional `IOS_ADHOC_DEBUG_PROVISIONING_PROFILE_BASE64`
+repo secret. The workflow installs whichever profiles it's given and picks the
+one covering the bundle id it's building — an exact App ID match first, then a
+wildcard — and fails with the list of what it found if neither covers it.
+
+No other new secrets — signing certificate, `APPLE_TEAM_ID`, and the Ravelry
+OAuth credentials are all reused from `release.yml`'s `ios-release` job's
+existing setup.
 
 ## What's public about this
 
@@ -131,11 +156,18 @@ anything to reduce that exposure on its own.
   browser or an in-app link preview (Messages/Slack previews often open
   links in an embedded browser that won't honor `itms-services://`).
 - **"Unable to install" after tapping Install and waiting a moment:** check
-  that your Apple ID's device trust hasn't lapsed, and that the app isn't
-  already installed from a *different* signing source (App Store/TestFlight)
-  — remove the existing app first if so, since Ad Hoc and App Store builds
-  aren't interchangeable/upgradable, same as Android's separate Play Store vs
-  direct-APK channels.
+  that your Apple ID's device trust hasn't lapsed, and — on a **Release**
+  build, which keeps the store bundle id — that the app isn't already
+  installed from a *different* signing source (App Store/TestFlight). Remove
+  the existing app first if so, since Ad Hoc and App Store builds aren't
+  interchangeable/upgradable, same as Android's separate Play Store vs
+  direct-APK channels. A **Debug** build has its own bundle id, so it doesn't
+  hit this; if it does, something else already occupies
+  `com.myhobbyislearning.fibersocial.debug`.
+- **The build fails at "Install Ad Hoc provisioning profile" saying no profile
+  covers the bundle id:** the profile in the secret is for the other App ID.
+  Its error message lists the App IDs it did find — see step 2 above for the
+  wildcard-profile or second-secret fix.
 - **First-time device trust:** after installing, iOS may require Settings →
   General → VPN & Device Management → trust the developer certificate before
   the app will launch.

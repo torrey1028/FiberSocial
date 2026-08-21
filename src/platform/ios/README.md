@@ -38,6 +38,13 @@ The "Build ComposeApp framework" phase runs
 `./gradlew :composeApp:embedAndSignAppleFrameworkForXcode` in `src/platform/android`,
 so the Kotlin side rebuilds automatically on every Xcode build.
 
+**Debug builds are a separate app.** The Debug configuration builds bundle id
+`com.myhobbyislearning.fibersocial.debug`, named "FiberSocial Debug" and
+carrying the dark app icon, so it installs next to an App Store FiberSocial
+rather than replacing it — separate container, separate keychain items,
+separate notification state, separate login. Release keeps the real bundle id.
+Automatic signing handles the extra App ID on its own; nothing to configure.
+
 **No Mac available?** `.github/workflows/ios-debug-build.yml` builds a Debug
 build on a GitHub Actions macOS runner and publishes an over-the-air install
 link for a registered iPhone — see `docs/ios-debug-builds.md`.

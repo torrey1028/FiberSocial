@@ -18,9 +18,15 @@ name: iOS Debug Build
 # One-time setup this needs that release.yml's ios-release job doesn't
 # already have — see docs/ios-debug-builds.md:
 #   - Your iPhone's UDID registered as a Device in the Apple Developer portal.
-#   - An Ad Hoc provisioning profile for com.myhobbyislearning.fibersocial
-#     covering that device, base64'd into the IOS_ADHOC_PROVISIONING_PROFILE_BASE64
-#     repo secret.
+#   - An Ad Hoc provisioning profile covering that device, base64'd into the
+#     IOS_ADHOC_PROVISIONING_PROFILE_BASE64 repo secret. It has to cover the
+#     bundle id of whichever configuration you build: the Debug configuration
+#     builds com.myhobbyislearning.fibersocial.debug (its own app, installable
+#     next to the App Store one — see docs/ios-debug-builds.md), Release builds
+#     com.myhobbyislearning.fibersocial. One profile for a wildcard App ID
+#     (com.myhobbyislearning.*) covers both; otherwise put the second one in
+#     IOS_ADHOC_DEBUG_PROVISIONING_PROFILE_BASE64 and this workflow picks
+#     whichever matches.
 on:
   workflow_dispatch:
     inputs:
@@ -114,6 +120,32 @@ jobs:
             printf 'RAVELRY_CLIENT_SECRET = %s\n' "$RAVELRY_CLIENT_SECRET"
           } > src/platform/ios/Config.local.xcconfig
 
+      # The Debug configuration sets its own PRODUCT_BUNDLE_IDENTIFIER so the
+      # build installs alongside an App Store FiberSocial instead of replacing
+      # it (project.pbxproj; the two get separate containers, keychains and
+      # notification state). Read it back from the project rather than
+      # duplicating the suffix here, so this can't drift from the source of
+      # truth — everything downstream (profile match, export options, OTA
+      # manifest) has to name the same id.
+      - name: Resolve bundle identifier
+        id: bundle
+        run: |
+          # -target, not -scheme: the scheme's settings dump also covers the
+          # FiberSocialTests target, whose own bundle id would be just as
+          # plausible a first match.
+          # Captured first, not piped straight into awk: the runner's bash has
+          # pipefail set, and awk's early `exit` SIGPIPEs xcodebuild, which
+          # would fail the step before the clearer error below can run.
+          SETTINGS="$(xcodebuild -project src/platform/ios/FiberSocial.xcodeproj -target FiberSocial \
+            -configuration "${{ inputs.configuration }}" -showBuildSettings 2>/dev/null || true)"
+          BUNDLE_ID="$(printf '%s\n' "$SETTINGS" | awk -F' = ' '/ PRODUCT_BUNDLE_IDENTIFIER = /{print $2; exit}')"
+          if [ -z "$BUNDLE_ID" ]; then
+            echo "::error::Couldn't read PRODUCT_BUNDLE_IDENTIFIER for the ${{ inputs.configuration }} configuration."
+            exit 1
+          fi
+          echo "Building $BUNDLE_ID"
+          echo "bundle_id=$BUNDLE_ID" >> "$GITHUB_OUTPUT"
+
       # A temporary keychain scoped to this job — see the twin comment in
       # release.yml's ios-release job.
       - name: Import distribution certificate
@@ -131,17 +163,49 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PW" "$KEYCHAIN_PATH"
           security list-keychains -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | tr -d '"')
 
+      # Installs every Ad Hoc profile provided and picks the one that actually
+      # covers this configuration's bundle id — an explicit App ID match first,
+      # then a wildcard one. Signing with a non-matching profile fails deep
+      # inside codesign with a much less obvious message than the check here.
       - name: Install Ad Hoc provisioning profile
+        id: profile
         env:
           IOS_ADHOC_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_ADHOC_PROVISIONING_PROFILE_BASE64 }}
+          IOS_ADHOC_DEBUG_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_ADHOC_DEBUG_PROVISIONING_PROFILE_BASE64 }}
+          BUNDLE_ID: ${{ steps.bundle.outputs.bundle_id }}
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
         run: |
-          PROFILE_PATH="$RUNNER_TEMP/profile.mobileprovision"
-          echo "$IOS_ADHOC_PROVISIONING_PROFILE_BASE64" | base64 -d > "$PROFILE_PATH"
-          PROFILE_UUID="$(security cms -D -i "$PROFILE_PATH" | plutil -extract UUID raw -o - -)"
           mkdir -p ~/Library/MobileDevice/"Provisioning Profiles"
-          cp "$PROFILE_PATH" ~/Library/MobileDevice/"Provisioning Profiles"/"$PROFILE_UUID".mobileprovision
-          echo "profile_uuid=$PROFILE_UUID" >> "$GITHUB_OUTPUT"
-        id: profile
+          MATCH_UUID=""
+          WILDCARD_UUID=""
+          CANDIDATES=""
+          i=0
+          for encoded in "$IOS_ADHOC_PROVISIONING_PROFILE_BASE64" "$IOS_ADHOC_DEBUG_PROVISIONING_PROFILE_BASE64"; do
+            [ -z "$encoded" ] && continue
+            i=$((i + 1))
+            PROFILE_PATH="$RUNNER_TEMP/profile-$i.mobileprovision"
+            echo "$encoded" | base64 -d > "$PROFILE_PATH"
+            PLIST="$(security cms -D -i "$PROFILE_PATH")"
+            PROFILE_UUID="$(printf '%s' "$PLIST" | plutil -extract UUID raw -o - -)"
+            cp "$PROFILE_PATH" ~/Library/MobileDevice/"Provisioning Profiles"/"$PROFILE_UUID".mobileprovision
+            # application-identifier is TEAMID.bundle.id, or TEAMID.some.prefix.* for a
+            # wildcard App ID. Strip the team prefix to compare against the bundle id.
+            APP_ID="$(printf '%s' "$PLIST" | plutil -extract Entitlements.application-identifier raw -o - -)"
+            APP_ID="${APP_ID#$APPLE_TEAM_ID.}"
+            CANDIDATES="$CANDIDATES $APP_ID"
+            PREFIX="${APP_ID%\*}"   # everything before a trailing "*", if there is one
+            if [ "$APP_ID" = "$BUNDLE_ID" ]; then
+              MATCH_UUID="$PROFILE_UUID"
+            elif [ "$PREFIX" != "$APP_ID" ] && { [ -z "$PREFIX" ] || [ "${BUNDLE_ID#$PREFIX}" != "$BUNDLE_ID" ]; }; then
+              WILDCARD_UUID="$PROFILE_UUID"
+            fi
+          done
+          [ -z "$MATCH_UUID" ] && MATCH_UUID="$WILDCARD_UUID"
+          if [ -z "$MATCH_UUID" ]; then
+            echo "::error::No Ad Hoc profile covers $BUNDLE_ID (found:$CANDIDATES). Add one for that App ID to IOS_ADHOC_DEBUG_PROVISIONING_PROFILE_BASE64, or use a wildcard profile — see docs/ios-debug-builds.md."
+            exit 1
+          fi
+          echo "profile_uuid=$MATCH_UUID" >> "$GITHUB_OUTPUT"
 
       # CFBundleVersion just needs to be a number that identifies this build;
       # ad hoc/OTA installs aren't subject to TestFlight's strictly-increasing
@@ -178,7 +242,7 @@ jobs:
             <string>manual</string>
             <key>provisioningProfiles</key>
             <dict>
-              <key>com.myhobbyislearning.fibersocial</key>
+              <key>${{ steps.bundle.outputs.bundle_id }}</key>
               <string>${{ steps.profile.outputs.profile_uuid }}</string>
             </dict>
           </dict>
@@ -219,7 +283,7 @@ jobs:
                 <key>metadata</key>
                 <dict>
                   <key>bundle-identifier</key>
-                  <string>com.myhobbyislearning.fibersocial</string>
+                  <string>${{ steps.bundle.outputs.bundle_id }}</string>
                   <key>bundle-version</key>
                   <string>$GITHUB_RUN_NUMBER</string>
                   <key>kind</key>

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Distinct launcher label for the side-by-side debug install; see this
+         source set's ic_launcher_background.xml. -->
+    <string name="app_name">FiberSocial Debug</string>
+</resources>
